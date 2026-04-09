@@ -290,6 +290,7 @@ const heroTrackTags = document.getElementById("hero-track-tags");
 const heroSwitchButtons = document.querySelectorAll(".hero-switch-button");
 let heroMontageTimer = 0;
 let heroMontageVideo = null;
+let heroMontageBackdrop = null;
 let heroMontageIndex = -1;
 
 const safelyPlayVideo = (video) => {
@@ -365,7 +366,12 @@ const clearHeroMontage = () => {
     heroMontageVideo.pause();
   }
 
+  if (heroMontageBackdrop instanceof HTMLMediaElement) {
+    heroMontageBackdrop.pause();
+  }
+
   heroMontageVideo = null;
+  heroMontageBackdrop = null;
   heroMontageIndex = -1;
 };
 
@@ -421,6 +427,7 @@ const updateHeroMontage = (video, media, titleNode, metaNode, dots = []) => {
 
 const updateHeroMontagePreview = (
   video,
+  backdrop,
   media,
   titleNode,
   detailNode,
@@ -460,16 +467,26 @@ const updateHeroMontagePreview = (
 
   const syncPlayback = () => {
     resetClipTime(video);
+    resetClipTime(backdrop);
     safelyPlayVideo(video);
+    safelyPlayVideo(backdrop);
   };
 
   if (video.dataset.source !== nextSourceUrl) {
     video.dataset.source = nextSourceUrl;
+    if (backdrop instanceof HTMLMediaElement) {
+      backdrop.dataset.source = nextSourceUrl;
+    }
     video.poster = "";
 
     video.addEventListener("loadedmetadata", syncPlayback, { once: true });
     video.src = nextSourceUrl;
     video.load();
+
+    if (backdrop instanceof HTMLMediaElement) {
+      backdrop.src = nextSourceUrl;
+      backdrop.load();
+    }
     return;
   }
 
@@ -490,6 +507,14 @@ const createHeroMontage = (media) => {
   const shell = document.createElement("div");
   shell.className = "hero-video-highlight";
   shell.dataset.mediaOrientation = "landscape";
+
+  const backdrop = document.createElement("video");
+  backdrop.className = "hero-video-backdrop";
+  backdrop.muted = true;
+  backdrop.loop = true;
+  backdrop.playsInline = true;
+  backdrop.preload = "auto";
+  backdrop.setAttribute("aria-hidden", "true");
 
   const video = document.createElement("video");
   video.className = "hero-video-element";
@@ -531,14 +556,15 @@ const createHeroMontage = (media) => {
   });
 
   overlay.append(kicker, title, detail, meta, dots);
-  shell.append(video, overlay);
+  shell.append(backdrop, video, overlay);
 
   heroMontageVideo = video;
-  updateHeroMontagePreview(video, media, title, detail, meta, dotItems);
+  heroMontageBackdrop = backdrop;
+  updateHeroMontagePreview(video, backdrop, media, title, detail, meta, dotItems);
 
   if (!reduceMotion && media.sources.length > 1) {
     heroMontageTimer = window.setInterval(() => {
-      updateHeroMontagePreview(video, media, title, detail, meta, dotItems);
+      updateHeroMontagePreview(video, backdrop, media, title, detail, meta, dotItems);
     }, 3000);
   }
 
