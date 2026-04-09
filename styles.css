@@ -241,7 +241,7 @@ ul {
 .header-meta {
   display: flex;
   align-items: center;
-  gap: 1.25rem;
+  gap: 0.8rem;
 }
 
 .status-pill {
@@ -255,23 +255,6 @@ ul {
   font-size: 0.82rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.site-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.9rem;
-}
-
-.site-nav a {
-  color: var(--muted);
-  transition: color 180ms ease;
-}
-
-.site-nav a:hover,
-.site-nav a:focus-visible,
-.site-nav a.is-active {
-  color: var(--text);
 }
 
 .section {
@@ -1991,10 +1974,6 @@ ul {
 @media (max-width: 620px) {
   .site-header {
     border-radius: 20px;
-  }
-
-  .site-nav {
-    gap: 0.7rem 1rem;
   }
 
   .hero h1 {

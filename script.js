@@ -1,8 +1,6 @@
 const yearTarget = document.getElementById("current-year");
 const root = document.documentElement;
 const revealItems = document.querySelectorAll("[data-reveal]");
-const sectionItems = document.querySelectorAll("main section[id]");
-const navLinks = document.querySelectorAll('.site-nav a[href^="#"]');
 const siteHeader = document.querySelector(".site-header");
 const projectAlbums = window.PROJECT_ALBUMS || [];
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -41,40 +39,6 @@ if (reduceMotion) {
   if (window.location.hash) {
     revealItems.forEach((item) => item.classList.add("is-visible"));
   }
-}
-
-if (sectionItems.length && navLinks.length) {
-  const linkMap = new Map(
-    Array.from(navLinks).map((link) => [link.getAttribute("href").slice(1), link])
-  );
-
-  const setActiveLink = (id) => {
-    navLinks.forEach((link) => {
-      link.classList.toggle("is-active", link.getAttribute("href") === `#${id}`);
-    });
-  };
-
-  const navObserver = new IntersectionObserver(
-    (entries) => {
-      const visibleEntries = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-
-      if (visibleEntries[0]) {
-        const activeId = visibleEntries[0].target.id;
-
-        if (linkMap.has(activeId)) {
-          setActiveLink(activeId);
-        }
-      }
-    },
-    {
-      threshold: [0.2, 0.35, 0.5, 0.7],
-      rootMargin: "-20% 0px -55% 0px",
-    }
-  );
-
-  sectionItems.forEach((section) => navObserver.observe(section));
 }
 
 if (siteHeader) {
@@ -250,32 +214,32 @@ const heroTracks = [
   {
     id: "production",
     label: "Showcase Reel",
-    kicker: "Project Showcase",
-    title: "A quick look at the games, simulations, and systems I have built across different tracks.",
+    kicker: "Production Showcase",
+    title: "Production work across games, simulation systems, and full-stack delivery.",
     summary:
-      "This reel highlights real-world work from company projects, shipped builds like Build2Connect, and personal experiments where I explore gameplay, system behavior, and performance. Each clip is there to quickly show how I approach interactive systems in practice, from feel and implementation to debugging and delivery.",
-    tags: ["Company games", "Unity prototypes", "Interactive systems", "Full-stack support"],
+      "This reel pulls from live company releases, shipped interactive builds, and focused R&D work to show the systems behind delivery: gameplay flow, UI state, backend-connected logic, debugging, and performance tuning.",
+    tags: ["Production games", "Shipped systems", "Interactive implementation", "Full-stack support"],
     media: {
       type: "montage",
       label: "Portfolio highlight reel",
-      detail: "Quick-cut footage rotating across shipped games, prototypes, and extra R&D work.",
-      kicker: "Project showcase",
+      detail: "Gameplay systems, UI state, backend-aware behavior, and production fixes across shipped work.",
+      kicker: "Production showcase",
       sources: showcaseHighlightSources,
     },
   },
   {
     id: "prototype",
-    label: "Prototype Track",
-    kicker: "Prototype R&D",
-    title: "Unity experimentation focused on interaction, feel, rendering, and iteration",
+    label: "R&D Track",
+    kicker: "Independent R&D",
+    title: "Independent Unity builds focused on feel, rendering, and system behavior",
     summary:
-      "Outside company work, I keep building Unity projects to sharpen gameplay thinking, interaction design, rendering awareness, and mobile-ready flows. These prototypes are where I experiment, iterate, and deepen the engineering side of my craft.",
-    tags: ["Unity", "Gameplay feel", "Rendering", "Iteration"],
+      "Outside production work, I use Unity to pressure-test interaction ideas, rendering choices, and gameplay systems through real implementation. This track shows how I refine instincts by building, profiling, and iterating.",
+    tags: ["Unity R&D", "Gameplay systems", "Rendering", "Iteration"],
     media: {
       type: "montage",
-      label: "Prototype highlight reel",
-      detail: "Unity gameplay clips, rendering experiments, mobile interaction tests, and extra prototypes.",
-      kicker: "Prototype lab",
+      label: "R&D highlight reel",
+      detail: "Independent Unity builds, rendering studies, mobile interaction tests, and system-focused exploration.",
+      kicker: "Independent R&D",
       sources: prototypeHighlightSources,
     },
   },
@@ -454,7 +418,7 @@ const updateHeroMontagePreview = (
 
   if (detailNode) {
     detailNode.textContent =
-      activeSource.teaser || media.detail || "Quick-cut project highlights";
+      activeSource.teaser || media.detail || "Production-focused project highlights";
   }
 
   if (metaNode) {

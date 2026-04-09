@@ -4,7 +4,7 @@ window.PROJECT_ALBUMS = [
     title: "DiJoker / Company Game Archive",
     kicker: "Company Production Games",
     summary:
-      "This chapter represents the company games I helped build and maintain in production. DiJoker is the featured title, and the footage reflects the live web-based releases I supported through gameplay flow, UI behavior, backend-driven states, and release stability.",
+      "This chapter covers the web-based games I helped build and maintain in a live company environment. DiJoker is the featured title, and the footage reflects work across gameplay behavior, UI state flow, backend-connected features, release support, and day-to-day debugging in production.",
     cover: {
       type: "image",
       src: "./assets/Games i created from a company/dijoker.webp",
@@ -20,9 +20,9 @@ window.PROJECT_ALBUMS = [
       "Release support",
     ],
     highlights: [
-      "Production Phaser titles built and maintained in a live company environment.",
-      "I worked across gameplay flow, UI states, backend-linked behavior, and the stability needed for real releases.",
-      "This archive groups multiple company captures because the uploaded footage spans more than one production game I supported at work.",
+      "Built and maintained gameplay-facing systems for live Phaser releases in production.",
+      "Worked across UI state flow, backend-linked behavior, feature fixes, and the release stability required by active titles.",
+      "This archive groups multiple company captures because the work spans more than one production game I supported.",
     ],
     media: [
       {
@@ -60,19 +60,19 @@ window.PROJECT_ALBUMS = [
   {
     id: "troublefixit",
     title: "TroubleFixIt",
-    kicker: "Student-Focused Commissioned Game",
+    kicker: "Commissioned Research Support Build",
     summary:
-      "TroubleFixIt is a student-focused game created as a partially commissioned project to help higher-grade students with their research work. This album shows the gameplay footage and build-stage screenshots behind that concept.",
+      "TroubleFixIt was commissioned as an interactive build designed to support research-oriented learning for higher-grade students. My role was to turn the concept into a usable gameplay flow with clear interactions, readable progression, and a structure that served the actual use case.",
     cover: {
       type: "image",
       src: "./assets/game 1/469523681_122200693922232010_1103197669450663526_n.jpg",
       alt: "TroubleFixIt project preview",
     },
-    tags: ["Unity", "Education", "Commissioned work", "Interactive guidance"],
+    tags: ["Unity", "Commissioned build", "Interactive guidance", "Usability"],
     highlights: [
-      "This project was shaped around helping students engage with research-related work through a game format.",
-      "The album mixes gameplay footage with editor screenshots so viewers can see both the player experience and the underlying build setup.",
-      "It highlights how I approach commissioned gameplay ideas with usability, interaction flow, and practical iteration in mind.",
+      "Built around a real use case rather than a throwaway showcase, so clarity and usability mattered as much as presentation.",
+      "The album combines gameplay footage and editor captures to show both the player experience and the underlying implementation.",
+      "It reflects how I approach applied game work: understand the goal, structure the interaction loop, and deliver a system that behaves consistently.",
     ],
     media: [
       {
@@ -148,7 +148,7 @@ window.PROJECT_ALBUMS = [
     title: "Disaster Game",
     kicker: "Mobile Disaster Escape Game",
     summary:
-      "This chapter showcases a mobile disaster simulation game where the player must escape dangerous scenarios such as earthquakes, flooded areas, and other emergency conditions. The album combines gameplay footage with development captures from the build process.",
+      "This chapter showcases a mobile disaster escape game built around scenario-driven gameplay and environmental pressure. The work focused on turning emergency situations into readable, responsive interaction through gameplay flow, scene logic, and mobile-friendly implementation.",
     cover: {
       type: "image",
       src: "./assets/game 2/469548110_122200693730232010_3582574126564016131_n.jpg",
@@ -156,9 +156,9 @@ window.PROJECT_ALBUMS = [
     },
     tags: ["Unity", "Mobile game", "Disaster simulation", "Scenario design"],
     highlights: [
-      "The player experience is built around escaping disaster scenarios under pressure, including earthquake and flood situations.",
-      "The uploaded captures show both playable footage and the development-side scene work behind the game.",
-      "It demonstrates how I translate scenario-based design into a playable mobile experience with clear environmental stakes.",
+      "Built around disaster scenarios such as earthquakes and flooding, where interaction clarity and pacing had to stay readable under pressure.",
+      "The album mixes playable footage with development-side captures to show both the player experience and the underlying scene work.",
+      "It demonstrates how I translate scenario design into a mobile system with clear feedback, stable behavior, and controlled progression.",
     ],
     media: [
       {
@@ -246,7 +246,7 @@ window.PROJECT_ALBUMS = [
     title: "Build2Connect",
     kicker: "Finished Guided Simulation Game",
     summary:
-      "Build2Connect is a fully finished simulation game for both mobile and desktop. I was deeply involved in its production from start to finish, covering the guided gameplay flow, cutscenes, voice-led presentation, and the interactive tutorial structure that teaches players how to build a PC through the story.",
+      "Build2Connect is a finished guided simulation game for both mobile and desktop. I worked across the systems needed to deliver it: tutorial sequencing, gameplay flow, cutscene integration, voice-led presentation, and the interactive structure that teaches players how to build a PC through play.",
     cover: {
       type: "image",
       src: "./assets/game 3/559375814_1730221184390449_795926192986973859_n.png",
@@ -254,9 +254,9 @@ window.PROJECT_ALBUMS = [
     },
     tags: ["Unity", "Mobile + desktop", "Cutscenes", "Tutorial gameplay"],
     highlights: [
-      "The story follows a player who is asked by a friend to help build a PC even though he has no prior knowledge, so the game teaches the process through guided interaction.",
-      "It includes full simulation gameplay, cutscenes, voice acting, narration, and tutorial-driven progression across both mobile and desktop builds.",
-      "This is one of my strongest examples of staying fully engaged in production until a game is finished and ready to be played.",
+      "Worked across the simulation loop, onboarding flow, cutscene timing, and player-facing tutorial systems that carry the experience.",
+      "Supported a full production build with narrated guidance, voice acting, and interactive progression across mobile and desktop targets.",
+      "This project reflects end-to-end engagement: implementation, iteration, stabilization, and pushing the build through to a finished playable state.",
     ],
     media: [
       {
@@ -312,32 +312,32 @@ window.PROJECT_ALBUMS = [
   {
     id: "prototypelab",
     title: "Prototype Lab",
-    kicker: "Personal Exploration Archive",
+    kicker: "Independent Systems R&D",
     summary:
-      "Prototype Lab is where I collect the personal side of my work: experiments, side builds, gameplay ideas, and exploration across different types of game development. It reflects the part of my life where I keep diving into new directions out of curiosity, learning, and creative momentum.",
+      "Prototype Lab collects the independent builds where I explore gameplay behavior, rendering, interaction flow, and system design outside production work. It is where I test ideas through real implementation and carry the useful lessons back into shipped work.",
     cover: {
       type: "image",
       src: "./assets/other projects/prototype lab thumbnail.png",
       alt: "Prototype Lab thumbnail",
     },
-    tags: ["Personal work", "Exploration", "Game experiments", "Creative R&D"],
+    tags: ["Independent R&D", "Gameplay systems", "Rendering", "System exploration"],
     highlights: [
-      "This section holds the personal and exploratory side of my development journey.",
-      "It shows that I keep building beyond a single production path, using side projects to test new ideas, styles, and mechanics.",
-      "The work here reflects curiosity-driven practice, experimentation, and continuous learning through real builds.",
+      "This section is where I pressure-test gameplay ideas, rendering choices, and interaction patterns outside production schedules.",
+      "The value here is not unfinished concepts, but the system understanding that comes from building and iterating directly.",
+      "It shows the R&D side of my process: testing behavior, refining technical instincts, and carrying the strongest ideas back into production work.",
     ],
     media: [
       {
         type: "video",
         src: "./assets/other projects/AQMad2U61PiFBZMb6jHirqcsPWIDenTp_3FFNxYWDu0Fsq0e60iGLXCWLMGOh2you0KNxwJF2Y5E4mq9hKg59-dK.mp4",
-        label: "Prototype capture 01",
-        alt: "Prototype capture 01",
+        label: "R&D capture 01",
+        alt: "R&D capture 01",
       },
       {
         type: "video",
         src: "./assets/other projects/Boobies Trap - Opera 2026-04-06 14-53-05.mp4",
-        label: "Prototype capture 02",
-        alt: "Prototype capture 02",
+        label: "R&D capture 02",
+        alt: "R&D capture 02",
       },
       {
         type: "video",
