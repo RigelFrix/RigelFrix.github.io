@@ -1,27 +1,27 @@
 # Francis Yambao Portfolio
 
-Static portfolio site for Francis Dave Tomy M. Yambao.
+Public portfolio site for Francis Dave Tomy M. Yambao.
 
-## Hosting choice
+Live site: [rigelfrix.github.io](https://rigelfrix.github.io/)
 
-This project is set up for **GitHub Pages** because it fits this portfolio best:
+## About
 
-- no build step is required
-- the public URL is stable and easy to share on job applications
-- a custom domain can be added later without changing the site structure
-- this repository name already matches the clean portfolio URL
+This portfolio showcases my work as a Software Developer, Game Developer, and Full-Stack Developer. It highlights production game work, personal prototypes, interactive systems, and selected software projects.
 
-## Publish steps
+## Featured areas
 
-1. Push this folder to the `main` branch of `RigelFrix.github.io`.
-2. In GitHub, open `Settings -> Pages`.
-3. Under `Build and deployment`, choose `Deploy from a branch`.
-4. Select branch `main` and folder `/(root)`.
-5. Save the settings and wait a minute or two for GitHub Pages to publish.
-6. Your site will be available at:
+- Company game releases and production-focused web game work
+- Unity prototypes and gameplay experiments
+- Interactive systems and real-time UX work
+- Full-stack and internal software builds
 
-`https://rigelfrix.github.io/`
+## Stack
 
-## Local preview
+- HTML
+- CSS
+- JavaScript
 
-You can open `index.html` directly in the browser, or serve the folder locally with any simple static server.
+## Contact
+
+- GitHub: [RigelFrix](https://github.com/RigelFrix)
+- LinkedIn: [francisyambao11](https://www.linkedin.com/in/francisyambao11/)
