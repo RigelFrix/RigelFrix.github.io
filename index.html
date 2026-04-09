@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Portfolio of Francis Dave Tomy M. Yambao, a mid-level software developer and game developer focused on interactive systems, production-ready web games, and full-stack applications."
+    />
+    <meta name="theme-color" content="#07111f" />
+    <title>Francis Yambao | Software Developer & Game Developer</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Oxanium:wght@500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+    <div class="page-grid" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <div class="brand">
+        <button
+          class="brand-mark"
+          id="profile-preview-open"
+          type="button"
+          aria-label="Open profile photo preview"
+        >
+          <img class="brand-avatar" src="./assets/me.jpg" alt="Portrait of Francis Yambao" />
+        </button>
+        <a class="brand-copy-link" href="#top" aria-label="Francis Yambao portfolio home">
+          <span class="brand-copy">
+            <strong>Francis Yambao</strong>
+            <span>Software Developer | Game Developer | Full-Stack Developer</span>
+          </span>
+        </a>
+      </div>
+
+      <div class="header-meta">
+        <p class="status-pill">Open to new opportunities</p>
+        <nav class="site-nav" aria-label="Primary">
+          <a href="#about">Profile</a>
+          <a href="#projects">Builds</a>
+          <a href="#skills">Skills</a>
+          <a href="#experience">Experience</a>
+          <a href="#resume">Resume</a>
+          <a href="#contact">Contact</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="section hero" data-reveal>
+        <div class="hero-copy panel-shell">
+          <p class="eyebrow">// Francis Dave Tomy M. Yambao</p>
+          <h1>I build games and interactive systems that feel right, stay stable, and ship well.</h1>
+          <p class="hero-summary">
+            I am a mid-level software developer and game developer with
+            hands-on experience across production web games, Unity prototypes,
+            and full-stack systems. This portfolio uses real project media to
+            show how I build, debug, and ship.
+          </p>
+
+          <div class="hero-switch" id="hero-switch" aria-label="Hero showcase selector">
+            <button class="hero-switch-button is-active" type="button" data-track="production">
+              Showcase Reel
+            </button>
+            <button class="hero-switch-button" type="button" data-track="prototype">
+              Prototype Track
+            </button>
+          </div>
+
+          <div class="hero-actions">
+            <a class="button button-primary" href="#projects">Browse Project Chapters</a>
+            <a class="button button-secondary" href="#resume">View Resume Inline</a>
+          </div>
+
+          <div class="hero-metrics">
+            <article>
+              <span class="metric-label">Professional Level</span>
+              <strong>Mid-level, production-tested</strong>
+            </article>
+            <article>
+              <span class="metric-label">Core Stack</span>
+              <strong>Unity, Phaser, TypeScript, C#, PHP, SQL</strong>
+            </article>
+            <article>
+              <span class="metric-label">Best Fit</span>
+              <strong>Interactive systems, gameplay, full-stack delivery</strong>
+            </article>
+            <article>
+              <span class="metric-label">Availability</span>
+              <strong>Can start immediately or within short notice</strong>
+            </article>
+          </div>
+
+          <ul class="hero-contact" aria-label="Contact details">
+            <li><a href="mailto:francisrigel11@gmail.com">francisrigel11@gmail.com</a></li>
+            <li><a href="tel:+639948246052">+63 994 824 6052</a></li>
+            <li>
+              <a href="https://github.com/RigelFrix" target="_blank" rel="noreferrer">
+                github.com/RigelFrix
+              </a>
+            </li>
+            <li>
+              <a href="https://linkedin.com/in/francisyambao11" target="_blank" rel="noreferrer">
+                linkedin.com/in/francisyambao11
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        <aside class="hero-stage panel-shell">
+          <div class="hero-stage-topbar">
+            <span>story_feed.live</span>
+            <span id="hero-track-label">Showcase Reel</span>
+          </div>
+
+          <div class="hero-stage-media" id="hero-stage-media" aria-live="polite"></div>
+
+          <div class="hero-stage-copy">
+            <div>
+              <p class="panel-title" id="hero-track-kicker">Project Showcase</p>
+              <h2 id="hero-track-title">A quick look at the games, simulations, and systems I have built across different tracks.</h2>
+            </div>
+            <p id="hero-track-summary">
+              This reel highlights real-world work from company projects, shipped builds like Build2Connect, 
+              and personal experiments where I explore gameplay, system behavior, and performance.
+              Each piece reflects how I design, debug, and ship interactive systems
+              not just how they look, but This reel highlights real-world work from company projects, 
+              shipped builds like Build2Connect and personal experiments where I explore gameplay, 
+              system behavior, and performance.
+            </p>
+            <ul class="tag-list hero-stage-tags" id="hero-track-tags"></ul>
+          </div>
+
+          <div class="hero-stage-strip">
+            <article class="stage-note">
+              <span class="stage-note-index">01</span>
+              <strong>Project Range</strong>
+              <p>Company releases, Unity prototypes, and extra build experiments in one reel.</p>
+            </article>
+            <article class="stage-note">
+              <span class="stage-note-index">02</span>
+              <strong>Interactive Systems</strong>
+              <p>Gameplay flow, UI behavior, debugging, and backend-aware system thinking.</p>
+            </article>
+            <article class="stage-note">
+              <span class="stage-note-index">03</span>
+              <strong>Deep Dive Below</strong>
+              <p>The hero reel is the tease. The project chapters below hold the full breakdown.</p>
+            </article>
+          </div>
+        </aside>
+      </section>
+
+      <section class="section signal-strip" data-reveal>
+        <div class="strip-shell">
+          <span>Unity Since 2019</span>
+          <span>TypeScript + Phaser</span>
+          <span>Cocos Hands-On</span>
+          <span>Interactive UI Flow</span>
+          <span>Backend-Driven Logic</span>
+          <span>Performance Debugging</span>
+          <span>PHP + MySQL Systems</span>
+          <span>AI-Assisted Engineering</span>
+        </div>
+      </section>
+
+      <section class="section" id="about" data-reveal>
+        <div class="section-heading section-heading-wide">
+          <p class="eyebrow">// Profile & Direction</p>
+          <h2>Built through real execution, not just theory.</h2>
+          <p class="section-summary">
+            My path started in Unity and game development, expanded into web
+            technologies and full-stack systems, and grew into professional
+            production work where reliability, speed, and engineering quality
+            matter every day.
+          </p>
+        </div>
+
+        <div class="story-layout">
+          <div class="story-copy panel-shell">
+            <p>
+              I started building in 2019 with a strong focus on Unity, gameplay
+              systems, and interactive experiences. That naturally pushed me
+              toward rendering, UI behavior, input flow, and the details that
+              make software feel responsive rather than merely functional.
+            </p>
+            <p>
+              Over time, I expanded into web development and backend systems,
+              which gave me a wider understanding of how products are actually
+              delivered: frontend behavior, API logic, database structure,
+              production bugs, and the operational side of software that people
+              depend on.
+            </p>
+            <p>
+              The result is a practical profile that combines game development
+              instincts with full-stack engineering experience. I work best in
+              environments where systems need both polish and discipline.
+            </p>
+          </div>
+
+          <div class="story-rail">
+            <article class="story-card panel-shell">
+              <span class="story-year">2019</span>
+              <h3>Started With Unity</h3>
+              <p>
+                Began by building in Unity, learning through prototypes,
+                experimentation, and hands-on iteration rather than passive study.
+              </p>
+            </article>
+
+            <article class="story-card panel-shell">
+              <span class="story-year">Growth</span>
+              <h3>Expanded Into Web & Systems</h3>
+              <p>
+                Moved deeper into TypeScript, JavaScript, PHP, SQL, and the
+                business logic behind full-stack applications.
+              </p>
+            </article>
+
+            <article class="story-card panel-shell">
+              <span class="story-year">Production</span>
+              <h3>Shipped Real Web Games</h3>
+              <p>
+                Worked inside a BGC-based production environment on web-based
+                games with Phaser, TypeScript, and Cocos-linked systems.
+              </p>
+            </article>
+
+            <article class="story-card panel-shell">
+              <span class="story-year">Next</span>
+              <h3>Engineering Quality Focus</h3>
+              <p>
+                Growing toward stronger software development with emphasis on
+                interactive systems, scalable architecture, and performance.
+              </p>
+            </article>
+          </div>
+        </div>
+
+        <div class="principle-grid">
+          <article class="principle-card panel-shell">
+            <p class="panel-title">Execution-First</p>
+            <h3>I learn by shipping, testing, and reverse-engineering.</h3>
+            <p>
+              I prefer understanding how systems behave in practice rather than
+              memorizing theory without application.
+            </p>
+          </article>
+
+          <article class="principle-card panel-shell">
+            <p class="panel-title">Quality Mindset</p>
+            <h3>Clean logic, maintainable code, and careful debugging.</h3>
+            <p>
+              I aim for code that can survive pressure, changing requirements,
+              and real users rather than only looking good in isolation.
+            </p>
+          </article>
+
+          <article class="principle-card panel-shell">
+            <p class="panel-title">Long-Term Growth</p>
+            <h3>Focused on becoming a stronger engineer, not staying comfortable.</h3>
+            <p>
+              I actively look for environments that improve both my technical
+              depth and the way I collaborate with a team.
+            </p>
+          </article>
+        </div>
+
+        <div class="capture-grid">
+          <article class="capture-card panel-shell">
+            <img
+              src="./assets/showcase/troublefixit-shot.jpg"
+              alt="TroubleFixIt Unity editor capture"
+              loading="lazy"
+            />
+            <div class="capture-label">
+              <strong>TroubleFixIt</strong>
+              <span>Student-focused research support prototype</span>
+            </div>
+          </article>
+
+          <article class="capture-card panel-shell">
+            <img
+              src="./assets/showcase/disaster-game-shot.jpg"
+              alt="Disaster Game Unity editor capture"
+              loading="lazy"
+            />
+            <div class="capture-label">
+              <strong>Disaster Game</strong>
+              <span>Mobile disaster escape simulation</span>
+            </div>
+          </article>
+
+          <article class="capture-card panel-shell">
+            <img
+              src="./assets/showcase/pc-building-shot.png"
+              alt="Build2Connect mobile simulator capture"
+              loading="lazy"
+            />
+            <div class="capture-label">
+              <strong>Build2Connect</strong>
+              <span>Finished guided PC-building game for mobile and desktop</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="projects" data-reveal>
+        <div class="section-heading section-heading-wide">
+          <p class="eyebrow">// Project Chapters</p>
+          <h2>Selected work across production games, personal R&amp;D, and software systems.</h2>
+          <p class="section-summary">
+            Every card below is designed as a chapter rather than a static tile.
+            Open any project to inspect the deeper gallery, build notes, and media
+            behind the work.
+          </p>
+        </div>
+
+        <div class="projects-shell panel-shell">
+          <div class="projects-shell-head">
+            <div>
+              <p class="panel-title">Featured Work</p>
+              <h3>Explorable project chapters backed by your uploaded assets</h3>
+            </div>
+            <span class="projects-total" id="project-gallery-total">0 assets</span>
+          </div>
+
+          <div class="project-gallery-grid" id="project-grid"></div>
+        </div>
+
+        <div class="projects-support">
+          <article class="support-card support-card-system panel-shell">
+            <div class="project-media system-preview" aria-hidden="true">
+              <div class="system-preview-shell">
+                <div class="system-preview-bar">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <p class="system-preview-caption">Auth | CRUD | Reports</p>
+                <div class="system-preview-grid">
+                  <div class="system-preview-main"></div>
+                  <div class="system-preview-side">
+                    <span></span>
+                    <span></span>
+                  </div>
+                </div>
+                <div class="system-preview-rows">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              </div>
+            </div>
+            <div class="project-body project-body-tall">
+              <p class="project-kicker">Software Systems</p>
+              <h3>Inventory Management System</h3>
+              <p>
+                The software side of my work is equally real: backend logic,
+                CRUD operations, reporting, relational database design, and
+                workflow-driven problem solving using PHP, MySQL, and JavaScript.
+              </p>
+              <ul class="tag-list">
+                <li>PHP</li>
+                <li>MySQL</li>
+                <li>JavaScript</li>
+                <li>Business Logic</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="support-card panel-shell support-card-copy">
+            <p class="panel-title">Why This Mix Matters</p>
+            <h3>Game feel on the surface, engineering depth underneath.</h3>
+            <p>
+              My strongest edge is the combination of gameplay-oriented thinking
+              with practical full-stack engineering. I can move from player-facing
+              interaction and realtime behavior into backend logic, databases,
+              and production debugging when the project needs it.
+            </p>
+            <ul class="resume-list">
+              <li>Production web games built with TypeScript, Phaser, and Cocos-based systems.</li>
+              <li>Unity prototypes focused on interaction, rendering, and gameplay iteration.</li>
+              <li>Internal systems that required database design and business workflow support.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="skills" data-reveal>
+        <div class="section-heading section-heading-wide">
+          <p class="eyebrow">// Skill Architecture</p>
+          <h2>Hands-on strengths shaped by shipping, debugging, and adaptation.</h2>
+          <p class="section-summary">
+            I am most useful in roles that need someone who can build, debug,
+            reason about systems deeply, and stay productive even when the work
+            becomes messy or unclear.
+          </p>
+        </div>
+
+        <div class="skill-grid">
+          <article class="skill-card panel-shell">
+            <p class="panel-title">Game Development</p>
+            <h3>Interactive systems, gameplay flow, and player-facing logic.</h3>
+            <ul class="section-list">
+              <li>Unity development since 2019</li>
+              <li>Gameplay systems, UI behavior, and animation pipelines</li>
+              <li>Phaser production work and Cocos-related hands-on experience</li>
+              <li>Shader Graph and rendering-aware experimentation</li>
+            </ul>
+          </article>
+
+          <article class="skill-card panel-shell">
+            <p class="panel-title">Frontend & UX</p>
+            <h3>Interfaces that need to feel responsive, clear, and coherent.</h3>
+            <ul class="section-list">
+              <li>Interactive UI flow and real-time feedback behavior</li>
+              <li>Strong debugging instincts in complex frontends</li>
+              <li>Ability to work inside unfamiliar codebases quickly</li>
+              <li>Focus on systems that users actually feel while using them</li>
+            </ul>
+          </article>
+
+          <article class="skill-card panel-shell">
+            <p class="panel-title">Full-Stack Systems</p>
+            <h3>Backend logic, databases, and internal business tooling.</h3>
+            <ul class="section-list">
+              <li>PHP, JavaScript, SQL, REST-style backend logic</li>
+              <li>MySQL database design for real workflow requirements</li>
+              <li>Bug fixing and system improvement in production environments</li>
+              <li>Practical delivery across frontend, backend, and data layers</li>
+            </ul>
+          </article>
+
+          <article class="skill-card panel-shell">
+            <p class="panel-title">Engineering Mindset</p>
+            <h3>Clean implementation, validation, and steady execution under pressure.</h3>
+            <ul class="section-list">
+              <li>Performance optimization for real-time applications</li>
+              <li>AI-assisted workflow with logic-first validation</li>
+              <li>Collaborative work with QA, designers, and developers</li>
+              <li>Adaptable in unstable environments and shifting priorities</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="tools-panel panel-shell">
+          <div class="tools-copy">
+            <p class="panel-title">Technical Stack</p>
+            <h3>Languages, engines, tools, and workflows I use in real work.</h3>
+          </div>
+
+          <div class="tools-cloud">
+            <span>C#</span>
+            <span>TypeScript</span>
+            <span>JavaScript</span>
+            <span>PHP</span>
+            <span>SQL</span>
+            <span>Unity</span>
+            <span>Phaser</span>
+            <span>Cocos</span>
+            <span>Shader Graph</span>
+            <span>REST APIs</span>
+            <span>MySQL</span>
+            <span>Git</span>
+            <span>VS Code</span>
+            <span>ChatGPT</span>
+            <span>Copilot</span>
+            <span>Cursor</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="experience" data-reveal>
+        <div class="section-heading section-heading-wide">
+          <p class="eyebrow">// Experience Story</p>
+          <h2>Experience shaped by real production constraints and steady self-improvement.</h2>
+          <p class="section-summary">
+            My professional background combines production game work, internal
+            business systems, and a long-running habit of building personal
+            projects to sharpen my engineering instincts.
+          </p>
+        </div>
+
+        <div class="experience-grid">
+          <article class="experience-card panel-shell">
+            <p class="panel-title">Production Game Developer</p>
+            <h3>Mid-level game development in a real company environment.</h3>
+            <p>
+              Worked on web-based games using TypeScript, Phaser, and
+              Cocos-based systems. Built and maintained gameplay systems, UI
+              flows, animation behavior, and backend-driven logic in shipping products.
+            </p>
+          </article>
+
+          <article class="experience-card panel-shell">
+            <p class="panel-title">Full-Stack Delivery</p>
+            <h3>Internal tools and workflow-focused systems.</h3>
+            <p>
+              Built and improved full-stack systems with PHP, MySQL, and
+              JavaScript, including database design, backend logic, performance
+              improvements, and production bug resolution.
+            </p>
+          </article>
+
+          <article class="experience-card panel-shell">
+            <p class="panel-title">Work Ethic & Mindset</p>
+            <h3>Adaptable, resilient, and focused on long-term growth.</h3>
+            <p>
+              Comfortable in high-pressure and shifting environments. I stay
+              productive when requirements are unclear, keep learning through
+              hands-on work, and actively look for ways to improve my technical depth.
+            </p>
+          </article>
+        </div>
+
+        <div class="direction-panel panel-shell">
+          <div class="direction-copy">
+            <p class="panel-title">Career Direction</p>
+              <h3>Growing toward stronger software development in interactive systems.</h3>
+            <p>
+              I am aiming for environments with stronger engineering practices,
+              healthy collaboration, and room to keep growing in game
+              development, frontend systems, and performance-focused software work.
+            </p>
+          </div>
+
+          <ul class="direction-list">
+            <li>Interested in interactive systems, game development, and performance-driven applications.</li>
+            <li>Open to roles that combine frontend, game development, and modern AI-assisted workflows.</li>
+            <li>Looking for teams that value structure, learning, and real engineering quality.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section" id="resume" data-reveal>
+        <div class="resume-grid">
+          <div class="resume-overview panel-shell">
+            <div class="resume-copy">
+              <p class="eyebrow">// Resume & Availability</p>
+              <h2>Available for teams that want execution, curiosity, and engineering growth.</h2>
+              <p>
+                I am open to new opportunities and can start immediately or
+                within a short notice period. The roles that fit me best are
+                those where interactive systems, practical delivery, and
+                thoughtful debugging all matter.
+              </p>
+            </div>
+
+            <div class="resume-quickstats">
+              <article>
+                <span class="metric-label">Role Focus</span>
+                  <strong>Software Developer / Game Developer</strong>
+              </article>
+              <article>
+                <span class="metric-label">Strength Profile</span>
+                <strong>Game dev + full-stack + debugging depth</strong>
+              </article>
+              <article>
+                <span class="metric-label">Work Style</span>
+                <strong>Independent, collaborative, execution-focused</strong>
+              </article>
+              <article>
+                <span class="metric-label">Availability</span>
+                <strong>Immediate to short notice</strong>
+              </article>
+            </div>
+
+            <div class="resume-columns">
+              <article>
+                <p class="panel-title">What I Bring</p>
+                <ul class="section-list">
+                  <li>Production-level work in web-based game systems</li>
+                  <li>Full-stack support for real business workflows</li>
+                  <li>Strong debugging and adaptation in unfamiliar codebases</li>
+                </ul>
+              </article>
+
+              <article>
+                <p class="panel-title">Best-Fit Environments</p>
+                <ul class="section-list">
+                  <li>Structured engineering practices and healthy collaboration</li>
+                  <li>Teams shipping interactive products with real constraints</li>
+                  <li>Work that rewards ownership, learning, and clean execution</li>
+                </ul>
+              </article>
+            </div>
+          </div>
+
+          <div class="resume-viewer panel-shell">
+            <div class="resume-toolbar">
+              <span>resume_snapshot.preview</span>
+              <div class="resume-toolbar-actions">
+                <a
+                  class="resume-toolbar-link"
+                  href="./assets/Francis-Yambao-Resume.pdf"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open PDF
+                </a>
+                <a
+                  class="resume-toolbar-link"
+                  href="https://github.com/RigelFrix"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open GitHub
+                </a>
+              </div>
+            </div>
+
+            <div class="resume-image-stage">
+              <img
+                class="resume-image"
+                src="./assets/resume-display.jpg"
+                alt="Resume preview for Francis Dave Tomy M. Yambao"
+                loading="lazy"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="contact" data-reveal>
+        <div class="contact-shell panel-shell">
+          <div class="contact-copy">
+            <p class="eyebrow">// Contact</p>
+            <h2>Available for interactive, gameplay, and full-stack roles.</h2>
+            <p>
+              Open to teams that need someone who can build features, debug
+              unstable systems, and help ship polished interactive products.
+            </p>
+          </div>
+
+          <div class="contact-links">
+            <a href="mailto:francisrigel11@gmail.com">
+              <span class="contact-link-label">Email</span>
+              <strong>francisrigel11@gmail.com</strong>
+            </a>
+            <a href="tel:+639948246052">
+              <span class="contact-link-label">Phone</span>
+              <strong>+63 994 824 6052</strong>
+            </a>
+            <a href="https://github.com/RigelFrix" target="_blank" rel="noreferrer">
+              <span class="contact-link-label">GitHub</span>
+              <strong>RigelFrix</strong>
+            </a>
+            <a href="https://linkedin.com/in/francisyambao11" target="_blank" rel="noreferrer">
+              <span class="contact-link-label">LinkedIn</span>
+              <strong>francisyambao11</strong>
+            </a>
+          </div>
+
+          <div class="contact-footer-meta">
+            <p>Can start immediately or within short notice.</p>
+            <a class="contact-footer-action" href="#resume">View Resume</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="project-modal" id="project-modal" hidden>
+      <div class="project-modal-backdrop" data-modal-close></div>
+
+      <div
+        class="project-modal-dialog panel-shell"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="project-modal-title"
+      >
+        <div class="project-modal-head">
+          <div class="project-modal-copy">
+            <p class="project-kicker" id="project-modal-kicker">Project Build</p>
+            <h2 id="project-modal-title">Project title</h2>
+            <p class="project-modal-summary" id="project-modal-summary"></p>
+          </div>
+
+          <div class="project-modal-status">
+            <button
+              class="project-modal-close"
+              id="project-modal-close"
+              type="button"
+              aria-label="Close project details"
+            >
+              Close
+            </button>
+            <span class="project-modal-count" id="project-modal-count">0 / 0 assets</span>
+            <div class="album-controls">
+              <button class="album-control" id="project-modal-prev" type="button">Prev</button>
+              <button class="album-control" id="project-modal-next" type="button">Next</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="project-modal-layout">
+          <div class="project-modal-main">
+            <div class="project-modal-stage" id="project-modal-stage" aria-live="polite"></div>
+
+            <div class="project-modal-meta">
+              <p class="panel-title" id="project-modal-current-label">Active capture</p>
+              <ul class="tag-list" id="project-modal-tags"></ul>
+            </div>
+
+            <div
+              class="project-modal-thumbs"
+              id="project-modal-thumbs"
+              aria-label="Project media thumbnails"
+            ></div>
+          </div>
+
+          <aside class="project-modal-side">
+            <div class="project-modal-panel">
+              <p class="panel-title">Build Notes</p>
+              <ul class="project-modal-highlights" id="project-modal-highlights"></ul>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+
+    <div class="profile-preview-modal" id="profile-preview-modal" hidden>
+      <div class="profile-preview-backdrop" data-profile-preview-close></div>
+
+      <div
+        class="profile-preview-dialog panel-shell"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="profile-preview-title"
+      >
+        <div class="profile-preview-head">
+          <p class="panel-title" id="profile-preview-title">Profile Photo</p>
+          <button
+            class="project-modal-close"
+            id="profile-preview-close"
+            type="button"
+            aria-label="Close profile photo preview"
+          >
+            Close
+          </button>
+        </div>
+
+        <div class="profile-preview-stage">
+          <img src="./assets/me.jpg" alt="Portrait of Francis Yambao" loading="eager" />
+        </div>
+      </div>
+    </div>
+
+    <footer class="site-footer">
+      <p>Francis Dave Tomy M. Yambao // Software Developer &amp; Game Developer</p>
+      <p>&copy; <span id="current-year"></span> Built from real project media, practical experience, and resume-backed work.</p>
+    </footer>
+
+    <script src="./gallery-data.js"></script>
+    <script src="./script.js"></script>
+  </body>
+</html>
