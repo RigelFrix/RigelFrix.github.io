@@ -253,7 +253,7 @@ const heroTracks = [
     kicker: "Project Showcase",
     title: "A quick look at the games, simulations, and systems I have built across different tracks.",
     summary:
-      "This reel highlights real-world work from company projects, shipped builds like Build2Connect, and personal experiments where I explore gameplay, system behavior, and performance. Each piece reflects how I design, debug, and ship interactive systems not just how they look, but This reel highlights real-world work from company projects, shipped builds like Build2Connect and personal experiments where I explore gameplay, system behavior, and performance.",
+      "This reel highlights real-world work from company projects, shipped builds like Build2Connect, and personal experiments where I explore gameplay, system behavior, and performance. Each clip is there to quickly show how I approach interactive systems in practice, from feel and implementation to debugging and delivery.",
     tags: ["Company games", "Unity prototypes", "Interactive systems", "Full-stack support"],
     media: {
       type: "montage",
@@ -310,6 +310,49 @@ const resetClipTime = (video) => {
   }
 
   video.currentTime = 0;
+};
+
+const classifyMediaOrientation = (width, height) => {
+  if (!width || !height) {
+    return "landscape";
+  }
+
+  const ratio = width / height;
+
+  if (ratio < 0.9) {
+    return "portrait";
+  }
+
+  if (ratio < 1.2) {
+    return "square";
+  }
+
+  return "landscape";
+};
+
+const applyHeroMontageFit = (frame, video) => {
+  if (!(frame instanceof HTMLElement) || !(video instanceof HTMLMediaElement)) {
+    return;
+  }
+
+  const orientation = classifyMediaOrientation(video.videoWidth, video.videoHeight);
+
+  frame.dataset.mediaOrientation = orientation;
+
+  if (heroStageMedia) {
+    heroStageMedia.dataset.mediaOrientation = orientation;
+  }
+
+  if (orientation === "portrait" || orientation === "square") {
+    video.style.objectFit = "contain";
+    video.style.objectPosition = "center center";
+    video.style.transform = "none";
+    return;
+  }
+
+  video.style.objectFit = "cover";
+  video.style.objectPosition = "center center";
+  video.style.transform = "scale(1.03)";
 };
 
 const clearHeroMontage = () => {
@@ -446,6 +489,7 @@ const createHeroMontage = (media) => {
 
   const shell = document.createElement("div");
   shell.className = "hero-video-highlight";
+  shell.dataset.mediaOrientation = "landscape";
 
   const video = document.createElement("video");
   video.className = "hero-video-element";
@@ -455,6 +499,7 @@ const createHeroMontage = (media) => {
   video.preload = "auto";
   video.poster = "";
   video.setAttribute("aria-label", media.label || "Production highlight reel");
+  video.addEventListener("loadedmetadata", () => applyHeroMontageFit(shell, video));
 
   const overlay = document.createElement("div");
   overlay.className = "hero-video-overlay";
@@ -513,6 +558,7 @@ const renderHeroTrack = (trackId) => {
     button.classList.toggle("is-active", button.dataset.track === track.id);
   });
 
+  heroStageMedia.dataset.mediaOrientation = "landscape";
   heroStageMedia.innerHTML = "";
 
   if (track.media.type === "montage") {
