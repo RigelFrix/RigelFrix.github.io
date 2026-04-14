@@ -310,6 +310,81 @@ window.PROJECT_ALBUMS = [
     ],
   },
   {
+    id: "basketball3d",
+    title: "3D Basketball Shooting Game",
+    kicker: "Feel-First Unity Desktop Prototype",
+    summary:
+      "3D Basketball Shooting Game is a small first-person Unity build centered on shot feel, readable scoring, and playful feedback. I built the loop around picking up the ball, charging throws, dialing in close and deep shots, and keeping every make, miss, and bad bounce readable for the player.",
+    cover: {
+      type: "image",
+      src: "./assets/game 4/screenshot-3.png",
+      alt: "3D Basketball Shooting Game first-person court view",
+    },
+    tags: ["Unity", "Physics-based shooting", "Desktop build", "First-person arcade"],
+    highlights: [
+      "Built a feel-first basketball loop in Unity with charge-and-release shooting, responsive ball control, and readable first-person presentation.",
+      "Implemented 2-point and 3-point scoring, reactive in-world callouts, and quick recovery controls so the game stays playful instead of frustrating.",
+      "Packaged the project as a Windows desktop build and documented the playable build separately from the Unity source repository.",
+    ],
+    links: [
+      {
+        label: "Desktop Build Repo",
+        href: "https://github.com/RigelFrix/3D_BasketBall_Game_Desktop",
+      },
+      {
+        label: "Unity Source Repo",
+        href: "https://github.com/RigelFrix/3D_BasketBall_Game_Master",
+      },
+    ],
+    media: [
+      {
+        type: "video",
+        src: "./assets/game 4/3D basketball shooting game 2026-04-13 06-15-57.mp4",
+        poster: "./assets/game 4/screenshot-3.png",
+        label: "Gameplay capture 01",
+        alt: "3D Basketball Shooting Game gameplay capture 01",
+      },
+      {
+        type: "image",
+        src: "./assets/game 4/screenshot-3.png",
+        label: "First-person ball handling view",
+        alt: "3D Basketball Shooting Game first-person ball handling view",
+      },
+      {
+        type: "image",
+        src: "./assets/game 4/screenshot-2.png",
+        label: "Three-point scoring feedback",
+        alt: "3D Basketball Shooting Game three-point scoring feedback",
+      },
+      {
+        type: "video",
+        src: "./assets/game 4/3D basketball shooting game 2026-04-13 06-14-16.mp4",
+        poster: "./assets/game 4/screenshot-2.png",
+        label: "Gameplay capture 02",
+        alt: "3D Basketball Shooting Game gameplay capture 02",
+      },
+      {
+        type: "image",
+        src: "./assets/game 4/screenshot-1.png",
+        label: "Court reaction callout",
+        alt: "3D Basketball Shooting Game court reaction callout",
+      },
+      {
+        type: "image",
+        src: "./assets/game 4/screenshot-4.png",
+        label: "Hoop close-up",
+        alt: "3D Basketball Shooting Game hoop close-up",
+      },
+      {
+        type: "video",
+        src: "./assets/game 4/3D basketball shooting game - SampleScene - Windows, Mac, Linux - Unity 6.3 LTS (6000.3.10f1)_ _DX12_ 2026-04-12 11-50-39.mp4",
+        poster: "./assets/game 4/screenshot-4.png",
+        label: "Gameplay capture 03",
+        alt: "3D Basketball Shooting Game gameplay capture 03",
+      },
+    ],
+  },
+  {
     id: "prototypelab",
     title: "Prototype Lab",
     kicker: "Independent Systems R&D",

@@ -19,61 +19,90 @@ if (!reduceMotion) {
 if (reduceMotion) {
   revealItems.forEach((item) => item.classList.add("is-visible"));
 } else {
+  const pendingRevealItems = new Set(revealItems);
+
+  const revealVisibleItems = () => {
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+
+    pendingRevealItems.forEach((item) => {
+      const rect = item.getBoundingClientRect();
+      const entersViewport = rect.top <= viewportHeight * 0.92;
+      const remainsOnScreen = rect.bottom >= viewportHeight * 0.08;
+
+      if (entersViewport && remainsOnScreen) {
+        item.classList.add("is-visible");
+        pendingRevealItems.delete(item);
+        observer.unobserve(item);
+      }
+    });
+  };
+
   const observer = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
         if (entry.isIntersecting) {
           entry.target.classList.add("is-visible");
+          pendingRevealItems.delete(entry.target);
           observer.unobserve(entry.target);
         }
       });
     },
     {
-      threshold: 0.16,
-      rootMargin: "0px 0px -48px 0px",
+      threshold: 0.04,
+      rootMargin: "0px 0px -12% 0px",
     }
   );
 
   revealItems.forEach((item) => observer.observe(item));
+  revealVisibleItems();
+
+  let revealTicking = false;
+
+  const queueRevealCheck = () => {
+    if (revealTicking || !pendingRevealItems.size) {
+      return;
+    }
+
+    revealTicking = true;
+    window.requestAnimationFrame(() => {
+      revealVisibleItems();
+      revealTicking = false;
+    });
+  };
 
   if (window.location.hash) {
     revealItems.forEach((item) => item.classList.add("is-visible"));
   }
+
+  window.addEventListener("load", revealVisibleItems, { once: true });
+  window.addEventListener("resize", queueRevealCheck, { passive: true });
+  window.addEventListener("scroll", queueRevealCheck, { passive: true });
 }
 
 if (siteHeader) {
-  let lastScrollY = window.scrollY;
   let headerTicking = false;
 
-  const syncHeaderState = ({ resetVisibility = false } = {}) => {
+  const syncHeaderState = () => {
     const currentScrollY = window.scrollY;
-    const nearTop = currentScrollY < 36;
-    const delta = currentScrollY - lastScrollY;
+    const nearTop = currentScrollY <= 24;
 
     siteHeader.classList.toggle("is-scrolled", !nearTop);
-
-    if (nearTop || resetVisibility) {
-      siteHeader.classList.remove("is-hidden");
-    } else if (Math.abs(delta) >= 6) {
-      siteHeader.classList.toggle("is-hidden", delta > 0 && currentScrollY > 120);
-    }
-
-    lastScrollY = currentScrollY;
+    siteHeader.classList.toggle("is-hidden", !nearTop);
     headerTicking = false;
   };
 
-  syncHeaderState({ resetVisibility: true });
+  syncHeaderState();
 
   window.addEventListener(
     "load",
     () => {
-      syncHeaderState({ resetVisibility: true });
+      syncHeaderState();
     },
     { once: true }
   );
 
   window.addEventListener("pageshow", () => {
-    syncHeaderState({ resetVisibility: true });
+    syncHeaderState();
   });
 
   window.addEventListener(
@@ -609,6 +638,8 @@ const projectModalStage = document.getElementById("project-modal-stage");
 const projectModalCurrentLabel = document.getElementById("project-modal-current-label");
 const projectModalTags = document.getElementById("project-modal-tags");
 const projectModalHighlights = document.getElementById("project-modal-highlights");
+const projectModalLinksWrap = document.getElementById("project-modal-links-wrap");
+const projectModalLinks = document.getElementById("project-modal-links");
 const projectModalThumbs = document.getElementById("project-modal-thumbs");
 const projectModalPrev = document.getElementById("project-modal-prev");
 const projectModalNext = document.getElementById("project-modal-next");
@@ -803,6 +834,30 @@ const renderModalThumbs = (project) => {
   }
 };
 
+const renderProjectLinks = (project) => {
+  if (!projectModalLinksWrap || !projectModalLinks) {
+    return;
+  }
+
+  projectModalLinks.innerHTML = "";
+
+  const links = Array.isArray(project.links)
+    ? project.links.filter((item) => item?.href && item?.label)
+    : [];
+
+  projectModalLinksWrap.hidden = !links.length;
+
+  links.forEach((item) => {
+    const link = document.createElement("a");
+    link.className = "button button-secondary project-modal-link";
+    link.href = item.href;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = item.label;
+    projectModalLinks.append(link);
+  });
+};
+
 const renderProjectModal = () => {
   const project = projectAlbums[currentProjectIndex];
 
@@ -846,6 +901,7 @@ const renderProjectModal = () => {
     });
   }
 
+  renderProjectLinks(project);
   renderProjectStage(project, activeItem);
   renderModalThumbs(project);
 };

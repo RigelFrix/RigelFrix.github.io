@@ -1792,6 +1792,23 @@ ul {
   color: var(--accent);
 }
 
+.project-modal-links {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.project-modal-link {
+  width: 100%;
+  justify-content: flex-start;
+  min-height: 0;
+  padding: 0.95rem 1rem;
+  color: var(--text);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .media-thumb {
   display: grid;
   gap: 0.55rem;
