@@ -2,9 +2,18 @@ window.PROJECT_ALBUMS = [
   {
     id: "dijoker",
     title: "DiJoker / Company Game Archive",
+    name: "DiJoker",
     kicker: "Company Production Games",
+    status: "Live production",
+    tagline: "Web games I built and maintained in live production with Phaser and TypeScript.",
+    stats: { engine: "Phaser + TypeScript", platform: "Web" },
+    select: {
+      tile: "./assets/select/dijoker-tile.jpg",
+      poster: "./assets/select/dijoker-poster.jpg",
+      loop: "./assets/select/dijoker-loop.mp4",
+    },
     summary:
-      "This chapter covers the web-based games I helped build and maintain in a live company environment. DiJoker is the featured title, and the footage reflects work across gameplay behavior, UI state flow, backend-connected features, release support, and day-to-day debugging in production.",
+      "Web games I helped build and maintain at a game company, with DiJoker as the featured title. The footage covers gameplay behaviour, UI state flow, backend-connected features, release support, and the day-to-day debugging that live games need.",
     cover: {
       type: "image",
       src: "./assets/Games i created from a company/dijoker.webp",
@@ -60,9 +69,18 @@ window.PROJECT_ALBUMS = [
   {
     id: "troublefixit",
     title: "TroubleFixIt",
+    name: "TroubleFixIt",
     kicker: "Commissioned Research Support Build",
+    status: "Commissioned build",
+    tagline: "A commissioned Unity build that supports research-oriented learning for higher-grade students.",
+    stats: { engine: "Unity", platform: null },
+    select: {
+      tile: "./assets/select/troublefixit-tile.jpg",
+      poster: "./assets/select/troublefixit-poster.jpg",
+      loop: "./assets/select/troublefixit-loop.mp4",
+    },
     summary:
-      "TroubleFixIt was commissioned as an interactive build designed to support research-oriented learning for higher-grade students. My role was to turn the concept into a usable gameplay flow with clear interactions, readable progression, and a structure that served the actual use case.",
+      "A commissioned interactive build that supports research-oriented learning for higher-grade students. I turned the concept into a playable flow with clear interactions, readable progression, and a structure that served how it would actually be used.",
     cover: {
       type: "image",
       src: "./assets/game 1/469523681_122200693922232010_1103197669450663526_n.jpg",
@@ -146,9 +164,18 @@ window.PROJECT_ALBUMS = [
   {
     id: "disaster",
     title: "Disaster Game",
+    name: "Disaster Game",
     kicker: "Mobile Disaster Escape Game",
+    status: "Mobile game",
+    tagline: "A mobile escape game built around emergency scenarios like earthquakes and flooding.",
+    stats: { engine: "Unity", platform: "Mobile" },
+    select: {
+      tile: "./assets/select/disaster-tile.jpg",
+      poster: "./assets/select/disaster-poster.jpg",
+      loop: "./assets/select/disaster-loop.mp4",
+    },
     summary:
-      "This chapter showcases a mobile disaster escape game built around scenario-driven gameplay and environmental pressure. The work focused on turning emergency situations into readable, responsive interaction through gameplay flow, scene logic, and mobile-friendly implementation.",
+      "A mobile escape game built on scenario-driven play and environmental pressure. The work was turning emergencies into readable, responsive interaction through gameplay flow, scene logic, and a mobile-friendly implementation.",
     cover: {
       type: "image",
       src: "./assets/game 2/469548110_122200693730232010_3582574126564016131_n.jpg",
@@ -244,9 +271,18 @@ window.PROJECT_ALBUMS = [
   {
     id: "pcbuilding",
     title: "Build2Connect",
+    name: "Build2Connect",
     kicker: "Finished Guided Simulation Game",
+    status: "Finished game",
+    tagline: "A finished guided game that teaches players to build a PC, on mobile and desktop.",
+    stats: { engine: "Unity", platform: "Mobile + desktop" },
+    select: {
+      tile: "./assets/select/pcbuilding-tile.jpg",
+      poster: "./assets/select/pcbuilding-poster.jpg",
+      loop: "./assets/select/pcbuilding-loop.mp4",
+    },
     summary:
-      "Build2Connect is a finished guided simulation game for both mobile and desktop. I worked across the systems needed to deliver it: tutorial sequencing, gameplay flow, cutscene integration, voice-led presentation, and the interactive structure that teaches players how to build a PC through play.",
+      "A finished guided simulation game for mobile and desktop that teaches players how to build a PC through play. I worked across tutorial sequencing, gameplay flow, cutscene integration, and voice-led presentation.",
     cover: {
       type: "image",
       src: "./assets/game 3/559375814_1730221184390449_795926192986973859_n.png",
@@ -312,9 +348,18 @@ window.PROJECT_ALBUMS = [
   {
     id: "basketball3d",
     title: "3D Basketball Shooting Game",
+    name: "3D Basketball",
     kicker: "Feel-First Unity Desktop Prototype",
+    status: "Desktop prototype",
+    tagline: "A first-person Unity shooter built around shot feel: pick up, charge, release, score.",
+    stats: { engine: "Unity", platform: "Windows desktop" },
+    select: {
+      tile: "./assets/select/basketball3d-tile.jpg",
+      poster: "./assets/select/basketball3d-poster.jpg",
+      loop: "./assets/select/basketball3d-loop.mp4",
+    },
     summary:
-      "3D Basketball Shooting Game is a small first-person Unity build centered on shot feel, readable scoring, and playful feedback. I built the loop around picking up the ball, charging throws, dialing in close and deep shots, and keeping every make, miss, and bad bounce readable for the player.",
+      "A small first-person Unity build centred on shot feel, readable scoring, and playful feedback. The loop is picking up the ball, charging throws, dialling in close and deep shots, and keeping every make, miss, and bad bounce readable.",
     cover: {
       type: "image",
       src: "./assets/game 4/screenshot-3.png",
@@ -387,9 +432,18 @@ window.PROJECT_ALBUMS = [
   {
     id: "prototypelab",
     title: "Prototype Lab",
+    name: "Prototype Lab",
     kicker: "Independent Systems R&D",
+    status: "Independent R&D",
+    tagline: "Independent builds where I test gameplay, rendering, and interaction ideas.",
+    stats: { engine: "Unity", platform: "Various" },
+    select: {
+      tile: "./assets/select/prototypelab-tile.jpg",
+      poster: "./assets/select/prototypelab-poster.jpg",
+      loop: "./assets/select/prototypelab-loop.mp4",
+    },
     summary:
-      "Prototype Lab collects the independent builds where I explore gameplay behavior, rendering, interaction flow, and system design outside production work. It is where I test ideas through real implementation and carry the useful lessons back into shipped work.",
+      "Independent builds where I explore gameplay behaviour, rendering, interaction flow, and system design outside production work, then carry the useful lessons back into shipped games.",
     cover: {
       type: "image",
       src: "./assets/other projects/prototype lab thumbnail.png",

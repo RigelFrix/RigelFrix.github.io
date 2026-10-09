@@ -1,1031 +1,552 @@
-const yearTarget = document.getElementById("current-year");
-const root = document.documentElement;
-const revealItems = document.querySelectorAll("[data-reveal]");
-const siteHeader = document.querySelector(".site-header");
-const projectAlbums = window.PROJECT_ALBUMS || [];
+const projects = window.PROJECT_ALBUMS || [];
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 
+const $ = (id) => document.getElementById(id);
+const assetUrl = (src) => encodeURI(src);
+
+const yearTarget = $("current-year");
 if (yearTarget) {
   yearTarget.textContent = new Date().getFullYear();
 }
 
-if (!reduceMotion) {
-  window.addEventListener("pointermove", (event) => {
-    root.style.setProperty("--pointer-x", `${event.clientX}px`);
-    root.style.setProperty("--pointer-y", `${event.clientY}px`);
-  });
-}
+const describeFootage = (project) => {
+  const media = project.media || [];
+  const clips = media.filter((item) => item.type === "video").length;
+  const shots = media.length - clips;
+  const parts = [];
 
-if (reduceMotion) {
-  revealItems.forEach((item) => item.classList.add("is-visible"));
-} else {
-  const pendingRevealItems = new Set(revealItems);
+  if (clips) {
+    parts.push(`${clips} ${clips === 1 ? "clip" : "clips"}`);
+  }
 
-  const revealVisibleItems = () => {
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  if (shots) {
+    parts.push(`${shots} ${shots === 1 ? "shot" : "shots"}`);
+  }
 
-    pendingRevealItems.forEach((item) => {
-      const rect = item.getBoundingClientRect();
-      const entersViewport = rect.top <= viewportHeight * 0.92;
-      const remainsOnScreen = rect.bottom >= viewportHeight * 0.08;
+  return parts.join(", ") || "None yet";
+};
 
-      if (entersViewport && remainsOnScreen) {
-        item.classList.add("is-visible");
-        pendingRevealItems.delete(item);
-        observer.unobserve(item);
-      }
-    });
+const fillStats = (list, project) => {
+  if (!list) {
+    return;
+  }
+
+  const values = {
+    status: project.status || project.kicker,
+    engine: project.stats?.engine,
+    platform: project.stats?.platform,
+    footage: describeFootage(project),
   };
 
-  const observer = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          entry.target.classList.add("is-visible");
-          pendingRevealItems.delete(entry.target);
-          observer.unobserve(entry.target);
-        }
-      });
-    },
-    {
-      threshold: 0.04,
-      rootMargin: "0px 0px -12% 0px",
+  list.querySelectorAll("[data-stat]").forEach((node) => {
+    node.textContent = values[node.dataset.stat] || "\u2014";
+  });
+};
+
+const playQuietly = (video) => {
+  const attempt = video.play();
+
+  if (attempt && typeof attempt.catch === "function") {
+    attempt.catch(() => {});
+  }
+};
+
+/* Stage: the selected game plays here; roster hover/focus previews before opening. */
+
+const stageVideo = $("stage-video");
+const stageScreen = document.querySelector(".stage-screen");
+const stageName = $("stage-name");
+const stageTagline = $("stage-tagline");
+const stageStats = $("stage-stats");
+const stageOpen = $("stage-open");
+const stageOpenLabel = $("stage-open-label");
+const roster = $("project-grid");
+
+let stageIndex = -1;
+let swapTimer = 0;
+let previewTimer = 0;
+
+const paintStage = (project) => {
+  const select = project.select || {};
+
+  if (stageVideo) {
+    stageVideo.poster = select.poster ? assetUrl(select.poster) : "";
+
+    if (select.loop) {
+      stageVideo.src = assetUrl(select.loop);
+
+      if (!reduceMotion) {
+        playQuietly(stageVideo);
+      }
+    } else {
+      stageVideo.removeAttribute("src");
+      stageVideo.load();
     }
-  );
+  }
 
-  revealItems.forEach((item) => observer.observe(item));
-  revealVisibleItems();
+  stageName.textContent = project.name || project.title;
+  stageTagline.textContent = project.tagline || project.summary;
+  stageOpenLabel.textContent = `Open ${project.name || project.title}`;
+  fillStats(stageStats, project);
 
-  let revealTicking = false;
+  roster?.querySelectorAll(".tile").forEach((tile) => {
+    const current = Number(tile.dataset.index) === stageIndex;
+    tile.classList.toggle("is-current", current);
 
-  const queueRevealCheck = () => {
-    if (revealTicking || !pendingRevealItems.size) {
+    if (current && roster.scrollWidth > roster.clientWidth) {
+      const item = tile.parentElement;
+      const left = item.offsetLeft;
+      const right = left + item.offsetWidth;
+
+      if (left < roster.scrollLeft || right > roster.scrollLeft + roster.clientWidth) {
+        roster.scrollTo({ left: left - 16, behavior: reduceMotion ? "auto" : "smooth" });
+      }
+    }
+  });
+};
+
+const setStage = (index) => {
+  const count = projects.length;
+
+  if (!count) {
+    return;
+  }
+
+  const next = ((index % count) + count) % count;
+
+  if (next === stageIndex) {
+    return;
+  }
+
+  stageIndex = next;
+  const project = projects[next];
+
+  if (reduceMotion || !stageScreen) {
+    paintStage(project);
+    return;
+  }
+
+  window.clearTimeout(swapTimer);
+  stageScreen.classList.remove("is-swapping");
+  void stageScreen.offsetWidth;
+  stageScreen.classList.add("is-swapping");
+
+  swapTimer = window.setTimeout(() => {
+    paintStage(project);
+    swapTimer = window.setTimeout(() => stageScreen.classList.remove("is-swapping"), 260);
+  }, 170);
+};
+
+const queuePreview = (index) => {
+  window.clearTimeout(previewTimer);
+  previewTimer = window.setTimeout(() => setStage(index), 110);
+};
+
+const rosterColumns = () => {
+  if (!roster) {
+    return 1;
+  }
+
+  return getComputedStyle(roster).gridTemplateColumns.split(" ").filter(Boolean).length || 1;
+};
+
+const renderRoster = () => {
+  if (!roster) {
+    return;
+  }
+
+  roster.innerHTML = "";
+
+  projects.forEach((project, index) => {
+    const item = document.createElement("li");
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "tile";
+    tile.dataset.index = String(index);
+    tile.setAttribute("aria-haspopup", "dialog");
+    tile.setAttribute(
+      "aria-label",
+      `${project.name || project.title}, ${project.status || project.kicker}. Open project`
+    );
+
+    const frame = document.createElement("span");
+    frame.className = "tile-frame";
+
+    const art = document.createElement("img");
+    art.className = "tile-art";
+    art.src = assetUrl(project.select?.tile || project.cover?.src || "");
+    art.alt = "";
+    art.loading = "lazy";
+    art.decoding = "async";
+
+    const name = document.createElement("span");
+    name.className = "tile-name";
+    name.textContent = project.name || project.title;
+
+    const cursor = document.createElement("span");
+    cursor.className = "tile-cursor";
+    cursor.setAttribute("aria-hidden", "true");
+    cursor.textContent = "P1";
+
+    frame.append(art, name, cursor);
+    tile.append(frame);
+    item.append(tile);
+    roster.append(item);
+
+    if (finePointer) {
+      tile.addEventListener("pointerenter", () => queuePreview(index));
+    }
+
+    tile.addEventListener("focus", () => queuePreview(index));
+    tile.addEventListener("click", () => {
+      window.clearTimeout(previewTimer);
+      setStage(index);
+      openProjectModal(index, tile);
+    });
+  });
+
+  roster.addEventListener("keydown", (event) => {
+    const keys = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -rosterColumns(), ArrowDown: rosterColumns() };
+    const step = keys[event.key];
+    const current = event.target.closest?.(".tile");
+
+    if (!step || !current) {
       return;
     }
 
-    revealTicking = true;
-    window.requestAnimationFrame(() => {
-      revealVisibleItems();
-      revealTicking = false;
-    });
-  };
+    const target = Number(current.dataset.index) + step;
+    const tiles = roster.querySelectorAll(".tile");
 
-  if (window.location.hash) {
-    revealItems.forEach((item) => item.classList.add("is-visible"));
-  }
-
-  window.addEventListener("load", revealVisibleItems, { once: true });
-  window.addEventListener("resize", queueRevealCheck, { passive: true });
-  window.addEventListener("scroll", queueRevealCheck, { passive: true });
-}
-
-if (siteHeader) {
-  let headerTicking = false;
-
-  const syncHeaderState = () => {
-    const currentScrollY = window.scrollY;
-    const nearTop = currentScrollY <= 24;
-
-    siteHeader.classList.toggle("is-scrolled", !nearTop);
-    siteHeader.classList.toggle("is-hidden", !nearTop);
-    headerTicking = false;
-  };
-
-  syncHeaderState();
-
-  window.addEventListener(
-    "load",
-    () => {
-      syncHeaderState();
-    },
-    { once: true }
-  );
-
-  window.addEventListener("pageshow", () => {
-    syncHeaderState();
+    if (target >= 0 && target < tiles.length) {
+      event.preventDefault();
+      tiles[target].focus();
+      queuePreview(target);
+    }
   });
+};
 
-  window.addEventListener(
-    "scroll",
-    () => {
-      if (headerTicking) {
-        return;
-      }
+if (projects.length) {
+  renderRoster();
+  setStage(0);
 
-      headerTicking = true;
-      window.requestAnimationFrame(syncHeaderState);
-    },
-    { passive: true }
-  );
+  $("stage-prev")?.addEventListener("click", () => setStage(stageIndex - 1));
+  $("stage-next")?.addEventListener("click", () => setStage(stageIndex + 1));
+  stageOpen?.addEventListener("click", () => openProjectModal(stageIndex, stageOpen));
 }
 
-const getAssetUrl = (src) => encodeURI(src);
-
-const createMediaElement = (item, options = {}) => {
-  const {
-    fit = "cover",
-    controls = false,
-    autoplay = false,
-    muted = true,
-    loop = false,
-    playsInline = true,
-    preload = "metadata",
-    loading = "lazy",
-  } = options;
-
-  if (item.type === "synthetic") {
-    const synthetic = document.createElement("div");
-    synthetic.className = "synthetic-media";
-
-    if (item.kicker) {
-      const kicker = document.createElement("span");
-      kicker.className = "synthetic-media-kicker";
-      kicker.textContent = item.kicker;
-      synthetic.append(kicker);
+if (stageVideo && !reduceMotion && "IntersectionObserver" in window) {
+  new IntersectionObserver(([entry]) => {
+    if (entry.isIntersecting) {
+      playQuietly(stageVideo);
+    } else {
+      stageVideo.pause();
     }
+  }).observe(stageVideo);
+}
 
-    const copy = document.createElement("div");
-    copy.className = "synthetic-media-copy";
+/* Dossier: every capture, build notes, and links for one project. */
 
-    const label = document.createElement("strong");
-    label.textContent = item.label || "Interactive Systems";
+const modal = $("project-modal");
+const modalDialog = modal?.querySelector(".dossier-dialog");
+const modalTitle = $("project-modal-title");
+const modalStats = $("project-modal-stats");
+const modalSummary = $("project-modal-summary");
+const modalStage = $("project-modal-stage");
+const modalLabel = $("project-modal-current-label");
+const modalCount = $("project-modal-count");
+const modalThumbs = $("project-modal-thumbs");
+const modalNotes = $("project-modal-highlights");
+const modalTags = $("project-modal-tags");
+const modalLinksWrap = $("project-modal-links-wrap");
+const modalLinks = $("project-modal-links");
+const modalClose = $("project-modal-close");
+const modalPrev = $("project-modal-prev");
+const modalNext = $("project-modal-next");
+const splash = $("vs-splash");
+const splashName = $("vs-name");
+const photoModal = $("profile-preview-modal");
+const photoOpen = $("profile-preview-open");
+const photoClose = $("profile-preview-close");
 
-    const detail = document.createElement("p");
-    detail.textContent = item.detail || "Production-ready engineering and gameplay-focused execution";
+let modalProject = 0;
+let modalMedia = 0;
+let modalTrigger = null;
+let photoTrigger = null;
+let splashTimer = 0;
 
-    copy.append(label, detail);
-    synthetic.append(copy);
+const syncScrollLock = () => {
+  const open = (modal && !modal.hidden) || (photoModal && !photoModal.hidden);
+  document.body.classList.toggle("modal-open", Boolean(open));
+};
 
-    const meter = document.createElement("div");
-    meter.className = "synthetic-media-meter";
-
-    for (let index = 0; index < 3; index += 1) {
-      const line = document.createElement("span");
-      meter.append(line);
-    }
-
-    synthetic.append(meter);
-
-    if (Array.isArray(item.stats) && item.stats.length) {
-      const statList = document.createElement("ul");
-      statList.className = "synthetic-media-stats";
-
-      item.stats.forEach((stat) => {
-        const chip = document.createElement("li");
-        chip.textContent = stat;
-        statList.append(chip);
-      });
-
-      synthetic.append(statList);
-    }
-
-    return synthetic;
-  }
-
+const createMedia = (item, { thumb = false } = {}) => {
   if (item.type === "video") {
     const video = document.createElement("video");
-    video.src = getAssetUrl(item.src);
-    video.controls = controls;
-    video.autoplay = autoplay;
-    video.muted = muted;
-    video.loop = loop;
-    video.playsInline = playsInline;
-    video.preload = preload;
-    video.style.objectFit = fit;
+    video.src = assetUrl(item.src);
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "metadata";
 
     if (item.poster) {
-      video.poster = getAssetUrl(item.poster);
+      video.poster = assetUrl(item.poster);
+    }
+
+    if (!thumb) {
+      video.controls = true;
+      video.loop = true;
+      video.autoplay = !reduceMotion;
     }
 
     return video;
   }
 
   const image = document.createElement("img");
-  image.src = getAssetUrl(item.src);
-  image.alt = item.alt || "";
-  image.loading = loading;
-  image.style.objectFit = fit;
+  image.src = assetUrl(item.src);
+  image.alt = thumb ? "" : item.alt || "";
+  image.loading = thumb ? "lazy" : "eager";
+  image.decoding = "async";
   return image;
 };
 
-const makeTagChip = (label) => {
-  const chip = document.createElement("li");
-  chip.textContent = label;
-  return chip;
-};
-
-const createMontageSources = (projectFilter = () => true) =>
-  projectAlbums.flatMap((project) => {
-    if (!projectFilter(project)) {
-      return [];
-    }
-
-    const poster = project.cover?.type === "image" ? project.cover.src : undefined;
-
-    return (project.media || [])
-      .filter((item) => item.type === "video")
-      .map((item, index) => ({
-        type: "video",
-        src: item.src,
-        alt: item.alt,
-        label: item.label || `Clip ${index + 1}`,
-        projectTitle: project.title,
-        projectKicker: project.kicker,
-        teaser: `${project.kicker} - ${item.label || `Clip ${index + 1}`}`,
-        poster,
-      }));
-  });
-
-const showcaseHighlightSources = createMontageSources();
-const prototypeHighlightSources = createMontageSources((project) => project.id !== "dijoker");
-
-const heroTracks = [
-  {
-    id: "production",
-    label: "Showcase Reel",
-    kicker: "Production Showcase",
-    title: "Production work across games, simulation systems, and full-stack delivery.",
-    summary:
-      "This reel pulls from live company releases, shipped interactive builds, and focused R&D work to show the systems behind delivery: gameplay flow, UI state, backend-connected logic, debugging, and performance tuning.",
-    tags: ["Production games", "Shipped systems", "Interactive implementation", "Full-stack support"],
-    media: {
-      type: "montage",
-      label: "Portfolio highlight reel",
-      detail: "Gameplay systems, UI state, backend-aware behavior, and production fixes across shipped work.",
-      kicker: "Production showcase",
-      sources: showcaseHighlightSources,
-    },
-  },
-  {
-    id: "prototype",
-    label: "R&D Track",
-    kicker: "Independent R&D",
-    title: "Independent Unity builds focused on feel, rendering, and system behavior",
-    summary:
-      "Outside production work, I use Unity to pressure-test interaction ideas, rendering choices, and gameplay systems through real implementation. This track shows how I refine instincts by building, profiling, and iterating.",
-    tags: ["Unity R&D", "Gameplay systems", "Rendering", "Iteration"],
-    media: {
-      type: "montage",
-      label: "R&D highlight reel",
-      detail: "Independent Unity builds, rendering studies, mobile interaction tests, and system-focused exploration.",
-      kicker: "Independent R&D",
-      sources: prototypeHighlightSources,
-    },
-  },
-];
-
-const heroStageMedia = document.getElementById("hero-stage-media");
-const heroTrackLabel = document.getElementById("hero-track-label");
-const heroTrackKicker = document.getElementById("hero-track-kicker");
-const heroTrackTitle = document.getElementById("hero-track-title");
-const heroTrackSummary = document.getElementById("hero-track-summary");
-const heroTrackTags = document.getElementById("hero-track-tags");
-const heroSwitchButtons = document.querySelectorAll(".hero-switch-button");
-let heroMontageTimer = 0;
-let heroMontageVideo = null;
-let heroMontageBackdrop = null;
-let heroMontageIndex = -1;
-
-const safelyPlayVideo = (video) => {
-  if (!(video instanceof HTMLMediaElement)) {
-    return;
-  }
-
-  const playPromise = video.play();
-
-  if (playPromise && typeof playPromise.catch === "function") {
-    playPromise.catch(() => {});
-  }
-};
-
-const resetClipTime = (video) => {
-  if (!(video instanceof HTMLMediaElement) || !Number.isFinite(video.duration)) {
-    return;
-  }
-
-  video.currentTime = 0;
-};
-
-const classifyMediaOrientation = (width, height) => {
-  if (!width || !height) {
-    return "landscape";
-  }
-
-  const ratio = width / height;
-
-  if (ratio < 0.9) {
-    return "portrait";
-  }
-
-  if (ratio < 1.2) {
-    return "square";
-  }
-
-  return "landscape";
-};
-
-const applyHeroMontageFit = (frame, video) => {
-  if (!(frame instanceof HTMLElement) || !(video instanceof HTMLMediaElement)) {
-    return;
-  }
-
-  const orientation = classifyMediaOrientation(video.videoWidth, video.videoHeight);
-
-  frame.dataset.mediaOrientation = orientation;
-
-  if (heroStageMedia) {
-    heroStageMedia.dataset.mediaOrientation = orientation;
-  }
-
-  if (orientation === "portrait" || orientation === "square") {
-    video.style.objectFit = "contain";
-    video.style.objectPosition = "center center";
-    video.style.transform = "none";
-    return;
-  }
-
-  video.style.objectFit = "cover";
-  video.style.objectPosition = "center center";
-  video.style.transform = "scale(1.03)";
-};
-
-const clearHeroMontage = () => {
-  if (heroMontageTimer) {
-    window.clearInterval(heroMontageTimer);
-    heroMontageTimer = 0;
-  }
-
-  if (heroMontageVideo instanceof HTMLMediaElement) {
-    heroMontageVideo.pause();
-  }
-
-  if (heroMontageBackdrop instanceof HTMLMediaElement) {
-    heroMontageBackdrop.pause();
-  }
-
-  heroMontageVideo = null;
-  heroMontageBackdrop = null;
-  heroMontageIndex = -1;
-};
-
-const selectNextMontageIndex = (sources) => {
-  if (!sources.length) {
-    return -1;
-  }
-
-  return (heroMontageIndex + 1 + sources.length) % sources.length;
-};
-
-const updateHeroMontage = (video, media, titleNode, metaNode, dots = []) => {
-  const sources = media.sources || [];
-  const nextIndex = selectNextMontageIndex(sources);
-
-  if (nextIndex < 0) {
-    return;
-  }
-
-  heroMontageIndex = nextIndex;
-
-  const activeSource = sources[nextIndex];
-
-  if (titleNode) {
-    titleNode.textContent = activeSource.label || `Company capture ${nextIndex + 1}`;
-  }
-
-  if (metaNode) {
-    metaNode.textContent = `${nextIndex + 1} / ${sources.length} clips · randomized every 2s`;
-  }
-
-  dots.forEach((dot, index) => {
-    dot.classList.toggle("is-active", index === nextIndex);
-  });
-
-  const nextSourceUrl = getAssetUrl(activeSource.src);
-
-  const syncPlayback = () => {
-    resetClipTime(video);
-    safelyPlayVideo(video);
-  };
-
-  if (video.dataset.source !== nextSourceUrl) {
-    video.dataset.source = nextSourceUrl;
-    video.addEventListener("loadedmetadata", syncPlayback, { once: true });
-    video.src = nextSourceUrl;
-    video.load();
-    return;
-  }
-
-  syncPlayback();
-};
-
-const updateHeroMontagePreview = (
-  video,
-  backdrop,
-  media,
-  titleNode,
-  detailNode,
-  metaNode,
-  dots = []
-) => {
-  const sources = media.sources || [];
-  const nextIndex = selectNextMontageIndex(sources);
-
-  if (nextIndex < 0) {
-    return;
-  }
-
-  heroMontageIndex = nextIndex;
-
-  const activeSource = sources[nextIndex];
-  const indicatorIndex = dots.length ? nextIndex % dots.length : -1;
-  const nextSourceUrl = getAssetUrl(activeSource.src);
-
-  if (titleNode) {
-    titleNode.textContent =
-      activeSource.projectTitle || activeSource.label || `Project ${nextIndex + 1}`;
-  }
-
-  if (detailNode) {
-    detailNode.textContent =
-      activeSource.teaser || media.detail || "Production-focused project highlights";
-  }
-
-  if (metaNode) {
-    metaNode.textContent = `Clip ${nextIndex + 1} / ${sources.length}`;
-  }
-
-  dots.forEach((dot, index) => {
-    dot.classList.toggle("is-active", index === indicatorIndex);
-  });
-
-  const syncPlayback = () => {
-    resetClipTime(video);
-    resetClipTime(backdrop);
-    safelyPlayVideo(video);
-    safelyPlayVideo(backdrop);
-  };
-
-  if (video.dataset.source !== nextSourceUrl) {
-    video.dataset.source = nextSourceUrl;
-    if (backdrop instanceof HTMLMediaElement) {
-      backdrop.dataset.source = nextSourceUrl;
-    }
-    video.poster = "";
-
-    video.addEventListener("loadedmetadata", syncPlayback, { once: true });
-    video.src = nextSourceUrl;
-    video.load();
-
-    if (backdrop instanceof HTMLMediaElement) {
-      backdrop.src = nextSourceUrl;
-      backdrop.load();
-    }
-    return;
-  }
-
-  syncPlayback();
-};
-
-const createHeroMontage = (media) => {
-  if (!Array.isArray(media.sources) || !media.sources.length) {
-    return createMediaElement({
-      type: "synthetic",
-      label: "Production Release Track",
-      detail: "TypeScript, Phaser, Cocos, gameplay flow, and backend-driven stability",
-      kicker: media.kicker || "Live production stack",
-      stats: ["Gameplay flow", "UI states", "Release stability"],
-    });
-  }
-
-  const shell = document.createElement("div");
-  shell.className = "hero-video-highlight";
-  shell.dataset.mediaOrientation = "landscape";
-
-  const backdrop = document.createElement("video");
-  backdrop.className = "hero-video-backdrop";
-  backdrop.muted = true;
-  backdrop.loop = true;
-  backdrop.playsInline = true;
-  backdrop.preload = "auto";
-  backdrop.setAttribute("aria-hidden", "true");
-
-  const video = document.createElement("video");
-  video.className = "hero-video-element";
-  video.muted = true;
-  video.loop = true;
-  video.playsInline = true;
-  video.preload = "auto";
-  video.poster = "";
-  video.setAttribute("aria-label", media.label || "Production highlight reel");
-  video.addEventListener("loadedmetadata", () => applyHeroMontageFit(shell, video));
-
-  const overlay = document.createElement("div");
-  overlay.className = "hero-video-overlay";
-
-  const kicker = document.createElement("span");
-  kicker.className = "hero-video-kicker";
-  kicker.textContent = media.kicker || "Live production stack";
-
-  const title = document.createElement("strong");
-  title.className = "hero-video-title";
-
-  const detail = document.createElement("p");
-  detail.className = "hero-video-detail";
-  detail.textContent = media.detail || "Quick-cut company footage from live production work.";
-
-  const meta = document.createElement("p");
-  meta.className = "hero-video-meta";
-
-  const dots = document.createElement("div");
-  dots.className = "hero-video-dots";
-
-  const dotItems = media.sources.slice(0, Math.min(media.sources.length, 6)).map((_, index) => {
-    const dot = document.createElement("span");
-    dot.className = "hero-video-dot";
-    dot.setAttribute("aria-hidden", "true");
-    dot.dataset.dotIndex = String(index);
-    dots.append(dot);
-    return dot;
-  });
-
-  overlay.append(kicker, title, detail, meta, dots);
-  shell.append(backdrop, video, overlay);
-
-  heroMontageVideo = video;
-  heroMontageBackdrop = backdrop;
-  updateHeroMontagePreview(video, backdrop, media, title, detail, meta, dotItems);
-
-  if (!reduceMotion && media.sources.length > 1) {
-    heroMontageTimer = window.setInterval(() => {
-      updateHeroMontagePreview(video, backdrop, media, title, detail, meta, dotItems);
-    }, 3000);
-  }
-
-  return shell;
-};
-
-const renderHeroTrack = (trackId) => {
-  const track = heroTracks.find((item) => item.id === trackId) || heroTracks[0];
-
-  if (!track || !heroStageMedia) {
-    return;
-  }
-
-  clearHeroMontage();
-
-  heroSwitchButtons.forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.track === track.id);
-  });
-
-  heroStageMedia.dataset.mediaOrientation = "landscape";
-  heroStageMedia.innerHTML = "";
-
-  if (track.media.type === "montage") {
-    heroStageMedia.append(createHeroMontage(track.media));
-  } else {
-    heroStageMedia.append(
-      createMediaElement(track.media, {
-        autoplay: !reduceMotion && track.media.type === "video",
-        loop: track.media.type === "video",
-        muted: true,
-        fit: "cover",
-        loading: "eager",
-      })
-    );
-  }
-
-  if (heroTrackLabel) {
-    heroTrackLabel.textContent = track.label;
-  }
-
-  if (heroTrackKicker) {
-    heroTrackKicker.textContent = track.kicker;
-  }
-
-  if (heroTrackTitle) {
-    heroTrackTitle.textContent = track.title;
-  }
-
-  if (heroTrackSummary) {
-    heroTrackSummary.textContent = track.summary;
-  }
-
-  if (heroTrackTags) {
-    heroTrackTags.innerHTML = "";
-    track.tags.forEach((tag) => heroTrackTags.append(makeTagChip(tag)));
-  }
-};
-
-heroSwitchButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    renderHeroTrack(button.dataset.track);
-  });
-});
-
-renderHeroTrack(heroTracks[0].id);
-
-const projectGrid = document.getElementById("project-grid");
-const projectGalleryTotal = document.getElementById("project-gallery-total");
-const projectModal = document.getElementById("project-modal");
-const profilePreviewOpen = document.getElementById("profile-preview-open");
-const profilePreviewModal = document.getElementById("profile-preview-modal");
-const profilePreviewClose = document.getElementById("profile-preview-close");
-const projectModalKicker = document.getElementById("project-modal-kicker");
-const projectModalTitle = document.getElementById("project-modal-title");
-const projectModalSummary = document.getElementById("project-modal-summary");
-const projectModalCount = document.getElementById("project-modal-count");
-const projectModalStage = document.getElementById("project-modal-stage");
-const projectModalCurrentLabel = document.getElementById("project-modal-current-label");
-const projectModalTags = document.getElementById("project-modal-tags");
-const projectModalHighlights = document.getElementById("project-modal-highlights");
-const projectModalLinksWrap = document.getElementById("project-modal-links-wrap");
-const projectModalLinks = document.getElementById("project-modal-links");
-const projectModalThumbs = document.getElementById("project-modal-thumbs");
-const projectModalPrev = document.getElementById("project-modal-prev");
-const projectModalNext = document.getElementById("project-modal-next");
-const projectModalClose = document.getElementById("project-modal-close");
-
-let currentProjectIndex = 0;
-let currentMediaIndex = 0;
-let activeProjectTrigger = null;
-let activeProfileTrigger = null;
-
-const syncModalLock = () => {
-  const hasOpenModal =
-    Boolean(projectModal && !projectModal.hidden) ||
-    Boolean(profilePreviewModal && !profilePreviewModal.hidden);
-
-  document.body.classList.toggle("modal-open", hasOpenModal);
-};
-
-const createPreviewFigure = (item) => {
-  const figure = document.createElement("div");
-  figure.className = "media-thumb-figure";
-  figure.append(
-    createMediaElement(item, {
-      fit: "cover",
-      autoplay: false,
-      loop: false,
-      muted: true,
-      preload: "metadata",
-    })
-  );
-  return figure;
-};
-
-const createProjectPreview = (project) => {
-  const preview = document.createElement("div");
-  const cover = project.cover || {};
-
-  preview.className = "project-media project-entry-media";
-
-  if (cover.variant) {
-    preview.classList.add(`project-entry-media--${cover.variant}`);
-  }
-
-  if (cover.type === "image" || cover.type === "video") {
-    preview.append(
-      createMediaElement(cover, {
-        fit: cover.fit || "cover",
-        autoplay: !reduceMotion && cover.type === "video",
-        loop: cover.type === "video",
-        muted: true,
-        preload: "metadata",
-      })
-    );
-  } else {
-    preview.classList.add("project-entry-media--synthetic");
-    preview.append(createMediaElement(cover));
-  }
-
-  return preview;
-};
-
-const renderProjectCards = () => {
-  if (!projectGrid) {
-    return;
-  }
-
-  projectGrid.innerHTML = "";
-
-  projectAlbums.forEach((project, index) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "project-entry panel-shell";
-    button.dataset.projectIndex = String(index);
-    button.setAttribute("aria-haspopup", "dialog");
-    button.setAttribute("aria-controls", "project-modal");
-
-    const preview = createProjectPreview(project);
-    const body = document.createElement("div");
-    body.className = "project-body";
-
-    const meta = document.createElement("div");
-    meta.className = "project-entry-head";
-
-    const kicker = document.createElement("p");
-    kicker.className = "project-kicker";
-    kicker.textContent = project.kicker;
-
-    const count = document.createElement("span");
-    count.className = "project-entry-count";
-    count.textContent = `${project.media.length} assets`;
-
-    const title = document.createElement("h3");
-    title.textContent = project.title;
-
-    const summary = document.createElement("p");
-    summary.className = "project-entry-summary";
-    summary.textContent = project.summary;
-
-    const highlights = document.createElement("ul");
-    highlights.className = "project-entry-highlights";
-    (project.highlights || []).slice(0, 2).forEach((highlight) => {
-      const item = document.createElement("li");
-      item.textContent = highlight;
-      highlights.append(item);
-    });
-
-    const tags = document.createElement("ul");
-    tags.className = "project-entry-tags";
-    project.tags.slice(0, 3).forEach((tag) => tags.append(makeTagChip(tag)));
-
-    const link = document.createElement("span");
-    link.className = "project-entry-link";
-    link.textContent = "Open project deep dive";
-
-    meta.append(kicker, count);
-    body.append(meta, title, summary, highlights, tags, link);
-    button.append(preview, body);
-
-    button.addEventListener("click", () => {
-      openProjectModal(index, button);
-    });
-
-    projectGrid.append(button);
-  });
-
-  if (projectGalleryTotal) {
-    const totalAssets = projectAlbums.reduce((sum, project) => sum + project.media.length, 0);
-    projectGalleryTotal.textContent = `${totalAssets} assets`;
-  }
-};
-
-const renderProjectStage = (project, item) => {
-  if (!projectModalStage) {
-    return;
-  }
-
-  projectModalStage.innerHTML = "";
+const renderModalMedia = () => {
+  const project = projects[modalProject];
+  const media = project?.media || [];
+  const item = media[modalMedia];
 
   if (!item) {
     return;
   }
 
-  projectModalStage.append(
-    createMediaElement(item, {
-      fit: "contain",
-      controls: item.type === "video",
-      autoplay: !reduceMotion && item.type === "video",
-      loop: item.type === "video",
-      muted: true,
-      loading: "eager",
-      preload: "metadata",
-    })
-  );
-};
+  modalStage.innerHTML = "";
+  modalStage.append(createMedia(item));
+  modalLabel.textContent = item.label || "Capture";
+  modalCount.textContent = `${modalMedia + 1} / ${media.length}`;
 
-const renderModalThumbs = (project) => {
-  if (!projectModalThumbs) {
-    return;
-  }
+  modalThumbs.querySelectorAll(".thumb").forEach((thumb, index) => {
+    const active = index === modalMedia;
+    thumb.classList.toggle("is-current", active);
+    thumb.setAttribute("aria-current", active ? "true" : "false");
 
-  projectModalThumbs.innerHTML = "";
-
-  project.media.forEach((item, index) => {
-    const thumb = document.createElement("button");
-    thumb.type = "button";
-    thumb.className = "media-thumb";
-    thumb.classList.toggle("is-active", index === currentMediaIndex);
-
-    const figure = createPreviewFigure(item);
-    const label = document.createElement("span");
-    label.className = "media-thumb-label";
-    label.textContent = item.label;
-
-    thumb.append(figure, label);
-
-    thumb.addEventListener("click", () => {
-      currentMediaIndex = index;
-      renderProjectModal();
-    });
-
-    projectModalThumbs.append(thumb);
+    if (active) {
+      thumb.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest", inline: "nearest" });
+    }
   });
 
-  const activeThumb = projectModalThumbs.querySelector(".media-thumb.is-active");
-
-  if (activeThumb) {
-    activeThumb.scrollIntoView({
-      behavior: reduceMotion ? "auto" : "smooth",
-      block: "nearest",
-      inline: "nearest",
-    });
-  }
+  const single = media.length < 2;
+  modalPrev.hidden = single;
+  modalNext.hidden = single;
 };
 
-const renderProjectLinks = (project) => {
-  if (!projectModalLinksWrap || !projectModalLinks) {
-    return;
-  }
-
-  projectModalLinks.innerHTML = "";
-
-  const links = Array.isArray(project.links)
-    ? project.links.filter((item) => item?.href && item?.label)
-    : [];
-
-  projectModalLinksWrap.hidden = !links.length;
-
-  links.forEach((item) => {
-    const link = document.createElement("a");
-    link.className = "button button-secondary project-modal-link";
-    link.href = item.href;
-    link.target = "_blank";
-    link.rel = "noreferrer";
-    link.textContent = item.label;
-    projectModalLinks.append(link);
-  });
-};
-
-const renderProjectModal = () => {
-  const project = projectAlbums[currentProjectIndex];
+const renderModal = () => {
+  const project = projects[modalProject];
 
   if (!project) {
     return;
   }
 
-  const activeItem = project.media[currentMediaIndex];
+  modalTitle.textContent = project.name || project.title;
+  modalSummary.textContent = project.summary;
+  fillStats(modalStats, project);
 
-  if (projectModalKicker) {
-    projectModalKicker.textContent = project.kicker;
-  }
-
-  if (projectModalTitle) {
-    projectModalTitle.textContent = project.title;
-  }
-
-  if (projectModalSummary) {
-    projectModalSummary.textContent = project.summary;
-  }
-
-  if (projectModalCount) {
-    projectModalCount.textContent = `${currentMediaIndex + 1} / ${project.media.length} assets`;
-  }
-
-  if (projectModalCurrentLabel) {
-    projectModalCurrentLabel.textContent = activeItem ? activeItem.label : "Active capture";
-  }
-
-  if (projectModalTags) {
-    projectModalTags.innerHTML = "";
-    project.tags.forEach((tag) => projectModalTags.append(makeTagChip(tag)));
-  }
-
-  if (projectModalHighlights) {
-    projectModalHighlights.innerHTML = "";
-    (project.highlights || []).forEach((highlight) => {
-      const item = document.createElement("li");
-      item.textContent = highlight;
-      projectModalHighlights.append(item);
-    });
-  }
-
-  renderProjectLinks(project);
-  renderProjectStage(project, activeItem);
-  renderModalThumbs(project);
-};
-
-const openProjectModal = (projectIndex, trigger) => {
-  if (!projectModal) {
-    return;
-  }
-
-  activeProjectTrigger = trigger || document.activeElement;
-  currentProjectIndex = projectIndex;
-  currentMediaIndex = 0;
-
-  renderProjectModal();
-  projectModal.hidden = false;
-  syncModalLock();
-  projectModalClose?.focus({ preventScroll: true });
-};
-
-const closeProjectModal = () => {
-  if (!projectModal || projectModal.hidden) {
-    return;
-  }
-
-  projectModal.hidden = true;
-  syncModalLock();
-
-  if (activeProjectTrigger && typeof activeProjectTrigger.focus === "function") {
-    activeProjectTrigger.focus({ preventScroll: true });
-  }
-
-  activeProjectTrigger = null;
-};
-
-const openProfilePreview = (trigger) => {
-  if (!profilePreviewModal) {
-    return;
-  }
-
-  activeProfileTrigger = trigger || document.activeElement;
-  profilePreviewModal.hidden = false;
-  syncModalLock();
-  profilePreviewClose?.focus({ preventScroll: true });
-};
-
-const closeProfilePreview = () => {
-  if (!profilePreviewModal || profilePreviewModal.hidden) {
-    return;
-  }
-
-  profilePreviewModal.hidden = true;
-  syncModalLock();
-
-  if (activeProfileTrigger && typeof activeProfileTrigger.focus === "function") {
-    activeProfileTrigger.focus({ preventScroll: true });
-  }
-
-  activeProfileTrigger = null;
-};
-
-if (projectAlbums.length) {
-  renderProjectCards();
-
-  projectModalPrev?.addEventListener("click", () => {
-    const project = projectAlbums[currentProjectIndex];
-    currentMediaIndex = (currentMediaIndex - 1 + project.media.length) % project.media.length;
-    renderProjectModal();
+  modalNotes.innerHTML = "";
+  (project.highlights || []).forEach((note) => {
+    const item = document.createElement("li");
+    item.textContent = note;
+    modalNotes.append(item);
   });
 
-  projectModalNext?.addEventListener("click", () => {
-    const project = projectAlbums[currentProjectIndex];
-    currentMediaIndex = (currentMediaIndex + 1) % project.media.length;
-    renderProjectModal();
+  modalTags.innerHTML = "";
+  (project.tags || []).forEach((tag) => {
+    const item = document.createElement("li");
+    item.textContent = tag;
+    modalTags.append(item);
   });
 
-  projectModalClose?.addEventListener("click", closeProjectModal);
+  const links = (project.links || []).filter((link) => link?.href && link?.label);
+  modalLinks.innerHTML = "";
+  modalLinksWrap.hidden = !links.length;
+  links.forEach((link) => {
+    const anchor = document.createElement("a");
+    anchor.className = "dossier-link";
+    anchor.href = link.href;
+    anchor.target = "_blank";
+    anchor.rel = "noreferrer";
+    anchor.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-out" /></svg>';
+    anchor.append(document.createTextNode(link.label));
+    modalLinks.append(anchor);
+  });
 
-  projectModal?.addEventListener("click", (event) => {
-    const target = event.target;
+  modalThumbs.innerHTML = "";
+  (project.media || []).forEach((item, index) => {
+    const thumb = document.createElement("button");
+    thumb.type = "button";
+    thumb.className = "thumb";
+    thumb.setAttribute("aria-label", item.label || `Capture ${index + 1}`);
+    thumb.append(createMedia(item, { thumb: true }));
 
-    if (target instanceof HTMLElement && target.hasAttribute("data-modal-close")) {
-      closeProjectModal();
+    if (item.type === "video") {
+      const badge = document.createElement("span");
+      badge.className = "thumb-play";
+      badge.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-play" /></svg>';
+      thumb.append(badge);
     }
+
+    thumb.addEventListener("click", () => {
+      modalMedia = index;
+      renderModalMedia();
+    });
+    modalThumbs.append(thumb);
   });
+
+  renderModalMedia();
+};
+
+const revealModal = () => {
+  modal.hidden = false;
+  syncScrollLock();
+  modalClose?.focus({ preventScroll: true });
+};
+
+function openProjectModal(index, trigger) {
+  if (!modal || !projects[index]) {
+    return;
+  }
+
+  modalTrigger = trigger || document.activeElement;
+  modalProject = index;
+  modalMedia = 0;
+  renderModal();
+
+  if (reduceMotion || !splash) {
+    revealModal();
+    return;
+  }
+
+  const project = projects[index];
+  splashName.textContent = project.name || project.title;
+  window.clearTimeout(splashTimer);
+  splash.classList.remove("is-playing");
+  void splash.offsetWidth;
+  splash.classList.add("is-playing");
+  splashTimer = window.setTimeout(revealModal, 380);
+  window.setTimeout(() => splash.classList.remove("is-playing"), 900);
 }
 
-profilePreviewOpen?.addEventListener("click", () => {
-  openProfilePreview(profilePreviewOpen);
-});
+const closeProjectModal = () => {
+  if (!modal || modal.hidden) {
+    return;
+  }
 
-profilePreviewClose?.addEventListener("click", closeProfilePreview);
+  modal.hidden = true;
+  modalStage.innerHTML = "";
+  syncScrollLock();
+  modalTrigger?.focus?.({ preventScroll: true });
+  modalTrigger = null;
+};
 
-profilePreviewModal?.addEventListener("click", (event) => {
-  const target = event.target;
+const stepModal = (step) => {
+  const media = projects[modalProject]?.media || [];
 
-  if (target instanceof HTMLElement && target.hasAttribute("data-profile-preview-close")) {
-    closeProfilePreview();
+  if (media.length < 2) {
+    return;
+  }
+
+  modalMedia = (modalMedia + step + media.length) % media.length;
+  renderModalMedia();
+};
+
+modalPrev?.addEventListener("click", () => stepModal(-1));
+modalNext?.addEventListener("click", () => stepModal(1));
+modalClose?.addEventListener("click", closeProjectModal);
+modal?.addEventListener("click", (event) => {
+  if (event.target instanceof HTMLElement && event.target.hasAttribute("data-modal-close")) {
+    closeProjectModal();
   }
 });
+
+const openPhoto = () => {
+  if (!photoModal) {
+    return;
+  }
+
+  photoTrigger = document.activeElement;
+  photoModal.hidden = false;
+  syncScrollLock();
+  photoClose?.focus({ preventScroll: true });
+};
+
+const closePhoto = () => {
+  if (!photoModal || photoModal.hidden) {
+    return;
+  }
+
+  photoModal.hidden = true;
+  syncScrollLock();
+  photoTrigger?.focus?.({ preventScroll: true });
+  photoTrigger = null;
+};
+
+photoOpen?.addEventListener("click", openPhoto);
+photoClose?.addEventListener("click", closePhoto);
+photoModal?.addEventListener("click", (event) => {
+  if (event.target instanceof HTMLElement && event.target.hasAttribute("data-profile-preview-close")) {
+    closePhoto();
+  }
+});
+
+const trapFocus = (container, event) => {
+  const focusable = [...container.querySelectorAll("button, a[href], video[controls], [tabindex]:not([tabindex='-1'])")].filter(
+    (node) => !node.hidden && node.offsetParent !== null
+  );
+
+  if (!focusable.length) {
+    return;
+  }
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+};
 
 window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    if (profilePreviewModal && !profilePreviewModal.hidden) {
-      closeProfilePreview();
-      return;
-    }
+  const photoOpenNow = photoModal && !photoModal.hidden;
+  const modalOpenNow = modal && !modal.hidden;
 
-    if (projectModal && !projectModal.hidden) {
+  if (event.key === "Escape") {
+    if (photoOpenNow) {
+      closePhoto();
+    } else if (modalOpenNow) {
       closeProjectModal();
-      return;
     }
+    return;
   }
 
-  if (!projectModal || projectModal.hidden) {
+  if (event.key === "Tab") {
+    if (photoOpenNow) {
+      trapFocus(photoModal, event);
+    } else if (modalOpenNow && modalDialog) {
+      trapFocus(modalDialog, event);
+    }
+    return;
+  }
+
+  if (!modalOpenNow || event.target instanceof HTMLVideoElement) {
     return;
   }
 
   if (event.key === "ArrowLeft") {
     event.preventDefault();
-    projectModalPrev?.click();
-  }
-
-  if (event.key === "ArrowRight") {
+    stepModal(-1);
+  } else if (event.key === "ArrowRight") {
     event.preventDefault();
-    projectModalNext?.click();
+    stepModal(1);
   }
 });

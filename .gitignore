@@ -1,3 +1,10 @@
 .DS_Store
 Thumbs.db
 desktop.ini
+
+.agents/
+.cursor/
+skills-lock.json
+.impeccable/
+PRODUCT.md
+DESIGN.md
