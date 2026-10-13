@@ -104,6 +104,8 @@ const paintStage = (project) => {
       }
     }
   });
+
+  window.PortfolioMotion?.stagePainted?.(project, stageIndex);
 };
 
 const setStage = (index) => {
@@ -263,21 +265,46 @@ const modalLinks = $("project-modal-links");
 const modalClose = $("project-modal-close");
 const modalPrev = $("project-modal-prev");
 const modalNext = $("project-modal-next");
-const splash = $("vs-splash");
-const splashName = $("vs-name");
+const splash = $("wipe");
+const splashName = $("wipe-name");
 const photoModal = $("profile-preview-modal");
 const photoOpen = $("profile-preview-open");
 const photoClose = $("profile-preview-close");
+const modalDemosWrap = $("project-modal-demos-wrap");
+const modalDemos = $("project-modal-demos");
+const demoPlayer = $("demo-player");
+const demoDialog = demoPlayer?.querySelector(".demo-dialog");
+const demoTitle = $("demo-title");
+const demoFrame = $("demo-frame");
+const demoLoading = $("demo-loading");
+const demoNewTab = $("demo-newtab");
+const demoClose = $("demo-close");
+const demoMode = $("demo-mode");
+const demoStart = $("demo-start");
+const demoBack = $("demo-back");
+const demoArt = $("demo-art");
+const demoArtImg = $("demo-art-img");
+const demoInfo = $("demo-info");
+const demoStory = $("demo-story");
+const demoDesign = $("demo-design");
+const demoFeaturesWrap = $("demo-features-wrap");
+const demoFeatures = $("demo-features");
+const demoShotsWrap = $("demo-shots-wrap");
+const demoShots = $("demo-shots");
+const demoPage = $("demo-page");
 
 let modalProject = 0;
 let modalMedia = 0;
 let modalTrigger = null;
 let photoTrigger = null;
+let demoTrigger = null;
 let splashTimer = 0;
 
 const syncScrollLock = () => {
-  const open = (modal && !modal.hidden) || (photoModal && !photoModal.hidden);
+  const open =
+    (modal && !modal.hidden) || (photoModal && !photoModal.hidden) || (demoPlayer && !demoPlayer.hidden);
   document.body.classList.toggle("modal-open", Boolean(open));
+  window.PortfolioMotion?.scrollLock?.(Boolean(open));
 };
 
 const createMedia = (item, { thumb = false } = {}) => {
@@ -348,6 +375,33 @@ const renderModal = () => {
   modalTitle.textContent = project.name || project.title;
   modalSummary.textContent = project.summary;
   fillStats(modalStats, project);
+
+  const demos = (project.demos || []).filter((demo) => demo?.url && demo?.name);
+  modalDemos.innerHTML = "";
+  modalDemosWrap.hidden = !demos.length;
+  demos.forEach((demo) => {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "demo-play";
+
+    if (demo.thumb) {
+      const art = document.createElement("img");
+      art.src = assetUrl(demo.thumb);
+      art.alt = "";
+      art.loading = "lazy";
+      art.decoding = "async";
+      button.append(art);
+    }
+
+    const name = document.createElement("span");
+    name.className = "demo-play-name";
+    name.textContent = demo.name;
+    button.append(name);
+    button.addEventListener("click", () => openGame(demo, button));
+    item.append(button);
+    modalDemos.append(item);
+  });
 
   modalNotes.innerHTML = "";
   (project.highlights || []).forEach((note) => {
@@ -424,6 +478,12 @@ function openProjectModal(index, trigger) {
   }
 
   const project = projects[index];
+
+  if (window.PortfolioMotion?.wipe) {
+    window.PortfolioMotion.wipe(project, revealModal);
+    return;
+  }
+
   splashName.textContent = project.name || project.title;
   window.clearTimeout(splashTimer);
   splash.classList.remove("is-playing");
@@ -465,6 +525,137 @@ modal?.addEventListener("click", (event) => {
   }
 });
 
+let demoGame = null;
+
+const demoPlaying = () => Boolean(demoPlayer?.classList.contains("is-playing"));
+
+const showGameDetails = () => {
+  demoPlayer.classList.remove("is-playing");
+  demoFrame.src = "about:blank";
+  demoFrame.hidden = true;
+  demoLoading.hidden = true;
+  demoArt.hidden = !demoGame?.art;
+  demoInfo.hidden = false;
+  demoStart.hidden = false;
+  demoBack.hidden = true;
+  demoMode.textContent = demoGame?.released ? `Released ${demoGame.released}` : "";
+  demoMode.hidden = !demoMode.textContent;
+};
+
+const startGame = () => {
+  if (!demoGame) {
+    return;
+  }
+
+  demoPlayer.classList.add("is-playing");
+  demoArt.hidden = true;
+  demoInfo.hidden = true;
+  demoLoading.hidden = false;
+  demoFrame.hidden = false;
+  demoFrame.src = demoGame.url;
+  demoStart.hidden = true;
+  demoBack.hidden = false;
+  demoMode.textContent = "Demo mode, play credits only";
+  demoMode.hidden = false;
+  demoBack.focus({ preventScroll: true });
+};
+
+const backToDetails = () => {
+  showGameDetails();
+  demoStart.focus({ preventScroll: true });
+};
+
+function openGame(demo, trigger) {
+  if (!demoPlayer || !demoFrame) {
+    return;
+  }
+
+  demoGame = demo;
+  demoTrigger = trigger || document.activeElement;
+  modalStage?.querySelector("video")?.pause();
+  demoTitle.textContent = demo.name;
+  demoFrame.title = `${demo.name} demo`;
+  demoNewTab.href = demo.url;
+  demoArtImg.src = demo.art ? assetUrl(demo.art) : "";
+  demoArtImg.alt = demo.art ? `${demo.name} key art` : "";
+  demoArt.setAttribute("aria-label", `Play the ${demo.name} demo`);
+  demoStory.textContent = demo.story || "";
+  demoDesign.textContent = demo.design || "";
+
+  demoFeatures.innerHTML = "";
+  (demo.features || []).forEach((feature) => {
+    const item = document.createElement("li");
+    const name = document.createElement("strong");
+    name.textContent = feature.name;
+    item.append(name, document.createTextNode(` ${feature.text}`));
+    demoFeatures.append(item);
+  });
+  demoFeaturesWrap.hidden = !demo.features?.length;
+
+  demoShots.innerHTML = "";
+  (demo.shots || []).forEach((shot, index) => {
+    const image = document.createElement("img");
+    image.src = assetUrl(shot);
+    image.alt = `${demo.name} screen ${index + 1}`;
+    image.loading = "lazy";
+    image.decoding = "async";
+    demoShots.append(image);
+  });
+  demoShotsWrap.hidden = !demo.shots?.length;
+
+  demoPage.hidden = !demo.page;
+  demoPage.href = demo.page || "#";
+  demoPlayer.scrollTop = 0;
+  demoInfo.scrollTop = 0;
+  demoPlayer.hidden = false;
+  syncScrollLock();
+
+  if (demo.story) {
+    showGameDetails();
+    demoStart.focus({ preventScroll: true });
+    window.PortfolioMotion?.gameOpened?.(demoPlayer);
+  } else {
+    startGame();
+  }
+}
+
+const closeDemo = () => {
+  if (!demoPlayer || demoPlayer.hidden) {
+    return;
+  }
+
+  demoPlayer.hidden = true;
+  demoPlayer.classList.remove("is-playing");
+  demoFrame.src = "about:blank";
+  demoGame = null;
+  syncScrollLock();
+  demoTrigger?.focus?.({ preventScroll: true });
+  demoTrigger = null;
+};
+
+const backDemo = () => {
+  if (demoPlaying() && demoGame?.story) {
+    backToDetails();
+  } else {
+    closeDemo();
+  }
+};
+
+demoFrame?.addEventListener("load", () => {
+  if (demoFrame.src !== "about:blank") {
+    demoLoading.hidden = true;
+  }
+});
+demoStart?.addEventListener("click", startGame);
+demoArt?.addEventListener("click", startGame);
+demoBack?.addEventListener("click", backToDetails);
+demoClose?.addEventListener("click", closeDemo);
+demoPlayer?.addEventListener("click", (event) => {
+  if (event.target instanceof HTMLElement && event.target.hasAttribute("data-demo-close")) {
+    closeDemo();
+  }
+});
+
 const openPhoto = () => {
   if (!photoModal) {
     return;
@@ -496,7 +687,7 @@ photoModal?.addEventListener("click", (event) => {
 });
 
 const trapFocus = (container, event) => {
-  const focusable = [...container.querySelectorAll("button, a[href], video[controls], [tabindex]:not([tabindex='-1'])")].filter(
+  const focusable = [...container.querySelectorAll("button, a[href], video[controls], iframe, [tabindex]:not([tabindex='-1'])")].filter(
     (node) => !node.hidden && node.offsetParent !== null
   );
 
@@ -519,9 +710,12 @@ const trapFocus = (container, event) => {
 window.addEventListener("keydown", (event) => {
   const photoOpenNow = photoModal && !photoModal.hidden;
   const modalOpenNow = modal && !modal.hidden;
+  const demoOpenNow = demoPlayer && !demoPlayer.hidden;
 
   if (event.key === "Escape") {
-    if (photoOpenNow) {
+    if (demoOpenNow) {
+      backDemo();
+    } else if (photoOpenNow) {
       closePhoto();
     } else if (modalOpenNow) {
       closeProjectModal();
@@ -530,7 +724,9 @@ window.addEventListener("keydown", (event) => {
   }
 
   if (event.key === "Tab") {
-    if (photoOpenNow) {
+    if (demoOpenNow && demoDialog) {
+      trapFocus(demoDialog, event);
+    } else if (photoOpenNow) {
       trapFocus(photoModal, event);
     } else if (modalOpenNow && modalDialog) {
       trapFocus(modalDialog, event);
@@ -538,7 +734,12 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
-  if (!modalOpenNow || event.target instanceof HTMLVideoElement) {
+  if (!modalOpenNow && !photoOpenNow && !demoOpenNow) {
+    handleSelectKeys(event);
+    return;
+  }
+
+  if (!modalOpenNow || demoOpenNow || event.target instanceof HTMLVideoElement) {
     return;
   }
 
@@ -548,5 +749,166 @@ window.addEventListener("keydown", (event) => {
   } else if (event.key === "ArrowRight") {
     event.preventDefault();
     stepModal(1);
+  }
+});
+
+/* Game controls: keys, swipe, and gamepad drive the select screen like a real roster. */
+
+const selectSection = $("select");
+
+function selectInView() {
+  if (!selectSection) {
+    return false;
+  }
+
+  const box = selectSection.getBoundingClientRect();
+  return box.bottom > window.innerHeight * 0.35 && box.top < window.innerHeight * 0.6;
+}
+
+function handleSelectKeys(event) {
+  if (!projects.length || event.altKey || event.ctrlKey || event.metaKey) {
+    return;
+  }
+
+  const target = event.target;
+  const idle = target === document.body || target === document.documentElement;
+
+  if (!idle || !selectInView()) {
+    return;
+  }
+
+  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+
+  if (key === "ArrowLeft" || key === "a") {
+    event.preventDefault();
+    setStage(stageIndex - 1);
+  } else if (key === "ArrowRight" || key === "d") {
+    event.preventDefault();
+    setStage(stageIndex + 1);
+  } else if (key === "Enter") {
+    event.preventDefault();
+    openProjectModal(stageIndex, stageOpen);
+  }
+}
+
+if (stageScreen && projects.length) {
+  let swipe = null;
+
+  stageScreen.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse") {
+      return;
+    }
+
+    swipe = { x: event.clientX, y: event.clientY };
+  });
+
+  stageScreen.addEventListener("pointerup", (event) => {
+    if (!swipe) {
+      return;
+    }
+
+    const dx = event.clientX - swipe.x;
+    const dy = event.clientY - swipe.y;
+    swipe = null;
+
+    if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+      setStage(stageIndex + (dx < 0 ? 1 : -1));
+    }
+  });
+
+  stageScreen.addEventListener("pointercancel", () => {
+    swipe = null;
+  });
+}
+
+const padHint = $("controls-pad");
+let padFrame = 0;
+let padLast = { dir: 0, a: false, b: false };
+let padRepeatAt = 0;
+
+const padBack = () => {
+  if (demoPlayer && !demoPlayer.hidden) {
+    backDemo();
+  } else if (photoModal && !photoModal.hidden) {
+    closePhoto();
+  } else {
+    closeProjectModal();
+  }
+};
+
+const padMove = (dir) => {
+  if (demoPlayer && !demoPlayer.hidden) {
+    return;
+  }
+
+  if (modal && !modal.hidden) {
+    stepModal(dir);
+  } else {
+    setStage(stageIndex + dir);
+  }
+};
+
+const padConfirm = () => {
+  if (demoPlayer && !demoPlayer.hidden) {
+    if (!demoPlaying()) {
+      startGame();
+    }
+    return;
+  }
+
+  const anyOpen = (modal && !modal.hidden) || (photoModal && !photoModal.hidden);
+
+  if (!anyOpen && projects.length) {
+    openProjectModal(stageIndex, stageOpen);
+  }
+};
+
+const pollPad = (time) => {
+  const pad = [...(navigator.getGamepads?.() || [])].find(Boolean);
+
+  if (!pad) {
+    padFrame = 0;
+    return;
+  }
+
+  const axis = pad.axes[0] || 0;
+  const left = pad.buttons[14]?.pressed || axis < -0.6;
+  const right = pad.buttons[15]?.pressed || axis > 0.6;
+  const dir = left ? -1 : right ? 1 : 0;
+  const a = Boolean(pad.buttons[0]?.pressed);
+  const b = Boolean(pad.buttons[1]?.pressed);
+
+  if (dir && (dir !== padLast.dir || time >= padRepeatAt)) {
+    padMove(dir);
+    padRepeatAt = time + (dir === padLast.dir ? 180 : 420);
+  }
+
+  if (a && !padLast.a) {
+    padConfirm();
+  }
+
+  if (b && !padLast.b) {
+    padBack();
+  }
+
+  padLast = { dir, a, b };
+  padFrame = window.requestAnimationFrame(pollPad);
+};
+
+window.addEventListener("gamepadconnected", () => {
+  if (padHint) {
+    padHint.hidden = false;
+  }
+
+  if (!padFrame) {
+    padFrame = window.requestAnimationFrame(pollPad);
+  }
+});
+
+window.addEventListener("gamepaddisconnected", () => {
+  const anyLeft = [...(navigator.getGamepads?.() || [])].some(Boolean);
+
+  if (padHint && !anyLeft) {
+    padHint.hidden = true;
   }
 });

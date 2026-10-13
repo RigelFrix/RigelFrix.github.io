@@ -1,11 +1,11 @@
 window.PROJECT_ALBUMS = [
   {
     id: "dijoker",
-    title: "DiJoker / Company Game Archive",
+    title: "DiJoker / FYB Technologies",
     name: "DiJoker",
     kicker: "Company Production Games",
     status: "Live production",
-    tagline: "Web games I built and maintained in live production with Phaser and TypeScript.",
+    tagline: "Nine live web games I worked on at FYB Technologies. Every one is playable here in demo mode.",
     stats: { engine: "Phaser + TypeScript", platform: "Web" },
     select: {
       tile: "./assets/select/dijoker-tile.jpg",
@@ -13,7 +13,7 @@ window.PROJECT_ALBUMS = [
       loop: "./assets/select/dijoker-loop.mp4",
     },
     summary:
-      "Web games I helped build and maintain at a game company, with DiJoker as the featured title. The footage covers gameplay behaviour, UI state flow, backend-connected features, release support, and the day-to-day debugging that live games need.",
+      "Live web games I built and maintained at FYB Technologies for the DiJoker studio, using Phaser and TypeScript. All nine run below in demo mode, straight from DiJoker's game servers. The footage covers gameplay behaviour, UI state flow, backend-connected features, release support, and the day-to-day debugging that live games need.",
     cover: {
       type: "image",
       src: "./assets/Games i created from a company/dijoker.webp",
@@ -31,8 +31,163 @@ window.PROJECT_ALBUMS = [
     highlights: [
       "Built and maintained gameplay-facing systems for live Phaser releases in production.",
       "Worked across UI state flow, backend-linked behavior, feature fixes, and the release stability required by active titles.",
-      "This archive groups multiple company captures because the work spans more than one production game I supported.",
     ],
+    demos: [
+      {
+        name: "Amazonians",
+        url: "https://games.dijoker.com/amazonians/?demo=true&lang=en",
+        page: "https://dijoker.com/games/00270326",
+        art: "./assets/dijoker/amazonians/key.jpg",
+        thumb: "./assets/dijoker/amazonians/thumb.jpg",
+        released: "July 2026",
+        story:
+          "Deep in the Amazon jungle, tribal warriors collide with the world of online shopping. Rainforest tribesmen haul cardboard delivery boxes, cargo tags, and warehouse crates through the trees, and every package could hold a surprise.",
+        design:
+          "A comedy crossover between modern ecommerce shipping and deep jungle culture. Cargo boxes, shipping labels, and delivery props are worked into a lush rainforest, giving a familiar jungle setting a playful twist.",
+        features: [
+          { name: "Express Delivery Free Spins", text: "Unbox multipliers and guaranteed package drops during free rounds." },
+          { name: "Cargo Wilds", text: "Cardboard delivery boxes expand across positions to connect winning lines." },
+        ],
+        shots: ["./assets/dijoker/amazonians/shot-2.jpg", "./assets/dijoker/amazonians/shot-3.jpg"],
+      },
+      {
+        name: "Boobies Trap",
+        url: "https://games.dijoker.com/boobies_trap/?demo=true&lang=en",
+        page: "https://dijoker.com/games/00100925",
+        art: "./assets/dijoker/boobies-trap/key.jpg",
+        thumb: "./assets/dijoker/boobies-trap/thumb.jpg",
+        released: "June 2026",
+        story:
+          "Treasure-laden vaults lie hidden beneath golden pyramids, guarded by legendary deities. Tread carefully: every turn of the reels could spring a trap or reveal sacred riches.",
+        design:
+          "Classic Egyptian mythology meets high-stakes adventure, with iconic deities, mystical artifacts, and shifting sands. A 6-reel layout with variable row heights opens up to 3,600 ways to win on every spin.",
+        features: [
+          { name: "3,600 Ways to Win", text: "Dynamic reel configurations offer thousands of paths to a win." },
+          { name: "Pyramid Treasure Free Games", text: "Secret tombs with expanding deity symbols that cover full reels." },
+        ],
+        shots: ["./assets/dijoker/boobies-trap/shot-2.jpg", "./assets/dijoker/boobies-trap/shot-3.jpg"],
+      },
+      {
+        name: "Hustle The Blazing Horse",
+        url: "https://games.dijoker.com/hustle_horse/?demo=true&lang=en",
+        page: "https://dijoker.com/games/00040625",
+        art: "./assets/dijoker/hustle-horse/key.jpg",
+        thumb: "./assets/dijoker/hustle-horse/thumb.jpg",
+        released: "March 2026",
+        story:
+          "A Year of the Horse celebration with street-smart attitude. Built around speed, raw freedom, and self-expression, the Blazing Horse charges through every spin with unstoppable momentum.",
+        design:
+          "Traditional Chinese symbolism slammed together with southern Chinese fashion, internet culture, and hip-hop beats. Stylish characters, animated visuals, and dynamic character interactions keep the energy up.",
+        features: [
+          { name: "Blazing Free Rounds", text: "High-energy free spins with symbol upgrades and heavy basslines." },
+          { name: "Urban Wilds", text: "Street-styled symbols step in across the reels to push winning lines forward." },
+        ],
+        shots: ["./assets/dijoker/hustle-horse/shot-2.jpg", "./assets/dijoker/hustle-horse/shot-3.jpg"],
+      },
+      {
+        name: "Joker Ace",
+        url: "https://games.dijoker.com/joker_ace/?demo=true&lang=en",
+        page: "https://dijoker.com/games/00330126",
+        art: "./assets/dijoker/joker-ace/key.jpg",
+        thumb: "./assets/dijoker/joker-ace/thumb.jpg",
+        released: "August 2026",
+        story:
+          "Ace, a mysterious circus card player, challenges a powerful Cosmic Arbiter to a high-stakes game for the fate of the world. With clever bluffs, unexpected twists, and a legendary Joker, Ace wins, then discovers that victory comes with an eternal price.",
+        design:
+          "A candlelit lair lit by glowing green magic, floating playing cards, and arcane potions. Behind his table, a pointy-eared imp of a trickster deals out cards, tricks, and fortune in equal measure.",
+        features: [
+          { name: "Arcane Free Spins", text: "Inside the Joker's sanctum, magic cards multiply the round's total hits." },
+          { name: "Trickster Wilds", text: "The Joker swaps reel positions to force winning combinations." },
+        ],
+        shots: ["./assets/dijoker/joker-ace/shot-2.jpg", "./assets/dijoker/joker-ace/shot-3.jpg"],
+      },
+      {
+        name: "King in Gold",
+        url: "https://games.dijoker.com/king_in_gold/?demo=true&lang=en",
+        page: "https://dijoker.com/games/00350126",
+        art: "./assets/dijoker/king-in-gold/key.jpg",
+        thumb: "./assets/dijoker/king-in-gold/thumb.jpg",
+        released: "September 2026",
+        story:
+          "In a dark kingdom far away, a faceless tyrant king rules with an iron fist. Armed with courage and steel, a lone heroine knight in red crosses dangerous lands to end his reign and free the realm.",
+        design:
+          "Dark fantasy built around one hero: the Red Knight, set against a faceless golden tyrant, his crest, and the hidden riches of the royal treasury.",
+        features: [
+          { name: "Royal Revolt Free Games", text: "Bonus battles beside the Red Knight unlock multiplier upgrades." },
+          { name: "Tyrant Wilds", text: "Golden crest symbols step in across the lines to complete combinations." },
+        ],
+        shots: ["./assets/dijoker/king-in-gold/shot-2.jpg", "./assets/dijoker/king-in-gold/shot-3.jpg"],
+      },
+      {
+        name: "Oppals",
+        url: "https://games.dijoker.com/oppals/?demo=true&lang=en",
+        page: "https://dijoker.com/games/00200126",
+        art: "./assets/dijoker/oppals/key.jpg",
+        thumb: "./assets/dijoker/oppals/thumb.jpg",
+        released: "August 2026",
+        story:
+          "Grab your lightstick, join the fanchants, and take a front-row VIP seat for K-pop's hottest group. The idols perform live with every winning combo, driving the crowd wild on the way to the ultimate Daesang award.",
+        design:
+          "A neon-filled stadium concert with stage lights, energetic choreography, and fan moments. Every win pulls the player closer to the stage.",
+        features: [
+          { name: "Daesang Free Concert", text: "VIP concert free spins with expanding idol multiplier cards." },
+          { name: "Fanchant Wilds", text: "Stage light icons convert neighbouring symbols into winning lines." },
+        ],
+        shots: ["./assets/dijoker/oppals/shot-2.jpg", "./assets/dijoker/oppals/shot-3.jpg"],
+      },
+      {
+        name: "Sk8leton",
+        url: "https://games.dijoker.com/sk8leton/?demo=true&lang=en",
+        page: "https://dijoker.com/games/00080925",
+        art: "./assets/dijoker/sk8leton/key.jpg",
+        thumb: "./assets/dijoker/sk8leton/thumb.jpg",
+        released: "March 2026",
+        story:
+          "A fearless skeleton skater lives on the edge, grinding rails and shredding urban concrete. Every spin chases the rush of landing a risky trick over open flames.",
+        design:
+          "A fiery street-art backdrop that fuses graffiti graphics, skate culture, aggressive animation, and dark humor.",
+        features: [
+          { name: "Graffiti Free Rounds", text: "Free spins with persistent multiplier marks painted across the reels." },
+          { name: "Trick Combo Wilds", text: "Skate icons expand across the lines to lock in big hits." },
+        ],
+        shots: ["./assets/dijoker/sk8leton/shot-2.jpg", "./assets/dijoker/sk8leton/shot-3.jpg"],
+      },
+      {
+        name: "That's Bait",
+        url: "https://games.dijoker.com/thats_bait/?demo=true&lang=en",
+        page: "https://dijoker.com/games/00070725",
+        art: "./assets/dijoker/thats-bait/key.jpg",
+        thumb: "./assets/dijoker/thats-bait/thumb.jpg",
+        released: "March 2026",
+        story:
+          "Cast a line into an energetic underwater world where patience pays off with sudden bursts of chaos. Every cast is a gamble: snag some seaweed, or pull up a legendary catch.",
+        design:
+          "Classic fishing themes injected with quirky sea characters, slick animation, and suspense, set in a colourful underwater world with easy-to-follow play.",
+        features: [
+          { name: "Reel 'Em In Free Spins", text: "Collect sea creature symbols to hook instant prizes during bonus rounds." },
+          { name: "Underwater Wilds", text: "Marine life icons help complete lines across the deep blue grid." },
+        ],
+        shots: ["./assets/dijoker/thats-bait/shot-2.jpg", "./assets/dijoker/thats-bait/shot-3.jpg"],
+      },
+      {
+        name: "Genghis Bao",
+        url: "https://games.dijoker.com/genghisbao/?demo=true&lang=en",
+        page: "https://dijoker.com/games/00151125",
+        art: "./assets/dijoker/genghisbao/key.jpg",
+        thumb: "./assets/dijoker/genghisbao/thumb.jpg",
+        released: "June 2026",
+        story:
+          "A culinary conquest across the high seas, where pirate daring meets dim sum. The crew hunts for secret loot, boards rival dumpling vessels, and uncovers massive bao bundles.",
+        design:
+          "Pirate tropes swapped for dumpling-shaped galleons, bao treasure chests, and a crew of dim-sum buccaneers, played for laughs.",
+        features: [
+          { name: "Bao Loot Free Spins", text: "Board rival vessels during bonus rounds to plunder hidden prizes." },
+          { name: "Dumpling Wilds", text: "Pirate dumpling icons step in across the grid to build winning lines." },
+        ],
+        shots: ["./assets/dijoker/genghisbao/shot-2.jpg", "./assets/dijoker/genghisbao/shot-3.jpg"],
+      },
+    ],
+    links: [{ label: "DiJoker studio site", href: "https://dijoker.com/games" }],
     media: [
       {
         type: "video",

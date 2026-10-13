@@ -25,7 +25,14 @@
       href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=Rubik:ital,wght@0,400;0,500;0,700;1,400&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="./vendor/lenis.css" />
     <link rel="stylesheet" href="./styles.css" />
+    <script>
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        document.documentElement.classList.add("boot");
+        window.setTimeout(() => document.documentElement.classList.remove("boot"), 1600);
+      }
+    </script>
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true" focusable="false">
@@ -153,6 +160,14 @@
         <div class="roster-wrap">
           <h2 class="roster-title" id="roster-title">Choose a game</h2>
           <ul class="roster" id="project-grid" aria-labelledby="roster-title"></ul>
+          <p class="controls-hint">
+            <span class="controls-keys">
+              <kbd><svg class="icon" aria-hidden="true"><use href="#i-left" /></svg><span class="sr-only">Left arrow</span></kbd><kbd><svg class="icon" aria-hidden="true"><use href="#i-right" /></svg><span class="sr-only">Right arrow</span></kbd>
+              or <kbd>A</kbd><kbd>D</kbd> to choose, <kbd>Enter</kbd> to open
+            </span>
+            <span class="controls-touch">Swipe the screen to switch games</span>
+            <span class="controls-pad" id="controls-pad" hidden>Controller ready: d-pad to choose, A to open, B to back out</span>
+          </p>
         </div>
       </section>
 
@@ -287,7 +302,10 @@
 
       <section class="continue" id="contact" aria-labelledby="contact-title">
         <div class="continue-copy">
-          <h2 class="continue-title" id="contact-title">Continue?</h2>
+          <div class="continue-head">
+            <h2 class="continue-title" id="contact-title">Continue?</h2>
+            <span class="continue-count" id="continue-count" aria-hidden="true" hidden>9</span>
+          </div>
           <p>
             Hiring for a game team? I'm available now and can start right away or
             on short notice.
@@ -314,8 +332,8 @@
               </a>
             </li>
             <li>
-              <a href="tel:+639948246052">
-                <svg class="icon"><use href="#i-phone" /></svg>+63 994 824 6052
+              <a href="tel:+639240425935">
+                <svg class="icon"><use href="#i-phone" /></svg>+63 924 042 5935
               </a>
             </li>
             <li>
@@ -348,9 +366,9 @@
       <p>All footage is captured from real builds and live releases.</p>
     </footer>
 
-    <div class="vs-splash" id="vs-splash" aria-hidden="true">
-      <span class="vs-slab"></span>
-      <strong class="vs-name" id="vs-name"></strong>
+    <div class="wipe" id="wipe" aria-hidden="true">
+      <span class="wipe-slab"></span>
+      <strong class="wipe-name" id="wipe-name"></strong>
     </div>
 
     <div class="dossier" id="project-modal" hidden>
@@ -394,6 +412,10 @@
 
           <aside class="dossier-side">
             <p class="dossier-summary" id="project-modal-summary"></p>
+            <div class="dossier-demos" id="project-modal-demos-wrap" hidden>
+              <h3>The games</h3>
+              <ul class="demo-list" id="project-modal-demos"></ul>
+            </div>
             <h3>Build notes</h3>
             <ul class="dossier-notes" id="project-modal-highlights"></ul>
             <ul class="tag-row" id="project-modal-tags" aria-label="Tags"></ul>
@@ -402,6 +424,63 @@
               <div id="project-modal-links"></div>
             </div>
           </aside>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-player" id="demo-player" hidden>
+      <div class="dossier-backdrop" data-demo-close></div>
+      <div class="demo-dialog" role="dialog" aria-modal="true" aria-labelledby="demo-title">
+        <header class="demo-head">
+          <h2 class="demo-title" id="demo-title">Game</h2>
+          <p class="demo-mode" id="demo-mode"></p>
+          <div class="demo-actions">
+            <button class="btn btn-red" id="demo-start" type="button">
+              <span class="btn-face"><svg class="icon"><use href="#i-play" /></svg>Play demo</span>
+            </button>
+            <button class="btn btn-ghost" id="demo-back" type="button" hidden>
+              <span class="btn-face"><svg class="icon"><use href="#i-left" /></svg>Details</span>
+            </button>
+            <a class="btn btn-ghost" id="demo-newtab" href="#" target="_blank" rel="noreferrer">
+              <span class="btn-face"><svg class="icon"><use href="#i-out" /></svg><span class="btn-label">New tab</span></span>
+            </a>
+            <button class="btn btn-cream" id="demo-close" type="button">
+              <span class="btn-face"><svg class="icon"><use href="#i-close" /></svg>Close</span>
+            </button>
+          </div>
+        </header>
+        <div class="demo-body">
+          <div class="demo-screen">
+            <button class="demo-art" id="demo-art" type="button" aria-label="Play demo">
+              <img id="demo-art-img" alt="" />
+              <span class="demo-art-play"><svg class="icon" aria-hidden="true"><use href="#i-play" /></svg></span>
+            </button>
+            <p class="demo-loading" id="demo-loading" hidden>Loading game…</p>
+            <iframe
+              id="demo-frame"
+              title="Game demo"
+              allow="autoplay; fullscreen"
+              allowfullscreen
+              hidden
+            ></iframe>
+          </div>
+          <div class="demo-info" id="demo-info">
+            <h3>Story</h3>
+            <p id="demo-story"></p>
+            <h3>Design</h3>
+            <p id="demo-design"></p>
+            <div id="demo-features-wrap">
+              <h3>Features</h3>
+              <ul class="demo-features" id="demo-features"></ul>
+            </div>
+            <div id="demo-shots-wrap">
+              <h3>In the game</h3>
+              <div class="demo-shots" id="demo-shots"></div>
+            </div>
+            <a class="dossier-link demo-source" id="demo-page" href="#" target="_blank" rel="noreferrer">
+              <svg class="icon" aria-hidden="true"><use href="#i-out" /></svg>Full page on dijoker.com
+            </a>
+          </div>
         </div>
       </div>
     </div>
@@ -422,6 +501,11 @@
     </div>
 
     <script src="./gallery-data.js"></script>
+    <script src="./vendor/gsap.min.js"></script>
+    <script src="./vendor/ScrollTrigger.min.js"></script>
+    <script src="./vendor/SplitText.min.js"></script>
+    <script src="./vendor/lenis.min.js"></script>
     <script src="./script.js"></script>
+    <script src="./motion.js"></script>
   </body>
 </html>
