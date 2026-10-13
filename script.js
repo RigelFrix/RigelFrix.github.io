@@ -4,6 +4,7 @@ const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matc
 
 const $ = (id) => document.getElementById(id);
 const assetUrl = (src) => encodeURI(src);
+const worldMode = () => document.documentElement.classList.contains("world");
 
 const yearTarget = $("current-year");
 if (yearTarget) {
@@ -70,7 +71,7 @@ let previewTimer = 0;
 const paintStage = (project) => {
   const select = project.select || {};
 
-  if (stageVideo) {
+  if (stageVideo && !worldMode()) {
     stageVideo.poster = select.poster ? assetUrl(select.poster) : "";
 
     if (select.loop) {
@@ -300,9 +301,17 @@ let photoTrigger = null;
 let demoTrigger = null;
 let splashTimer = 0;
 
+const sectionSheet = $("section-sheet");
+const sectionClose = $("section-close");
+let openSectionEl = null;
+let sectionTrigger = null;
+
 const syncScrollLock = () => {
   const open =
-    (modal && !modal.hidden) || (photoModal && !photoModal.hidden) || (demoPlayer && !demoPlayer.hidden);
+    (modal && !modal.hidden) ||
+    (photoModal && !photoModal.hidden) ||
+    (demoPlayer && !demoPlayer.hidden) ||
+    Boolean(openSectionEl);
   document.body.classList.toggle("modal-open", Boolean(open));
   window.PortfolioMotion?.scrollLock?.(Boolean(open));
 };
@@ -686,6 +695,56 @@ photoModal?.addEventListener("click", (event) => {
   }
 });
 
+/* Section panels: in the play world, About, Skills, Career and Contact open over the floor. */
+
+const closeSection = () => {
+  if (!openSectionEl) {
+    return;
+  }
+
+  openSectionEl.classList.remove("is-open");
+  openSectionEl.removeAttribute("role");
+  openSectionEl.removeAttribute("aria-modal");
+  openSectionEl = null;
+  sectionSheet.append(sectionClose);
+  sectionSheet.hidden = true;
+  syncScrollLock();
+  window.PortfolioMotion?.sectionClosed?.();
+  sectionTrigger?.focus?.({ preventScroll: true });
+  sectionTrigger = null;
+};
+
+const openSection = (id, trigger) => {
+  const section = $(id);
+
+  if (!section || !sectionSheet) {
+    return;
+  }
+
+  if (openSectionEl && openSectionEl !== section) {
+    openSectionEl.classList.remove("is-open");
+  }
+
+  sectionTrigger = trigger || document.activeElement;
+  openSectionEl = section;
+  section.classList.add("is-open");
+  section.setAttribute("role", "dialog");
+  section.setAttribute("aria-modal", "true");
+  section.prepend(sectionClose);
+  section.scrollTop = 0;
+  sectionSheet.hidden = false;
+  syncScrollLock();
+  sectionClose?.focus({ preventScroll: true });
+  window.PortfolioMotion?.sectionOpened?.(section);
+};
+
+sectionClose?.addEventListener("click", closeSection);
+sectionSheet?.addEventListener("click", (event) => {
+  if (event.target instanceof HTMLElement && event.target.hasAttribute("data-section-close")) {
+    closeSection();
+  }
+});
+
 const trapFocus = (container, event) => {
   const focusable = [...container.querySelectorAll("button, a[href], video[controls], iframe, [tabindex]:not([tabindex='-1'])")].filter(
     (node) => !node.hidden && node.offsetParent !== null
@@ -719,6 +778,8 @@ window.addEventListener("keydown", (event) => {
       closePhoto();
     } else if (modalOpenNow) {
       closeProjectModal();
+    } else if (openSectionEl) {
+      closeSection();
     }
     return;
   }
@@ -726,6 +787,8 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Tab") {
     if (demoOpenNow && demoDialog) {
       trapFocus(demoDialog, event);
+    } else if (openSectionEl && !modalOpenNow && !photoOpenNow) {
+      trapFocus(openSectionEl, event);
     } else if (photoOpenNow) {
       trapFocus(photoModal, event);
     } else if (modalOpenNow && modalDialog) {
@@ -831,8 +894,10 @@ const padBack = () => {
     backDemo();
   } else if (photoModal && !photoModal.hidden) {
     closePhoto();
-  } else {
+  } else if (modal && !modal.hidden) {
     closeProjectModal();
+  } else {
+    closeSection();
   }
 };
 
@@ -843,7 +908,7 @@ const padMove = (dir) => {
 
   if (modal && !modal.hidden) {
     stepModal(dir);
-  } else {
+  } else if (!worldMode()) {
     setStage(stageIndex + dir);
   }
 };
@@ -856,9 +921,9 @@ const padConfirm = () => {
     return;
   }
 
-  const anyOpen = (modal && !modal.hidden) || (photoModal && !photoModal.hidden);
+  const anyOpen = (modal && !modal.hidden) || (photoModal && !photoModal.hidden) || openSectionEl;
 
-  if (!anyOpen && projects.length) {
+  if (!anyOpen && projects.length && !worldMode()) {
     openProjectModal(stageIndex, stageOpen);
   }
 };
@@ -912,3 +977,16 @@ window.addEventListener("gamepaddisconnected", () => {
     padHint.hidden = true;
   }
 });
+
+window.Portfolio = {
+  openProject: (index, trigger) => openProjectModal(index, trigger),
+  openSection,
+  closeSection,
+  anyOpen: () =>
+    Boolean(
+      (modal && !modal.hidden) ||
+        (photoModal && !photoModal.hidden) ||
+        (demoPlayer && !demoPlayer.hidden) ||
+        openSectionEl
+    ),
+};

@@ -22,12 +22,14 @@
   const stageClipClosed = "polygon(7.9% 0%, 7.9% 0%, 0% 100%, 0% 100%)";
   const portraitClip = "polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%)";
   const portraitClipClosed = "polygon(10% 0%, 10% 0%, 0% 100%, 0% 100%)";
+  const world = root.classList.contains("world");
 
-  /* Smooth scroll. Modals, the roster strip, and the demo frame keep native scrolling. */
+  /* Smooth scroll. Modals, the roster strip, and the demo frame keep native scrolling.
+     The play world has no page scroll, so it gets none of the scroll-driven motion. */
 
   let lenis = null;
 
-  if (Lenis) {
+  if (Lenis && !world) {
     const hudHeight = () => $(".hud")?.offsetHeight || 0;
 
     lenis = new Lenis({
@@ -182,92 +184,6 @@
     );
   };
 
-  /* Sections: each one arrives its own way, once. */
-
-  $$(".section-title, .continue-title").forEach((title) => {
-    const split = SplitText.create(title, { type: "words,chars" });
-
-    gsap.from(split.chars, {
-      yPercent: 70,
-      skewX: -20,
-      autoAlpha: 0,
-      duration: 0.5,
-      stagger: 0.03,
-      ease,
-      scrollTrigger: { trigger: title, start: "top 85%", once: true },
-    });
-  });
-
-  gsap.fromTo(
-    ".player-portrait",
-    { clipPath: portraitClipClosed },
-    {
-      clipPath: portraitClip,
-      duration: 0.8,
-      ease,
-      clearProps: "clipPath",
-      scrollTrigger: { trigger: ".player", start: "top 70%", once: true },
-    }
-  );
-
-  gsap.from(".move-list li", {
-    autoAlpha: 0,
-    x: -48,
-    duration: 0.5,
-    stagger: 0.07,
-    ease,
-    scrollTrigger: { trigger: ".move-list", start: "top 80%", once: true },
-  });
-
-  gsap.from(".loadout li", {
-    autoAlpha: 0,
-    y: 12,
-    duration: 0.35,
-    stagger: 0.025,
-    ease,
-    scrollTrigger: { trigger: ".loadout", start: "top 90%", once: true },
-  });
-
-  gsap.from(".career-list li", {
-    autoAlpha: 0,
-    xPercent: -6,
-    duration: 0.6,
-    stagger: 0.12,
-    ease,
-    scrollTrigger: { trigger: ".career-list", start: "top 78%", once: true },
-  });
-
-  /* HUD: the nav lights up for the section on screen. */
-
-  const navTargets = $$(".hud-nav a")
-    .map((link) => [link, $(link.getAttribute("href"))])
-    .filter(([, section]) => section);
-
-  const lightNav = () => {
-    const line = window.innerHeight / 2;
-    let current = null;
-
-    navTargets.forEach(([link, section]) => {
-      const box = section.getBoundingClientRect();
-
-      if (box.top <= line && box.bottom > line) {
-        current = link;
-      }
-    });
-
-    navTargets.forEach(([link]) => {
-      link.classList.toggle("is-active", link === current);
-
-      if (link === current) {
-        link.setAttribute("aria-current", "location");
-      } else {
-        link.removeAttribute("aria-current");
-      }
-    });
-  };
-
-  ScrollTrigger.create({ start: 0, end: "max", onUpdate: lightNav, onRefresh: lightNav });
-
   /* Continue? counts down like an arcade cabinet while it is on screen. */
 
   const count = $("#continue-count");
@@ -281,22 +197,131 @@
     countTimer = window.setTimeout(tick, countValue === 0 ? 1800 : 1000);
   };
 
-  if (count) {
-    count.hidden = false;
+  const runCountdown = (on) => {
+    window.clearTimeout(countTimer);
 
-    ScrollTrigger.create({
-      trigger: "#contact",
-      start: "top 75%",
-      end: "bottom top",
-      onToggle: ({ isActive }) => {
-        window.clearTimeout(countTimer);
+    if (on && count) {
+      count.hidden = false;
+      countValue = 10;
+      tick();
+    }
+  };
 
-        if (isActive) {
-          countValue = 10;
-          tick();
-        }
-      },
+  /* Play world: a section opens as a panel over the floor. */
+
+  const sectionOpened = (section) => {
+    gsap.fromTo(
+      section,
+      { opacity: 0, y: 28, skewX: -3 },
+      { opacity: 1, y: 0, skewX: 0, duration: 0.45, ease, clearProps: "transform,opacity" }
+    );
+    gsap.fromTo(
+      $$(".section-head, .player-card, .player-portrait, .move-list li, .loadout, .career-list li, .continue-title, .contact-actions", section),
+      { autoAlpha: 0, y: 18 },
+      { autoAlpha: 1, y: 0, duration: 0.45, delay: 0.08, stagger: 0.04, ease, clearProps: "transform,opacity,visibility" }
+    );
+    runCountdown(section.id === "contact");
+  };
+
+  const sectionClosed = () => runCountdown(false);
+
+  /* Sections: each one arrives its own way, once. */
+
+  if (!world) {
+    $$(".section-title, .continue-title").forEach((title) => {
+      const split = SplitText.create(title, { type: "words,chars" });
+
+      gsap.from(split.chars, {
+        yPercent: 70,
+        skewX: -20,
+        autoAlpha: 0,
+        duration: 0.5,
+        stagger: 0.03,
+        ease,
+        scrollTrigger: { trigger: title, start: "top 85%", once: true },
+      });
     });
+
+    gsap.fromTo(
+      ".player-portrait",
+      { clipPath: portraitClipClosed },
+      {
+        clipPath: portraitClip,
+        duration: 0.8,
+        ease,
+        clearProps: "clipPath",
+        scrollTrigger: { trigger: ".player", start: "top 70%", once: true },
+      }
+    );
+
+    gsap.from(".move-list li", {
+      autoAlpha: 0,
+      x: -48,
+      duration: 0.5,
+      stagger: 0.07,
+      ease,
+      scrollTrigger: { trigger: ".move-list", start: "top 80%", once: true },
+    });
+
+    gsap.from(".loadout li", {
+      autoAlpha: 0,
+      y: 12,
+      duration: 0.35,
+      stagger: 0.025,
+      ease,
+      scrollTrigger: { trigger: ".loadout", start: "top 90%", once: true },
+    });
+
+    gsap.from(".career-list li", {
+      autoAlpha: 0,
+      xPercent: -6,
+      duration: 0.6,
+      stagger: 0.12,
+      ease,
+      scrollTrigger: { trigger: ".career-list", start: "top 78%", once: true },
+    });
+
+    /* HUD: the nav lights up for the section on screen. */
+
+    const navTargets = $$(".hud-nav a")
+      .map((link) => [link, $(link.getAttribute("href"))])
+      .filter(([, section]) => section);
+
+    const lightNav = () => {
+      const line = window.innerHeight / 2;
+      let current = null;
+
+      navTargets.forEach(([link, section]) => {
+        const box = section.getBoundingClientRect();
+
+        if (box.top <= line && box.bottom > line) {
+          current = link;
+        }
+      });
+
+      navTargets.forEach(([link]) => {
+        link.classList.toggle("is-active", link === current);
+
+        if (link === current) {
+          link.setAttribute("aria-current", "location");
+        } else {
+          link.removeAttribute("aria-current");
+        }
+      });
+    };
+
+    ScrollTrigger.create({ start: 0, end: "max", onUpdate: lightNav, onRefresh: lightNav });
+
+    if (count) {
+      count.hidden = false;
+
+      ScrollTrigger.create({
+        trigger: "#contact",
+        start: "top 75%",
+        end: "bottom top",
+        onToggle: ({ isActive }) => runCountdown(isActive),
+      });
+    }
   }
 
   window.addEventListener("resize", () => placeCursor(false));
@@ -309,6 +334,8 @@
     stagePainted,
     wipe,
     gameOpened,
+    sectionOpened,
+    sectionClosed,
     scrollLock: (locked) => {
       if (!lenis) {
         return;

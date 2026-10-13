@@ -2154,6 +2154,331 @@ ol {
   }
 }
 
+/* Play world: the arcade floor replaces the scrolling page. Sections open as panels over it. */
+
+html:not(.world) .world,
+html:not(.world) .section-sheet,
+html:not(.world) .world-only,
+html.world .classic-only {
+  display: none;
+}
+
+html.world body {
+  height: 100svh;
+  overflow: hidden;
+  background: var(--ink);
+}
+
+html.world .hud {
+  position: fixed;
+  left: 0;
+  right: 0;
+}
+
+html.world .skip-link {
+  position: fixed;
+}
+
+html.world #select,
+html.world .footer,
+html.world main > section:not(.is-open) {
+  display: none;
+}
+
+.world {
+  position: fixed;
+  inset: var(--hud-h) 0 0;
+  overflow: hidden;
+  background: var(--ink);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.world-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  outline: none;
+}
+
+.world-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.world-plate {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 0.3rem 1.1rem 0.25rem;
+  border: 0;
+  background: var(--ink);
+  color: var(--cream);
+  font-family: var(--display);
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: auto;
+  clip-path: polygon(0.45rem 0, 100% 0, calc(100% - 0.45rem) 100%, 0 100%);
+  transition: background-color 140ms var(--ease-out), color 140ms var(--ease-out), opacity 200ms var(--ease-out);
+}
+
+.world-plate:hover,
+.world-plate.is-hover,
+.world-plate.is-near {
+  background: var(--yellow);
+  color: var(--ink);
+}
+
+.world-plate:focus-visible {
+  outline: none;
+  background: var(--yellow);
+  color: var(--ink);
+  box-shadow: inset 0 -4px 0 var(--red);
+}
+
+.world-plate.is-off {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.world-help {
+  position: absolute;
+  left: var(--pad);
+  bottom: 1.25rem;
+  max-width: 25rem;
+  padding: 1rem 1.4rem 1.05rem 1.25rem;
+  background: rgba(14, 12, 43, 0.86);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 1rem) 100%, 0 100%);
+  pointer-events: none;
+  transition: opacity 500ms var(--ease-out) 600ms;
+}
+
+html.world-moved .world-help {
+  opacity: 0;
+}
+
+.world-title {
+  font-family: var(--display);
+  font-size: clamp(1.9rem, 3.2vw, 2.6rem);
+  font-weight: 900;
+  line-height: 0.95;
+  text-transform: uppercase;
+  color: var(--yellow);
+  transform: skewX(var(--slant));
+  transform-origin: left bottom;
+}
+
+.world-lead {
+  margin-top: 0.5rem;
+  color: var(--cream);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.world-controls {
+  margin-top: 0.55rem;
+  color: var(--cream-dim);
+  font-size: 0.875rem;
+  line-height: 1.9;
+}
+
+.world kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.6rem;
+  height: 1.45rem;
+  margin: 0 0.1rem;
+  padding: 0 0.45rem;
+  background: var(--cream);
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 0.9rem;
+  font-weight: 900;
+  vertical-align: middle;
+  clip-path: polygon(0.28rem 0, 100% 0, calc(100% - 0.28rem) 100%, 0 100%);
+}
+
+.world-controls-touch {
+  display: none;
+}
+
+@media not ((hover: hover) and (pointer: fine)) {
+  .world-controls-fine {
+    display: none;
+  }
+
+  .world-controls-touch {
+    display: inline;
+  }
+}
+
+.world-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(1.25rem, 4vh, 2.25rem);
+  transform: translateX(-50%);
+}
+
+.world-prompt[hidden],
+.world-prompt [hidden] {
+  display: none;
+}
+
+.world-prompt-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-height: 3.1rem;
+  padding: 0 1.6rem 0 1.2rem;
+  border: 0;
+  background: var(--red);
+  color: var(--cream);
+  font-family: var(--display);
+  font-size: 1.35rem;
+  font-weight: 900;
+  text-decoration: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+  clip-path: polygon(0.8rem 0, 100% 0, calc(100% - 0.8rem) 100%, 0 100%);
+  box-shadow: inset 0 -5px 0 var(--red-deep);
+  animation: world-prompt-in 260ms var(--ease-out);
+}
+
+.world-prompt-open:hover {
+  background: var(--red-deep);
+}
+
+.world-prompt-open:focus-visible {
+  outline: none;
+  background: var(--yellow);
+  color: var(--ink);
+}
+
+@keyframes world-prompt-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+.world-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.9rem;
+  background: var(--ink);
+  font-family: var(--display);
+  font-size: 1.6rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  color: var(--cream);
+  transition: opacity 400ms var(--ease-out), visibility 0s linear 400ms;
+}
+
+.world-loading-bar {
+  display: block;
+  width: min(16rem, 60vw);
+  height: 0.6rem;
+  background: var(--ink-raise);
+  clip-path: polygon(0.3rem 0, 100% 0, calc(100% - 0.3rem) 100%, 0 100%);
+}
+
+#world-loading-fill {
+  display: block;
+  height: 100%;
+  background: var(--yellow);
+  transform: scaleX(0.08);
+  transform-origin: left;
+  transition: transform 240ms var(--ease-out);
+}
+
+html.world-ready .world-loading {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* Section panels over the floor */
+
+.section-backdrop {
+  position: fixed;
+  inset: var(--hud-h) 0 0;
+  z-index: 65;
+  background: rgba(14, 12, 43, 0.62);
+}
+
+html.world main > section.is-open {
+  position: fixed;
+  inset: calc(var(--hud-h) + 1rem) var(--pad) 1rem;
+  z-index: 66;
+  max-width: 75rem;
+  margin: 0 auto;
+  padding: clamp(3.75rem, 6vw, 4.5rem) clamp(1.25rem, 4vw, 3rem) clamp(1.5rem, 4vw, 3rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-shadow: 0 0 0 4px var(--ink), 0 28px 70px rgba(8, 6, 32, 0.6);
+}
+
+html.world main > section.is-open::before {
+  display: none;
+}
+
+.section-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 2;
+}
+
+@media (max-width: 760px) {
+  .world-help {
+    left: 0.75rem;
+    right: 0.75rem;
+    top: 0.75rem;
+    bottom: auto;
+    max-width: none;
+    padding: 0.75rem 1.1rem 0.8rem 0.9rem;
+  }
+
+  .world-lead {
+    display: none;
+  }
+
+  .world-title {
+    font-size: 1.7rem;
+  }
+
+  .world-controls {
+    margin-top: 0.3rem;
+  }
+
+  .world-plate {
+    padding: 0.25rem 0.8rem 0.2rem;
+    font-size: 0.875rem;
+  }
+
+  .world-prompt-open {
+    font-size: 1.15rem;
+  }
+
+  html.world main > section.is-open {
+    inset: calc(var(--hud-h) + 0.5rem) 0.5rem 0.5rem;
+  }
+
+  .section-close {
+    top: 0.6rem;
+    right: 0.6rem;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

@@ -28,10 +28,42 @@
     <link rel="stylesheet" href="./vendor/lenis.css" />
     <link rel="stylesheet" href="./styles.css" />
     <script>
-      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-        document.documentElement.classList.add("boot");
-        window.setTimeout(() => document.documentElement.classList.remove("boot"), 1600);
-      }
+      (() => {
+        const root = document.documentElement;
+        let view = new URLSearchParams(window.location.search).get("view");
+
+        try {
+          if (view === "world" || view === "classic") {
+            window.localStorage.setItem("fy-view", view);
+          } else {
+            view = window.localStorage.getItem("fy-view");
+          }
+        } catch {}
+
+        const webgl2 = (() => {
+          try {
+            const gl = document.createElement("canvas").getContext("webgl2");
+            gl?.getExtension("WEBGL_lose_context")?.loseContext();
+            return Boolean(gl);
+          } catch {
+            return false;
+          }
+        })();
+
+        if (view !== "classic" && webgl2) {
+          root.classList.add("world");
+          window.setTimeout(() => {
+            if (!window.PortfolioWorld) {
+              root.classList.remove("world", "world-ready");
+            }
+          }, 10000);
+        }
+
+        if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          root.classList.add("boot");
+          window.setTimeout(() => root.classList.remove("boot"), 1600);
+        }
+      })();
     </script>
   </head>
   <body>
@@ -65,9 +97,15 @@
       <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></symbol>
       <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8Z" /></symbol>
       <symbol id="i-out" viewBox="0 0 24 24"><path d="M7 7h10v10M7 17 17 7" /></symbol>
+      <symbol id="i-gamepad" viewBox="0 0 24 24">
+        <path d="M6 12h4M8 10v4M15 13h.01M18 11h.01" />
+        <rect x="2" y="6" width="20" height="12" rx="4" />
+      </symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></symbol>
     </svg>
 
-    <a class="skip-link" href="#select">Skip to the games</a>
+    <a class="skip-link classic-only" href="#select">Skip to the games</a>
+    <a class="skip-link world-only" href="?view=classic">Switch to the classic page</a>
 
     <header class="hud">
       <button
@@ -93,6 +131,12 @@
       </nav>
 
       <div class="hud-actions">
+        <a class="btn btn-ghost world-only" href="?view=classic" aria-label="Classic view">
+          <span class="btn-face"><svg class="icon"><use href="#i-list" /></svg><span class="btn-label">Classic</span></span>
+        </a>
+        <a class="btn btn-ghost classic-only" href="?view=world" aria-label="Play mode">
+          <span class="btn-face"><svg class="icon"><use href="#i-gamepad" /></svg><span class="btn-label">Play mode</span></span>
+        </a>
         <a
           class="btn btn-red"
           href="./assets/Francis-Yambao-Resume.pdf"
@@ -106,6 +150,43 @@
         </a>
       </div>
     </header>
+
+    <div class="world" id="world">
+      <canvas class="world-canvas" id="world-canvas" role="img" aria-label="Arcade floor. Use the name buttons to walk the robot to each stop."></canvas>
+      <div class="world-labels" id="world-labels"></div>
+
+      <div class="world-help">
+        <h1 class="world-title">
+          <span class="sr-only">Francis Yambao, game developer: </span>Walk the floor.
+        </h1>
+        <p class="world-lead">Each stop opens part of my portfolio: the games, about me, skills, career, and contact.</p>
+        <p class="world-controls">
+          <span class="world-controls-touch">Tap anywhere to walk. Tap a stop to open it.</span>
+          <span class="world-controls-fine">Click to walk, or use <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>. Press <kbd>E</kbd> at a stop.</span>
+        </p>
+      </div>
+
+      <div class="world-prompt" id="world-prompt" hidden>
+        <button class="world-prompt-open" id="world-prompt-open" type="button">
+          <kbd>E</kbd><span id="world-prompt-label">Open</span>
+        </button>
+        <a class="world-prompt-open" id="world-prompt-link" href="#" target="_blank" rel="noreferrer" hidden>
+          <kbd>E</kbd><span id="world-prompt-link-label">Open</span>
+        </a>
+      </div>
+
+      <div class="world-loading" aria-hidden="true">
+        <strong>Loading the floor</strong>
+        <span class="world-loading-bar"><span id="world-loading-fill"></span></span>
+      </div>
+    </div>
+
+    <div class="section-sheet" id="section-sheet" hidden>
+      <div class="section-backdrop" data-section-close></div>
+      <button class="btn btn-cream section-close" id="section-close" type="button">
+        <span class="btn-face"><svg class="icon"><use href="#i-close" /></svg>Close</span>
+      </button>
+    </div>
 
     <main>
       <section class="select" id="select" aria-labelledby="select-title">
@@ -501,11 +582,16 @@
     </div>
 
     <script src="./gallery-data.js"></script>
+    <script src="./world-data.js"></script>
     <script src="./vendor/gsap.min.js"></script>
     <script src="./vendor/ScrollTrigger.min.js"></script>
     <script src="./vendor/SplitText.min.js"></script>
     <script src="./vendor/lenis.min.js"></script>
     <script src="./script.js"></script>
     <script src="./motion.js"></script>
+    <script
+      src="./world.bundle.js"
+      onerror="document.documentElement.classList.remove('world', 'world-ready')"
+    ></script>
   </body>
 </html>
