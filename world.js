@@ -3,8 +3,11 @@
 
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import nikoGlb from "./assets/niko.glb";
 import nikoEyesUrl from "./assets/niko-eyes.png";
+import { atmos, buildIsland, ISLE, occlude, seeThrough } from "./world-island.js";
+import { toXZ } from "./world-map.js";
 
 const root = document.documentElement;
 const host = document.getElementById("world");
@@ -44,9 +47,12 @@ async function start() {
   const coarse = window.matchMedia("(pointer: coarse)").matches;
   const gsap = window.gsap;
   const projects = window.PROJECT_ALBUMS || [];
-  const defs = window.WORLD_OBJECTS || [];
-  const HALF = 16;
-  const LIMIT = HALF - 0.8;
+  const defs = (window.WORLD_OBJECTS || []).map((def) => {
+    const [x, z] = def.u == null ? [def.x, def.z] : toXZ(def.u, def.v);
+    if (!def.faceTo) return { ...def, x, z };
+    const [tx, tz] = toXZ(...def.faceTo);
+    return { ...def, x, z, facing: THREE.MathUtils.radToDeg(Math.atan2(tx - x, tz - z)) };
+  });
   const ROBOT_R = 0.45;
   const SPEED = 4.6;
 
@@ -173,33 +179,40 @@ async function start() {
   renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(PAL.haze, 36, 82);
 
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
-  const camOffset = new THREE.Vector3(16, 17, 16);
+  /* The camera sits far back along the iso direction so nothing on the island ever crosses its near plane */
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 260);
+  const camOffset = new THREE.Vector3(40, 58, 40);
   const camLook = new THREE.Vector3(0, 0, 0);
   let viewHeight = 16;
 
-  /* Warm key from the right, cool fill from the left, a coral kiss from behind */
-  const hemi = new THREE.HemisphereLight("#ffeedd", "#3b2fc0", 1.45);
+  /* Daylight: a warm, high sun from the upper left of the screen so shadows fall toward the viewer, a cool sky
+     ambient that tints the shade blue, a cool bounce on the side away from the sun and a warm kiss from behind */
+  const hemi = new THREE.HemisphereLight("#cfe4ff", "#9a8a68", 1.05);
   scene.add(hemi);
 
-  const sun = new THREE.DirectionalLight("#ffe3bd", 2.5);
-  sun.position.set(10, 14, 6);
+  const sun = new THREE.DirectionalLight("#ffe7c2", 3.1);
+  sun.position.set(-25, 30, 11);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(coarse ? 1024 : 2048, coarse ? 1024 : 2048);
-  Object.assign(sun.shadow.camera, { left: -21, right: 21, top: 21, bottom: -21, near: 1, far: 60 });
+  sun.shadow.mapSize.set(coarse ? 2048 : 3072, coarse ? 2048 : 3072);
+  Object.assign(sun.shadow.camera, { left: -34, right: 34, top: 34, bottom: -34, near: 1, far: 110 });
+  sun.shadow.camera.updateProjectionMatrix();
   sun.shadow.bias = -0.0006;
   sun.shadow.normalBias = 0.02;
   sun.shadow.radius = 4;
+  /* The sun and the props never move, so their shadow map is drawn once (bakeShadows) instead of every frame. Moving
+     things (Niko, gems, debris) cast no map shadow; Niko has his own contact shadow decal. */
+  sun.shadow.autoUpdate = false;
+  sun.shadow.needsUpdate = true;
+  const bakeShadows = () => (sun.shadow.needsUpdate = true);
   scene.add(sun);
 
-  const fill = new THREE.DirectionalLight("#7cc8ff", 0.6);
-  fill.position.set(-10, 5, 8);
+  const fill = new THREE.DirectionalLight("#8fbcff", 0.4);
+  fill.position.set(14, 6, -4);
   scene.add(fill);
 
-  const rim = new THREE.DirectionalLight("#ff8f7d", 0.45);
-  rim.position.set(-4, 8, -12);
+  const rim = new THREE.DirectionalLight("#ffc89a", 0.3);
+  rim.position.set(-6, 8, -14);
   scene.add(rim);
 
   /* Materials and building blocks */
@@ -231,14 +244,38 @@ async function start() {
     return material;
   };
 
+  /* Island props use a softer ramp than Niko, so daylight shadows on them stay light, like the terrain's */
+  const softRamp = new THREE.DataTexture(new Uint8Array([74, 92, 186, 236, 255]), 5, 1, THREE.RedFormat);
+  softRamp.minFilter = THREE.LinearFilter;
+  softRamp.magFilter = THREE.LinearFilter;
+  softRamp.generateMipmaps = false;
+  softRamp.needsUpdate = true;
+
   const toonCache = new Map();
+  const flatToon = new Map();
   const toon = (color) => {
     if (!toonCache.has(color)) {
-      toonCache.set(color, withRim(new THREE.MeshToonMaterial({ color, gradientMap: ramp })));
+      const material = withRim(new THREE.MeshToonMaterial({ color, gradientMap: ramp }));
+      toonCache.set(color, material);
+      flatToon.set(material, "toon");
     }
     return toonCache.get(color);
   };
-  const glow = (color) => new THREE.MeshBasicMaterial({ color, toneMapped: false });
+  const softCache = new Map();
+  const soft = (color) => {
+    if (!softCache.has(color)) {
+      const material = atmos(occlude(withRim(new THREE.MeshToonMaterial({ color, gradientMap: softRamp }), 0.16)));
+      softCache.set(color, material);
+      flatToon.set(material, "soft");
+    }
+    return softCache.get(color);
+  };
+  const softMapped = (map) => atmos(withRim(new THREE.MeshToonMaterial({ map, gradientMap: softRamp }), 0.16));
+  const glow = (color) => {
+    const material = new THREE.MeshBasicMaterial({ color, toneMapped: false });
+    material.userData.flatGlow = true;
+    return material;
+  };
   const box = (w, h, d, r = 0) => (r ? new RoundedBoxGeometry(w, h, d, 3, r) : new THREE.BoxGeometry(w, h, d));
 
   const part = (parent, geometry, material, x = 0, y = 0, z = 0) => {
@@ -255,6 +292,56 @@ async function start() {
     mesh.position.set(x, y, z);
     parent.add(mesh);
     return mesh;
+  };
+
+  /* Fewer draw calls: a static group's flat-coloured toon parts (and its glow parts) are baked into one mesh, with the
+     colours moved into vertex colours. Anything under a node marked userData.live (spinning gems, the mailbox flag)
+     keeps its own mesh so it can still move. */
+  const painted = {
+    toon: withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: ramp })),
+    soft: atmos(occlude(withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: softRamp }), 0.16))),
+    glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
+  };
+  const mergeStatic = (group) => {
+    group.updateMatrixWorld(true);
+    const toGroup = group.matrixWorld.clone().invert();
+    const buckets = new Map();
+    group.traverse((node) => {
+      if (!node.isMesh || node.isSkinnedMesh) return;
+      const kind = flatToon.get(node.material) || (node.material.userData?.flatGlow ? "glow" : null);
+      if (!kind) return;
+      for (let up = node; up && up !== group; up = up.parent) if (up.userData.live) return;
+      const key = `${kind}|${node.castShadow}|${node.receiveShadow}`;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(node);
+    });
+    buckets.forEach((nodes, key) => {
+      if (nodes.length < 2) return;
+      const geometries = nodes.map((node) => {
+        const source = node.geometry;
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", source.attributes.position.clone());
+        if (source.attributes.normal) geometry.setAttribute("normal", source.attributes.normal.clone());
+        else geometry.computeVertexNormals();
+        const count = geometry.attributes.position.count;
+        geometry.setIndex(source.index ? source.index.clone() : [...Array(count).keys()]);
+        const { r, g, b } = node.material.color;
+        const colors = new Float32Array(count * 3);
+        for (let i = 0; i < count; i += 1) colors.set([r, g, b], i * 3);
+        geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+        geometry.applyMatrix4(new THREE.Matrix4().multiplyMatrices(toGroup, node.matrixWorld));
+        return geometry;
+      });
+      const merged = mergeGeometries(geometries);
+      geometries.forEach((geometry) => geometry.dispose());
+      if (!merged) return;
+      const [kind, cast, receive] = key.split("|");
+      const mesh = new THREE.Mesh(merged, painted[kind]);
+      mesh.castShadow = cast === "true";
+      mesh.receiveShadow = receive === "true";
+      group.add(mesh);
+      nodes.forEach((node) => node.removeFromParent());
+    });
   };
 
   const manager = new THREE.LoadingManager();
@@ -398,77 +485,22 @@ async function start() {
     return sprite;
   };
 
-  /* Floor: a floating cobalt island, tiled on top, layered rock below, rimmed in yellow */
+  /* The island: terrain, water, stream, ruins, camp, dock and plants (world-island.js). Stops keep clear space. */
 
-  const roundedRect = (half, r) => {
-    const s = new THREE.Shape();
-    const e = half - r;
-    s.moveTo(half, -e);
-    s.absarc(e, e, r, 0, Math.PI / 2);
-    s.absarc(-e, e, r, Math.PI / 2, Math.PI);
-    s.absarc(-e, -e, r, Math.PI, Math.PI * 1.5);
-    s.absarc(e, -e, r, Math.PI * 1.5, Math.PI * 2);
-    return s;
-  };
-
-  const slab = (parent, { half, r, top, depth, material, bevel = 0 }) => {
-    const geometry = new THREE.ExtrudeGeometry(roundedRect(half - bevel, r), {
-      depth: Math.max(0.01, depth - bevel * 2),
-      bevelEnabled: bevel > 0,
-      bevelThickness: bevel,
-      bevelSize: bevel,
-      bevelSegments: 4,
-      curveSegments: 10,
-    });
-    geometry.rotateX(-Math.PI / 2);
-    geometry.translate(0, top - depth + bevel, 0);
-    const mesh = new THREE.Mesh(geometry, material);
-    parent.add(mesh);
-    return mesh;
-  };
-
-  const floorTexture = (() => {
-    const size = 256;
-    const c = document.createElement("canvas");
-    c.width = c.height = size;
-    const ctx = c.getContext("2d");
-    ctx.fillStyle = "#1b23bf";
-    ctx.fillRect(0, 0, size, size);
-    ["#2b35ee", "#2630e4", "#2832ea", "#2329dc"].forEach((tone, i) => {
-      const x = (i % 2) * 128;
-      const y = Math.floor(i / 2) * 128;
-      ctx.fillStyle = tone;
-      ctx.beginPath();
-      ctx.roundRect(x + 4, y + 4, 120, 120, 18);
-      ctx.fill();
-      const sheen = ctx.createLinearGradient(x, y, x + 128, y + 128);
-      sheen.addColorStop(0, "rgba(255,255,255,0.09)");
-      sheen.addColorStop(0.55, "rgba(255,255,255,0)");
-      sheen.addColorStop(1, "rgba(8,6,40,0.12)");
-      ctx.fillStyle = sheen;
-      ctx.fill();
-    });
-    const texture = new THREE.CanvasTexture(c);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(0.25, 0.25);
-    texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-    return texture;
-  })();
-
-  const island = new THREE.Group();
-  scene.add(island);
-
-  const floorMat = withRim(new THREE.MeshToonMaterial({ map: floorTexture, gradientMap: ramp }));
-  slab(island, { half: HALF, r: 1.6, top: 0, depth: 0.6, material: [floorMat, toon(PAL.cobaltDeep)], bevel: 0.16 }).receiveShadow = true;
-  slab(island, { half: HALF + 0.14, r: 1.74, top: -0.2, depth: 0.22, material: glow(PAL.yellow) });
-  slab(island, { half: HALF - 0.25, r: 1.5, top: -0.42, depth: 1.5, material: toon(PAL.rock), bevel: 0.3 });
-  slab(island, { half: HALF - 1.4, r: 1.6, top: -1.9, depth: 1.7, material: toon(PAL.rockDeep), bevel: 0.35 });
-  slab(island, { half: HALF - 3.4, r: 1.8, top: -3.55, depth: 2.4, material: toon(PAL.rockDeeper), bevel: 0.4 });
-
-  const spawnRing = flat(scene, new THREE.RingGeometry(1.15, 1.42, 6), glow(PAL.yellow), 0, 0.02, 0);
-  spawnRing.rotation.x = -Math.PI / 2;
-  decal(scene, { color: PAL.yellow, size: 5.5, opacity: 0.16, additive: true, y: 0.016 });
+  const island = buildIsland({
+    scene,
+    withRim,
+    coarse,
+    clear: defs
+      .filter((def) => def.action)
+      .flatMap((def) => {
+        const facing = THREE.MathUtils.degToRad(def.facing || 0);
+        return [
+          { x: def.x, z: def.z, r: 2.6 },
+          { x: def.x + Math.sin(facing) * 2.2, z: def.z + Math.cos(facing) * 2.2, r: 2.2 },
+        ];
+      }),
+  });
 
   /* World objects */
 
@@ -476,159 +508,143 @@ async function start() {
   const projectsById = new Map(projects.map((project, index) => [project.id, { project, index }]));
 
   const builders = {
-    cabinet(def, order) {
+    /* A game: a carved shrine tablet with a glowing screen that plays its art */
+    monolith(def, order) {
       const g = new THREE.Group();
-      const sideColour = order % 2 ? PAL.yellow : PAL.red;
-      const marqueeText = order % 2 ? PAL.ink : PAL.cream;
       const project = projectsById.get(def.action?.project)?.project;
+      const trim = order % 2 ? ISLE.star : ISLE.rigel;
 
-      part(g, box(1.5, 2.3, 1.2, 0.16), toon(PAL.inkRaise), 0, 1.15, 0);
-      part(g, box(0.14, 2.5, 1.3, 0.06), toon(sideColour), -0.8, 1.25, 0);
-      part(g, box(0.14, 2.5, 1.3, 0.06), toon(sideColour), 0.8, 1.25, 0);
-      decal(g, { color: "#8d95ff", size: 2.8, z: 1.35, opacity: 0.32, additive: true });
+      part(g, box(2.2, 0.34, 1.4, 0.08), soft(ISLE.ruinDeep), 0, 0.17, 0);
+      part(g, box(1.8, 3, 0.66, 0.12), soft(ISLE.rock), 0, 1.8, -0.05);
+      part(g, box(2.06, 0.38, 0.86, 0.08), soft(ISLE.ruin), 0, 3.4, -0.05);
+      const cap = part(g, new THREE.ConeGeometry(0.66, 0.6, 4), soft(ISLE.ruin), 0, 3.88, -0.05);
+      cap.rotation.y = Math.PI / 4;
+      flat(g, new THREE.OctahedronGeometry(0.2), glow(trim), 0, 3.88, 0.28);
 
-      const deck = part(g, box(1.5, 0.14, 0.6, 0.06), toon(PAL.ink), 0, 1.08, 0.78);
-      deck.rotation.x = 0.16;
-      part(g, new THREE.CylinderGeometry(0.03, 0.03, 0.22, 8), toon(PAL.ink), -0.38, 1.25, 0.82);
-      part(g, new THREE.SphereGeometry(0.085, 14, 10), toon(PAL.red), -0.38, 1.37, 0.82);
-      [0.08, 0.3, 0.52].forEach((x, i) => {
-        part(g, new THREE.CylinderGeometry(0.065, 0.065, 0.06, 14), toon(i === 1 ? PAL.yellow : PAL.red), x, 1.17, 0.8);
-      });
-
-      const bezel = part(g, box(1.4, 1.02, 0.04, 0.02), toon(PAL.ink), 0, 1.72, 0.61);
-      bezel.rotation.x = -0.1;
+      flat(g, new THREE.PlaneGeometry(1.52, 1.12), glow(trim), 0, 2.08, 0.285);
       const screenMat = project?.select?.tile
-        ? new THREE.MeshBasicMaterial({ map: imageTexture(project.select.tile, 1.26 / 0.88), toneMapped: false })
-        : glow(PAL.cobalt);
-      const screen = flat(g, new THREE.PlaneGeometry(1.26, 0.88), screenMat, 0, 1.72, 0.635);
-      screen.rotation.x = -0.1;
+        ? new THREE.MeshBasicMaterial({ map: imageTexture(project.select.tile, 1.38 / 0.98), toneMapped: false })
+        : glow(ISLE.water);
+      flat(g, new THREE.PlaneGeometry(1.38, 0.98), screenMat, 0, 2.08, 0.292);
+      [-0.8, 0.8].forEach((x) => flat(g, box(0.06, 1.7, 0.04), glow(trim), x, 1.7, 0.29));
+      flat(g, new THREE.PlaneGeometry(1.5, 0.38), softMapped(textTexture(def.label, { bg: ISLE.ruin, fg: "#3b3848" })), 0, 1.06, 0.29);
 
-      part(g, box(1.6, 0.46, 0.5, 0.12), toon(sideColour), 0, 2.5, 0.3);
-      halo(g, { color: sideColour, size: 2.2, y: 2.55, z: 0.75, opacity: 0.22 });
-      flat(
-        g,
-        new THREE.PlaneGeometry(1.44, 0.34),
-        new THREE.MeshBasicMaterial({ map: textTexture(def.label, { bg: sideColour, fg: marqueeText }), toneMapped: false }),
-        0,
-        2.5,
-        0.555
-      );
-
-      return { group: g, labelY: 3.2, radius: 1.05, reach: 1.8 };
+      decal(g, { color: trim, size: 3.2, z: 1.1, opacity: 0.22, additive: true });
+      halo(g, { color: trim, size: 2.6, y: 2.1, z: 0.6, opacity: 0.16 });
+      return { group: g, labelY: 4.7, radius: 0.95, reach: 1.9 };
     },
 
-    desk() {
+    /* About me: the camp's A-frame tent with a work desk out front */
+    hut() {
       const g = new THREE.Group();
-      flat(g, new THREE.BoxGeometry(3.8, 0.04, 3), toon(PAL.cobaltDeep), 0, 0.02, 0.25).receiveShadow = true;
-      part(g, box(2.4, 0.12, 1.1, 0.03), toon(PAL.cream), 0, 0.95, -0.2);
-      [-1.1, 1.1].forEach((x) => [-0.62, 0.22].forEach((z) => part(g, box(0.1, 0.9, 0.1), toon(PAL.ink), x, 0.45, z)));
+      part(g, box(4.4, 0.18, 4.2, 0.04), soft(ISLE.plank), 0, 0.09, -0.4);
 
-      part(g, box(0.14, 0.32, 0.1), toon(PAL.ink), 0, 1.16, -0.48);
-      part(g, box(1.24, 0.76, 0.08, 0.03), toon(PAL.ink), 0, 1.64, -0.48);
-      flat(g, new THREE.PlaneGeometry(1.1, 0.62), new THREE.MeshBasicMaterial({ map: codeTexture(), toneMapped: false }), 0, 1.64, -0.435);
-      part(g, box(0.82, 0.04, 0.26, 0.015), toon(PAL.inkRaise), 0, 1.03, 0.02);
-      part(g, new THREE.CylinderGeometry(0.08, 0.08, 0.16, 14), toon(PAL.yellow), -0.85, 1.09, 0.05);
+      const tent = new THREE.Group();
+      tent.position.set(0, 0.18, -1.35);
+      g.add(tent);
+      [-1, 1].forEach((side) => {
+        const panel = part(tent, box(0.07, 2.7, 2.5), soft(ISLE.cloth), side * 0.7, 1.15, 0);
+        panel.rotation.z = side * 0.53;
+        const stripe = part(tent, box(0.08, 0.34, 2.52), soft(ISLE.clothRed), side * 1.28, 0.2, 0);
+        stripe.rotation.z = side * 0.53;
+      });
+      part(tent, box(0.12, 0.12, 2.8), soft(ISLE.woodDeep), 0, 2.36, 0);
+      const opening = new THREE.Shape();
+      opening.moveTo(-1.25, 0);
+      opening.lineTo(1.25, 0);
+      opening.lineTo(0, 2.2);
+      opening.closePath();
+      flat(tent, new THREE.ShapeGeometry(opening), new THREE.MeshBasicMaterial({ color: "#3a3046" }), 0, 0.02, 1.1);
+      flat(tent, new THREE.ShapeGeometry(opening), soft(ISLE.cloth), 0, 0.02, -1.22).rotation.y = Math.PI;
+      [-1, 1].forEach((side) => {
+        const pole = part(tent, box(0.1, 2.9, 0.1), soft(ISLE.woodDeep), side * 0.2, 1.3, 1.22);
+        pole.rotation.z = side * -0.32;
+      });
+      const pennant = part(tent, new THREE.ConeGeometry(0.16, 0.6, 3), soft(ISLE.clothRed), 0.3, 2.62, 1.3);
+      pennant.rotation.z = -Math.PI / 2;
+
+      part(g, box(2.2, 0.1, 1, 0.03), soft(ISLE.plank), 0, 0.98, 0.75);
+      [-0.95, 0.95].forEach((x) => [0.35, 1.15].forEach((z) => part(g, box(0.1, 0.8, 0.1), soft(ISLE.woodDeep), x, 0.58, z)));
+      part(g, box(0.8, 0.04, 0.5, 0.015), soft("#3b3848"), -0.1, 1.05, 0.72);
+      const lid = part(g, box(0.8, 0.52, 0.04, 0.015), soft("#3b3848"), -0.1, 1.3, 0.5);
+      lid.rotation.x = -0.18;
+      const code = flat(g, new THREE.PlaneGeometry(0.72, 0.44), new THREE.MeshBasicMaterial({ map: codeTexture(), toneMapped: false }), -0.1, 1.3, 0.525);
+      code.rotation.x = -0.18;
+      part(g, new THREE.CylinderGeometry(0.08, 0.08, 0.16, 12), soft(ISLE.star), 0.62, 1.11, 0.95);
 
       const frame = new THREE.Group();
-      frame.position.set(0.86, 1.27, -0.3);
-      frame.rotation.set(-0.12, -0.35, 0);
+      frame.position.set(0.72, 1.28, 0.55);
+      frame.rotation.set(-0.12, -0.4, 0);
       g.add(frame);
-      part(frame, box(0.44, 0.54, 0.05, 0.015), toon(PAL.red), 0, 0, 0);
+      part(frame, box(0.44, 0.54, 0.05, 0.015), soft(ISLE.wood), 0, 0, 0);
       flat(frame, new THREE.PlaneGeometry(0.34, 0.44), new THREE.MeshBasicMaterial({ map: imageTexture("./assets/me.jpg", 0.34 / 0.44), toneMapped: false }), 0, 0, 0.03);
 
-      part(g, new THREE.CylinderGeometry(0.36, 0.36, 0.05, 16), toon(PAL.ink), 0, 0.03, 0.75);
-      part(g, new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8), toon(PAL.ink), 0, 0.3, 0.75);
-      part(g, box(0.72, 0.1, 0.66, 0.04), toon(PAL.red), 0, 0.6, 0.75);
-      part(g, box(0.72, 0.74, 0.1, 0.04), toon(PAL.red), 0, 1.0, 1.06);
-
-      return { group: g, labelY: 2.7, radius: 1.45, reach: 2.1 };
+      part(g, new THREE.CylinderGeometry(0.3, 0.34, 0.6, 8), soft(ISLE.wood), 0, 0.48, 1.65);
+      return { group: g, labelY: 3.6, radius: 1.9, reach: 2.6 };
     },
 
+    /* Skills: a carved board over three pedestals, each with a floating gem */
     skills() {
       const g = new THREE.Group();
-      [-1.25, 1.25].forEach((x) => part(g, box(0.12, 2.4, 0.12), toon(PAL.ink), x, 1.2, -0.7));
-      part(g, box(2.9, 0.78, 0.12, 0.04), toon(PAL.red), 0, 2.25, -0.7);
-      flat(
-        g,
-        new THREE.PlaneGeometry(2.7, 0.6),
-        new THREE.MeshBasicMaterial({ map: textTexture("Move list", { bg: PAL.red, fg: PAL.cream }), toneMapped: false }),
-        0,
-        2.25,
-        -0.635
-      );
+      [-1.3, 1.3].forEach((x) => part(g, box(0.16, 2.6, 0.16), soft(ISLE.woodDeep), x, 1.3, -0.7));
+      part(g, box(3, 0.82, 0.14, 0.04), soft(ISLE.plank), 0, 2.3, -0.7);
+      flat(g, new THREE.PlaneGeometry(2.8, 0.64), softMapped(textTexture("Move list", { bg: ISLE.plank, fg: "#3b2a1c" })), 0, 2.3, -0.625);
 
-      const gems = [new THREE.OctahedronGeometry(0.27), new THREE.IcosahedronGeometry(0.25), box(0.32, 0.32, 0.32, 0.05)];
-      const gemColours = [PAL.red, PAL.yellow, PAL.cream];
+      const gems = [new THREE.OctahedronGeometry(0.27), new THREE.IcosahedronGeometry(0.25), new THREE.OctahedronGeometry(0.25)];
+      const gemColours = [PAL.red, ISLE.star, ISLE.rigel];
       [-0.95, 0, 0.95].forEach((x, i) => {
-        part(g, new THREE.CylinderGeometry(0.32, 0.4, 0.9, 8), toon(PAL.inkRaise), x, 0.45, 0);
-        part(g, new THREE.CylinderGeometry(0.37, 0.37, 0.06, 8), toon(PAL.yellow), x, 0.93, 0);
-        const gem = part(g, gems[i], toon(gemColours[i]), x, 1.36, 0);
+        part(g, new THREE.CylinderGeometry(0.3, 0.4, 0.9, 8), soft(ISLE.ruin), x, 0.45, 0);
+        part(g, new THREE.CylinderGeometry(0.36, 0.36, 0.08, 8), soft(ISLE.ruinDeep), x, 0.93, 0);
+        const gem = part(g, gems[i], glow(gemColours[i]), x, 1.36, 0);
+        gem.userData.live = true;
+        gem.castShadow = false;
         spinners.push({ mesh: gem, base: 1.36, offset: i * 1.7 });
       });
-
-      return { group: g, labelY: 3.1, radius: 1.6, reach: 2.0 };
+      return { group: g, labelY: 3.3, radius: 1.6, reach: 2.0 };
     },
 
-    signpost() {
+    /* Career: three carved milestones by the ruins path */
+    milestones() {
       const g = new THREE.Group();
-      part(g, new THREE.CylinderGeometry(0.09, 0.11, 3.2, 10), toon(PAL.ink), 0, 1.6, 0);
-      part(g, new THREE.SphereGeometry(0.15, 14, 10), toon(PAL.yellow), 0, 3.26, 0);
-
       [
-        { text: "Game dev", bg: PAL.yellow, fg: PAL.ink, y: 2.78, turn: 0.4 },
-        { text: "Full-stack", bg: PAL.red, fg: PAL.cream, y: 2.22, turn: -0.5 },
-        { text: "Indie 2019", bg: PAL.cream, fg: PAL.ink, y: 1.66, turn: 0.15 },
-      ].forEach((sign) => {
-        const arm = new THREE.Group();
-        arm.position.y = sign.y;
-        arm.rotation.y = sign.turn;
-        g.add(arm);
-        part(arm, box(1.7, 0.42, 0.08, 0.03), toon(sign.bg), 0.78, 0, 0);
-        const texture = textTexture(sign.text, { bg: sign.bg, fg: sign.fg, width: 512, height: 128 });
-        flat(arm, new THREE.PlaneGeometry(1.56, 0.36), new THREE.MeshBasicMaterial({ map: texture, toneMapped: false }), 0.78, 0, 0.045);
-        const back = flat(arm, new THREE.PlaneGeometry(1.56, 0.36), new THREE.MeshBasicMaterial({ map: texture, toneMapped: false }), 0.78, 0, -0.045);
-        back.rotation.y = Math.PI;
+        { text: "Game dev", x: -1.15, h: 2.1, turn: 0.18 },
+        { text: "Full-stack", x: 0, h: 2.3, turn: 0 },
+        { text: "Indie 2019", x: 1.15, h: 2.05, turn: -0.18 },
+      ].forEach((stone, i) => {
+        const s = new THREE.Group();
+        s.position.x = stone.x;
+        s.rotation.y = stone.turn;
+        g.add(s);
+        part(s, box(1.0, stone.h, 0.5, 0.08), soft(i === 1 ? ISLE.rockLight : ISLE.rock), 0, stone.h / 2, 0);
+        part(s, box(1.12, 0.2, 0.62, 0.04), soft(ISLE.ruinDeep), 0, 0.1, 0);
+        flat(s, new THREE.PlaneGeometry(0.88, 0.3), softMapped(textTexture(stone.text, { bg: ISLE.ruin, fg: "#3b3848", width: 512, height: 160 })), 0, stone.h * 0.62, 0.255);
+        flat(s, new THREE.OctahedronGeometry(0.13), glow(ISLE.star), 0, stone.h + 0.2, 0);
       });
-
-      [0.9, 1.75, 2.6].forEach((z, i) => {
-        const stone = part(g, new THREE.CylinderGeometry(0.34, 0.34, 0.06, 6), toon(i % 2 ? PAL.cobaltDeep : PAL.inkRaise), 0, 0.03, z);
-        stone.castShadow = false;
-      });
-
-      return { group: g, labelY: 3.9, radius: 1.35, reach: 2.0 };
+      return { group: g, labelY: 3.4, radius: 1.6, reach: 2.0 };
     },
 
+    /* Contact: a red mailbox at the end of the pier */
     mailbox() {
       const g = new THREE.Group();
-      part(g, box(0.16, 1.0, 0.16), toon(PAL.ink), -0.7, 0.5, 0);
-      part(g, box(0.62, 0.5, 0.95, 0.06), toon(PAL.red), -0.7, 1.25, 0);
-      const lid = part(g, new THREE.CylinderGeometry(0.31, 0.31, 0.95, 18), toon(PAL.red), -0.7, 1.5, 0);
+      part(g, box(0.16, 1.0, 0.16), soft(ISLE.woodDeep), 0, 0.5, 0);
+      part(g, box(0.62, 0.5, 0.95, 0.06), soft(PAL.red), 0, 1.25, 0);
+      const lid = part(g, new THREE.CylinderGeometry(0.31, 0.31, 0.95, 18), soft(PAL.red), 0, 1.5, 0);
       lid.rotation.x = Math.PI / 2;
-      part(g, box(0.5, 0.42, 0.03, 0.02), toon(PAL.redDeep), -0.7, 1.32, 0.48);
+      part(g, box(0.5, 0.42, 0.03, 0.02), soft(PAL.redDeep), 0, 1.32, 0.48);
 
       const flag = new THREE.Group();
-      flag.position.set(-0.37, 1.2, 0.18);
+      flag.userData.live = true;
+      flag.position.set(0.33, 1.2, 0.18);
       g.add(flag);
-      part(flag, box(0.04, 0.5, 0.04), toon(PAL.yellow), 0, 0.25, 0);
-      part(flag, box(0.04, 0.18, 0.26), toon(PAL.yellow), 0, 0.42, 0.13);
+      part(flag, box(0.04, 0.5, 0.04), soft(ISLE.star), 0, 0.25, 0);
+      part(flag, box(0.04, 0.18, 0.26), soft(ISLE.star), 0, 0.42, 0.13);
       flag.rotation.x = -Math.PI / 2;
-
-      [0.25, 1.95].forEach((x) => part(g, box(0.1, 1.7, 0.1), toon(PAL.ink), x, 0.85, -0.1));
-      part(g, box(2.0, 0.72, 0.1, 0.03), toon(PAL.ink), 1.1, 1.75, -0.1);
-      flat(
-        g,
-        new THREE.PlaneGeometry(1.86, 0.58),
-        new THREE.MeshBasicMaterial({ map: textTexture("Continue?", { bg: PAL.ink, fg: PAL.yellow }), toneMapped: false }),
-        1.1,
-        1.75,
-        -0.045
-      );
 
       return {
         group: g,
-        labelY: 2.9,
-        radius: 1.55,
-        reach: 2.0,
+        labelY: 2.4,
+        radius: 0.5,
+        reach: 1.4,
         react() {
           if (gsap && !calm) {
             gsap.fromTo(flag.rotation, { x: -Math.PI / 2 }, { x: 0, duration: 0.5, ease: "back.out(2.4)" });
@@ -639,73 +655,26 @@ async function start() {
       };
     },
 
-    board() {
+    /* Resume: a stone lectern at the shrine holding the printed page */
+    lectern() {
       const g = new THREE.Group();
-      [-0.52, 0.52].forEach((x) => {
-        const leg = part(g, box(0.08, 2.3, 0.08), toon(PAL.ink), x, 1.1, -0.05);
-        leg.rotation.x = 0.08;
-      });
-      const back = part(g, box(0.08, 1.9, 0.08), toon(PAL.ink), 0, 0.95, -0.42);
-      back.rotation.x = -0.32;
-
+      part(g, box(1.3, 0.24, 1, 0.06), soft(ISLE.ruinDeep), 0, 0.12, 0);
+      part(g, box(0.62, 1.2, 0.5, 0.06), soft(ISLE.ruin), 0, 0.82, 0);
       const panel = new THREE.Group();
-      panel.position.set(0, 1.5, 0.05);
-      panel.rotation.x = -0.08;
+      panel.position.set(0, 1.62, 0.05);
+      panel.rotation.x = 0.55;
       g.add(panel);
-      part(panel, box(1.34, 1.8, 0.08, 0.03), toon(PAL.ink), 0, 0, 0);
-      flat(
-        panel,
-        new THREE.PlaneGeometry(1.18, 1.64),
-        new THREE.MeshBasicMaterial({ map: imageTexture("./assets/resume-display.jpg", 1.18 / 1.64), toneMapped: false }),
-        0,
-        0,
-        0.045
-      );
-
-      return { group: g, labelY: 2.95, radius: 0.95, reach: 1.7 };
-    },
-
-    lamp() {
-      const g = new THREE.Group();
-      part(g, new THREE.CylinderGeometry(0.26, 0.36, 0.24, 20), toon(PAL.ink), 0, 0.12, 0);
-      part(g, new THREE.CylinderGeometry(0.06, 0.08, 3, 12), toon(PAL.ink), 0, 1.6, 0);
-      const cap = part(g, new THREE.SphereGeometry(0.36, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), toon(PAL.inkRaise), 0, 3.12, 0);
-      cap.castShadow = false;
-      flat(g, new THREE.SphereGeometry(0.2, 18, 12), glow(PAL.cream), 0, 3.06, 0);
-      halo(g, { color: PAL.yellow, size: 2.6, y: 3.0, opacity: 0.55 });
-      decal(g, { color: PAL.yellow, size: 6, opacity: 0.2, additive: true });
-      return { group: g, radius: 0.4 };
-    },
-
-    crate(def) {
-      const g = new THREE.Group();
-      part(g, box(1, 1, 1, 0.14), toon(PAL.redDeep), 0, 0.5, 0);
-      [0.22, 0.78].forEach((y) => part(g, box(1.04, 0.1, 1.04, 0.045), toon(PAL.cream), 0, y, 0));
-      return { group: g, radius: 0.78 * (def.scale || 1) };
-    },
-
-    bush() {
-      const g = new THREE.Group();
-      const tones = [PAL.periwinkle, PAL.violet, PAL.lilac];
-      [
-        [0, 0.55, 0, 0.62],
-        [0.52, 0.38, 0.18, 0.44],
-        [-0.46, 0.36, 0.22, 0.4],
-        [0.08, 0.98, -0.04, 0.42],
-      ].forEach(([x, y, z, r], i) => part(g, new THREE.IcosahedronGeometry(r, 2), toon(tones[i % 3]), x, y, z));
-      [
-        [0.3, 0.92, 0.42],
-        [-0.36, 0.66, 0.5],
-        [0.62, 0.5, 0.48],
-        [-0.05, 1.3, 0.22],
-        [0.2, 0.4, 0.66],
-      ].forEach(([x, y, z]) => flat(g, new THREE.SphereGeometry(0.045, 8, 6), glow(PAL.yellow), x, y, z));
-      return { group: g, radius: 0.85 };
+      part(panel, box(1.3, 0.08, 1.7, 0.03), soft(ISLE.ruin), 0, 0, 0);
+      flat(panel, box(1.36, 0.04, 1.76), glow(ISLE.star), 0, -0.03, 0);
+      const page = flat(panel, new THREE.PlaneGeometry(1.14, 1.54), new THREE.MeshBasicMaterial({ map: imageTexture("./assets/resume-display.jpg", 1.14 / 1.54), toneMapped: false }), 0, 0.045, 0);
+      page.rotation.x = -Math.PI / 2;
+      halo(g, { color: ISLE.star, size: 2.2, y: 1.7, z: 0.3, opacity: 0.16 });
+      return { group: g, labelY: 2.9, radius: 0.9, reach: 1.7 };
     },
 
     pedestal() {
       const g = new THREE.Group();
-      part(g, new THREE.CylinderGeometry(0.6, 0.7, 0.3, 8), toon(PAL.inkRaise), 0, 0.15, 0);
+      part(g, new THREE.CylinderGeometry(0.6, 0.7, 0.3, 8), soft(ISLE.ruin), 0, 0.15, 0);
       return { group: g, labelY: 2.6, radius: 0.9, reach: 1.7 };
     },
   };
@@ -717,21 +686,23 @@ async function start() {
 
   defs.forEach((def) => {
     const build = builders[def.kind] || builders.pedestal;
-    const built = build(def, def.kind === "cabinet" ? cabinetOrder++ : 0);
+    const built = build(def, def.kind === "monolith" ? cabinetOrder++ : 0);
     const group = built.group;
     const facing = THREE.MathUtils.degToRad(def.facing || 0);
-    group.position.set(def.x, 0, def.z);
-    group.rotation.y = facing;
+    const floor = island.groundAt(def.x, def.z);
+    group.position.set(def.x, floor, def.z);
+    group.rotation.set(0, facing, THREE.MathUtils.degToRad(def.lean || 0), "YXZ");
 
     if (def.scale && !def.model) {
       group.scale.setScalar(def.scale);
     }
 
     scene.add(group);
+    mergeStatic(group);
 
     const radius = def.radius || built.radius || 0.8;
     colliders.push({ x: def.x, z: def.z, r: radius });
-    decal(scene, { color: "#07052a", size: radius * 2.9, x: def.x, z: def.z, opacity: 0.4 });
+    decal(scene, { color: "#2a3a2a", size: radius * 2.9, x: def.x, z: def.z, y: floor + 0.03, opacity: 0.3 });
 
     if (!def.action) {
       if (def.model) {
@@ -747,8 +718,8 @@ async function start() {
       group,
       radius,
       react: built.react,
-      spot: new THREE.Vector3(def.x, 0, def.z).addScaledVector(forward, reach),
-      labelAt: new THREE.Vector3(def.x, built.labelY || 2.6, def.z),
+      spot: new THREE.Vector3(def.x, floor, def.z).addScaledVector(forward, reach),
+      labelAt: new THREE.Vector3(def.x, floor + (built.labelY || 2.6), def.z),
       hover: 0,
       plate: null,
     };
@@ -790,6 +761,7 @@ async function start() {
       });
       obj.group.clear();
       obj.group.add(model);
+      bakeShadows();
     } catch (error) {
       console.warn(`Could not load ${obj.def.model}`, error);
     }
@@ -797,14 +769,24 @@ async function start() {
 
   const interactiveGroups = objects.map((obj) => obj.group);
 
-  /* Ambience: drifting motes over the floor, clouds under the island, islets in the distance */
+  /* The walk grid blocks the stops too; each stop's standing spot is moved onto walkable ground */
+  island.nav.build(colliders);
+  objects.forEach((obj) => {
+    if (!island.nav.walkable(obj.spot.x, obj.spot.z)) {
+      const near = island.nav.nearest(obj.spot.x, obj.spot.z);
+      if (near) obj.spot.copy(near);
+    }
+    obj.spot.y = island.groundAt(obj.spot.x, obj.spot.z);
+  });
+
+  /* Ambience: pollen motes drifting over the island */
 
   const moteCount = coarse ? 70 : 140;
   const motes = new Float32Array(moteCount * 3);
   const moteDrift = Array.from({ length: moteCount }, (_, i) => {
-    motes[i * 3] = (Math.random() * 2 - 1) * (HALF + 1);
-    motes[i * 3 + 1] = 0.3 + Math.random() * 7;
-    motes[i * 3 + 2] = (Math.random() * 2 - 1) * (HALF + 1);
+    motes[i * 3] = (Math.random() * 2 - 1) * 20;
+    motes[i * 3 + 1] = 1 + Math.random() * 11;
+    motes[i * 3 + 2] = (Math.random() * 2 - 1) * 20;
     return { rise: 0.12 + Math.random() * 0.35, phase: Math.random() * Math.PI * 2 };
   });
   const moteGeo = new THREE.BufferGeometry();
@@ -813,11 +795,11 @@ async function start() {
     moteGeo,
     new THREE.PointsMaterial({
       map: haloTexture,
-      color: "#ffe4a0",
-      size: coarse ? 6 : 8,
+      color: "#fff6d8",
+      size: coarse ? 5 : 7,
       sizeAttenuation: false,
       transparent: true,
-      opacity: 0.75,
+      opacity: 0.7,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       toneMapped: false,
@@ -826,43 +808,6 @@ async function start() {
   );
   moteField.frustumCulled = false;
   scene.add(moteField);
-
-  const clouds = [
-    [-21, -5.5, -6, 13, 0.22],
-    [-9, -6.5, -22, 15, 0.2],
-    [8, -5, -21, 12, 0.18],
-    [21, -6, 2, 12, 0.18],
-    [14, -7.5, 19, 16, 0.2],
-    [-4, -8, 22, 14, 0.18],
-    [-19, -7, 13, 12, 0.16],
-  ].map(([x, y, z, size, opacity], i) => {
-    const cloud = halo(scene, { color: "#9c94ff", size, x, y, z, opacity });
-    cloud.material.blending = THREE.NormalBlending;
-    cloud.material.fog = false;
-    cloud.scale.y = size * 0.42;
-    return { sprite: cloud, x, phase: i * 1.7 };
-  });
-
-  const islets = [
-    [-13.4, -3.2, -20.4, 1.15],
-    [-18.6, -2.2, -10.9, 0.85],
-    [-3.8, -3.4, -19.4, 0.95],
-  ].map(([x, y, z, s], i) => {
-    const g = new THREE.Group();
-    slab(g, { half: 2, r: 0.9, top: 0, depth: 0.5, material: [toon(PAL.cobalt), toon(PAL.cobaltDeep)], bevel: 0.12 });
-    const root = part(g, new THREE.ConeGeometry(1.7, 2.6, 8), toon(PAL.rockDeep), 0, -1.75, 0);
-    root.rotation.x = Math.PI;
-    if (i !== 1) {
-      const shrub = builders.bush().group;
-      shrub.scale.setScalar(0.8);
-      g.add(shrub);
-    }
-    g.position.set(x, y, z);
-    g.scale.setScalar(s);
-    g.rotation.y = i * 0.7;
-    scene.add(g);
-    return { group: g, base: y, phase: i * 1.9 };
-  });
 
   /* Mascot: Niko, Child of the Star. Chibi low poly: spiky brown hair with a cowlick, cream cloak with a blue lining
      and a gold star, navy scarf, star brooch, belts and pouches, baggy shorts, chunky boots, a star lantern on the hip,
@@ -1368,10 +1313,12 @@ async function start() {
 
   const bot = buildRobot();
   const robot = bot.robot;
-  robot.position.set(0, 0, 0);
+  /* Rigel crash-lands on the beach by the dock, the start of the island */
+  const landing = island.spot("landing");
+  robot.position.copy(landing);
   robot.rotation.y = Math.PI / 4;
   bot.body.scale.setScalar(1.12);
-  const robotShadow = decal(scene, { color: "#07052a", size: 1.5, opacity: 0.5, y: 0.018 });
+  const robotShadow = decal(scene, { color: "#1f2a22", size: 1.5, opacity: 0.45, y: 0.018 });
   const pose = { crouch: 0, lift: 0, spin: 0, flip: 0, raise: 0, tilt: 0 };
   const jiggle = { lx: 0, lv: 0, hy: 0, hv: 0 };
   const buddyAt = new THREE.Vector3(0.55, 1.85, 0.1);
@@ -1551,7 +1498,7 @@ async function start() {
       } else if (name === "glow") mesh.material = glow("#ffe7a0");
       else if (name === "lining") mesh.material = lining;
       else mesh.material = toon(`#${mesh.material.color.getHexString()}`);
-      mesh.castShadow = name !== "glow";
+      mesh.castShadow = false;
       /* No cast shadows on the face: the bang strands' shadow-map shadows read as dirty smudges around the eyes */
       mesh.receiveShadow = name !== "lining" && name !== "glow" && name !== "face";
       mesh.frustumCulled = false;
@@ -1621,7 +1568,7 @@ async function start() {
       eyeDecals,
     });
   };
-  useNikoModel().catch((error) => console.warn("Niko model failed, keeping the built-in mascot", error));
+  const nikoReady = useNikoModel().catch((error) => console.warn("Niko model failed, keeping the built-in mascot", error));
 
   /* Click marker */
 
@@ -1631,7 +1578,7 @@ async function start() {
   let markerAge = 1;
 
   const showMarker = (point) => {
-    marker.position.set(point.x, 0.03, point.z);
+    marker.position.set(point.x, island.groundAt(point.x, point.z) + 0.05, point.z);
     marker.visible = true;
     markerAge = 0;
   };
@@ -1733,17 +1680,26 @@ async function start() {
       0
     );
     wave.rotation.x = -Math.PI / 2;
+    wave.position.copy(landing).y += 0.05;
     return wave;
   });
 
   const impactLight = new THREE.PointLight(PAL.yellow, 0, 16, 1.4);
-  impactLight.position.set(0, 1.4, 0);
+  impactLight.position.copy(landing).y += 1.4;
   scene.add(impactLight);
+
+  /* Once Niko is out, a small Rigel keeps hovering over the shrine in its beam of light */
+  const shrineStar = new THREE.Sprite(flareMat(0.95));
+  shrineStar.scale.setScalar(2.4);
+  shrineStar.position.copy(island.shrine).y += 4.6;
+  shrineStar.renderOrder = 3;
+  shrineStar.visible = !playsIntro;
+  scene.add(shrineStar);
+  island.beamMat.uniforms.strength.value = playsIntro ? 0 : 0.85;
 
   const debrisGeo = new THREE.BoxGeometry(0.17, 0.17, 0.17);
   const debris = Array.from({ length: 22 }, (_, i) => {
-    const mesh = new THREE.Mesh(debrisGeo, toon([PAL.yellow, PAL.red, PAL.cream][i % 3]));
-    mesh.castShadow = true;
+    const mesh = new THREE.Mesh(debrisGeo, soft([ISLE.star, ISLE.ruin, PAL.cream][i % 3]));
     mesh.visible = false;
     scene.add(mesh);
     return { mesh, v: new THREE.Vector3(), spin: new THREE.Vector3(), life: 0, size: 1 };
@@ -1781,6 +1737,7 @@ async function start() {
   const overlayQ = new THREE.Quaternion();
   const breeze = new THREE.Vector3();
 
+  /* Stops and props push Niko out softly; the walk grid keeps him off cliffs, out of the sea and off the stream */
   const resolveCollisions = (pos) => {
     colliders.forEach((c) => {
       const dx = pos.x - c.x;
@@ -1794,58 +1751,31 @@ async function start() {
         pos.z = c.z + (dz / d) * min;
       }
     });
-    pos.x = THREE.MathUtils.clamp(pos.x, -LIMIT, LIMIT);
-    pos.z = THREE.MathUtils.clamp(pos.z, -LIMIT, LIMIT);
     return pos;
   };
 
-  const planPath = (from, to, depth = 0) => {
-    const dx = to.x - from.x;
-    const dz = to.z - from.z;
-    const len2 = dx * dx + dz * dz;
-
-    if (depth > 2 || len2 < 0.0001) {
-      return [to];
-    }
-
-    let first = null;
-
-    colliders.forEach((c) => {
-      const r = c.r + ROBOT_R + 0.1;
-      const t = THREE.MathUtils.clamp(((c.x - from.x) * dx + (c.z - from.z) * dz) / len2, 0, 1);
-      const cx = from.x + dx * t;
-      const cz = from.z + dz * t;
-      const dist = Math.hypot(cx - c.x, cz - c.z);
-
-      if (t > 0.02 && t < 0.98 && dist < r && (!first || t < first.t)) {
-        first = { c, t, cx, cz, dist, r };
-      }
-    });
-
-    if (!first) {
-      return [to];
-    }
-
-    const { c, cx, cz, dist, r } = first;
-    let nx = (cx - c.x) / (dist || 1);
-    let nz = (cz - c.z) / (dist || 1);
-
-    if (dist < 0.01) {
-      const len = Math.sqrt(len2);
-      nx = -dz / len;
-      nz = dx / len;
-    }
-
-    const detour = resolveCollisions(new THREE.Vector3(c.x + nx * (r + 0.45), 0, c.z + nz * (r + 0.45)));
-    return [...planPath(from, detour, depth + 1), ...planPath(detour, to, depth + 1)];
+  /* Keeps a move only if it lands on walkable ground; otherwise slides along whichever axis still does */
+  const stepTo = (from, pos) => {
+    if (island.nav.walkable(pos.x, pos.z) || !island.nav.walkable(from.x, from.z)) return pos;
+    if (island.nav.walkable(pos.x, from.z)) return pos.set(pos.x, pos.y, from.z);
+    if (island.nav.walkable(from.x, pos.z)) return pos.set(from.x, pos.y, pos.z);
+    return pos.copy(from);
   };
 
   const goTo = (point, obj = null) => {
-    const target = resolveCollisions(point.clone());
-    state.path = planPath(robot.position.clone(), target);
+    const path = island.nav.path(robot.position, point);
+    if (!path?.length) {
+      if (obj && robot.position.distanceTo(obj.spot) < 2) {
+        state.path = [];
+        state.pending = obj;
+        arrive();
+      }
+      return;
+    }
+    state.path = path;
     state.pending = obj;
     state.stuck = 0;
-    showMarker(target);
+    showMarker(path[path.length - 1]);
   };
 
   function goToObject(obj) {
@@ -1895,8 +1825,30 @@ async function start() {
 
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
-  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const groundHit = new THREE.Vector3();
+
+  /* The ray is marched down from above the shrine until it dips under the ground, then refined by halving */
+  const rayGround = (ray, out) => {
+    const top = (12 - ray.origin.y) / ray.direction.y;
+    const bottom = (-1.5 - ray.origin.y) / ray.direction.y;
+    let last = top;
+    for (let t = top; t <= bottom; t += 0.15) {
+      ray.at(t, out);
+      if (out.y <= island.groundAt(out.x, out.z)) {
+        let lo = last;
+        let hi = t;
+        for (let k = 0; k < 8; k += 1) {
+          const mid = (lo + hi) / 2;
+          ray.at(mid, out);
+          if (out.y <= island.groundAt(out.x, out.z)) hi = mid;
+          else lo = mid;
+        }
+        return ray.at(hi, out);
+      }
+      last = t;
+    }
+    return null;
+  };
   let hovered = null;
 
   const castAt = (clientX, clientY) => {
@@ -1915,7 +1867,7 @@ async function start() {
       }
     }
 
-    if (raycaster.ray.intersectPlane(groundPlane, groundHit)) {
+    if (rayGround(raycaster.ray, groundHit)) {
       return { point: groundHit.clone() };
     }
 
@@ -2229,6 +2181,8 @@ async function start() {
       state.path = [];
       state.pending = null;
       robot.position.addScaledVector(input, SPEED * dt);
+      resolveCollisions(robot.position);
+      stepTo(before, robot.position);
       state.yaw = Math.atan2(input.x, input.z);
       moving = true;
     } else if (state.path.length) {
@@ -2251,8 +2205,10 @@ async function start() {
       }
     }
 
-    resolveCollisions(robot.position);
-    travelled.subVectors(robot.position, before);
+    /* Feet stay on the ground: terraces, stair ramps and decks */
+    const floor = island.groundAt(robot.position.x, robot.position.z);
+    robot.position.y = calm || !started ? floor : THREE.MathUtils.damp(robot.position.y, floor, 18, dt);
+    travelled.subVectors(robot.position, before).setY(0);
 
     if (state.path.length && travelled.length() < SPEED * dt * 0.2) {
       state.stuck += dt;
@@ -2407,7 +2363,7 @@ async function start() {
     bot.buddyStar.rotation.y = calm ? 0 : time * 1.6;
 
     robotShadow.visible = robot.visible;
-    robotShadow.position.set(robot.position.x, 0.018, robot.position.z);
+    robotShadow.position.set(robot.position.x, robot.position.y + 0.03, robot.position.z);
     const air = THREE.MathUtils.clamp(bot.body.position.y, 0, 1.2);
     robotShadow.scale.set((1.5 - air * 0.5) * bot.grow, 1, (1.5 - air * 0.5) * bot.grow);
     robotShadow.material.opacity = 0.5 - air * 0.25;
@@ -2438,15 +2394,13 @@ async function start() {
         motes[i * 3] += Math.sin(time * 0.6 + mote.phase) * 0.18 * dt;
         motes[i * 3 + 1] += mote.rise * dt;
         motes[i * 3 + 2] += Math.cos(time * 0.5 + mote.phase) * 0.18 * dt;
-        if (motes[i * 3 + 1] > 7.5) {
-          motes[i * 3 + 1] = 0.3;
+        if (motes[i * 3 + 1] > 12) {
+          motes[i * 3 + 1] = 1;
         }
       });
       moteGeo.attributes.position.needsUpdate = true;
       moteField.material.opacity = 0.62 + Math.sin(time * 1.3) * 0.12;
 
-      clouds.forEach((cloud) => (cloud.sprite.position.x = cloud.x + Math.sin(time * 0.08 + cloud.phase) * 1.6));
-      islets.forEach((islet) => (islet.group.position.y = islet.base + Math.sin(time * 0.7 + islet.phase) * 0.18));
     }
 
     objects.forEach((obj) => {
@@ -2469,18 +2423,28 @@ async function start() {
       }
     }
 
-    /* Camera follows, but stays over the floor */
+    island.update(dt, calm ? 0 : time, robot.visible ? robot.position : null);
+    if (shrineStar.visible) {
+      shrineStar.position.y = island.shrine.y + 4.6 + (calm ? 0 : Math.sin(time * 1.4) * 0.18);
+      shrineStar.material.rotation = calm ? 0 : Math.sin(time * 0.5) * 0.15;
+    }
 
-    lookTarget.set(THREE.MathUtils.clamp(robot.position.x, -7, 7), 0, THREE.MathUtils.clamp(robot.position.z, -6, 7));
+    /* Camera follows Niko over the island */
+
+    lookTarget.set(THREE.MathUtils.clamp(robot.position.x, -22, 22), robot.position.y, THREE.MathUtils.clamp(robot.position.z, -22, 22));
     keepInFrame(lookTarget);
     if (calm || !started) {
       camLook.copy(lookTarget);
     } else {
       camLook.x = THREE.MathUtils.damp(camLook.x, lookTarget.x, 4, dt);
+      camLook.y = THREE.MathUtils.damp(camLook.y, lookTarget.y, 3, dt);
       camLook.z = THREE.MathUtils.damp(camLook.z, lookTarget.z, 4, dt);
     }
     camera.position.copy(camLook).add(camOffset);
     camera.lookAt(camLook);
+    camera.updateMatrixWorld();
+    if (robot.visible) seeThrough.playerView.value.set(robot.position.x, robot.position.y + 0.95, robot.position.z).applyMatrix4(camera.matrixWorldInverse);
+    else seeThrough.playerView.value.set(0, 0, -9999);
 
     if (shake > 0) {
       camera.translateX((Math.random() - 0.5) * shake);
@@ -2493,6 +2457,25 @@ async function start() {
 
   let last = performance.now();
   let frames = 0;
+  const timing = { update: 0, render: 0, frame: 0 };
+
+  /* Resolution steps down (never back up) while frames average slower than ~45 fps, so weak GPUs stay smooth */
+  const quality = { ratio: renderer.getPixelRatio(), time: 0, frames: 0 };
+  const setRatio = (ratio) => {
+    quality.ratio = ratio;
+    renderer.setPixelRatio(ratio);
+    resize();
+  };
+  const adaptQuality = (dt) => {
+    if (introLive || document.hidden || quality.locked) return;
+    quality.time += dt;
+    quality.frames += 1;
+    if (quality.time < 2) return;
+    const average = (quality.time / quality.frames) * 1000;
+    quality.time = 0;
+    quality.frames = 0;
+    if (average > 22 && quality.ratio > 0.75) setRatio(Math.max(0.75, quality.ratio - 0.25));
+  };
 
   renderer.setAnimationLoop((now) => {
     const dt = Math.min((now - last) / 1000, 0.05);
@@ -2502,7 +2485,9 @@ async function start() {
       return;
     }
 
+    const t0 = performance.now();
     update(dt, now / 1000);
+    const t1 = performance.now();
 
     /* While the opaque boot cover is up, a few warm-up frames are enough; the GPU is left to the loading screen */
     const covered = boot && root.classList.contains("world-intro") && boot.style.visibility !== "hidden" && (boot.style.opacity === "" || boot.style.opacity === "1");
@@ -2510,6 +2495,11 @@ async function start() {
 
     renderer.render(scene, camera);
     placeLabels();
+    const t2 = performance.now();
+    timing.update += (t1 - t0 - timing.update) * 0.05;
+    timing.render += (t2 - t1 - timing.render) * 0.05;
+    timing.frame += (dt * 1000 - timing.frame) * 0.05;
+    adaptQuality(dt);
     started = true;
 
     frames += 1;
@@ -2527,8 +2517,7 @@ async function start() {
     last = performance.now();
 
     if (document.visibilityState === "visible") {
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, coarse ? 1.5 : 2));
-      resize();
+      setRatio(Math.min(window.devicePixelRatio, coarse ? 1.5 : 2, quality.ratio));
     }
 
     intro?.progress(1);
@@ -2539,7 +2528,7 @@ async function start() {
 
   /* Loading and intro */
 
-  let loaded = fromDisk;
+  let loaded = false;
   let revealed = false;
 
   const loadPct = boot?.querySelector(".world-boot-pct");
@@ -2551,17 +2540,66 @@ async function start() {
     if (loadPct) loadPct.textContent = `${Math.round(fraction * 100)}%`;
   };
 
-  manager.onProgress = (_url, done, total) => setLoad(total ? done / total : 1);
+  /* The loading screen covers every asset (textures, Niko's model) and the first-draw costs: shaders are compiled,
+     textures uploaded and the shadow map baked behind the cover, so nothing pops in or hitches once the island shows. */
+  const loading = { done: 0, total: 0, textures: fromDisk, niko: false, warm: false };
+  const showProgress = () => setLoad(Math.min(0.96, (loading.done + (loading.niko ? 1 : 0)) / (loading.total + 1)));
+  manager.onProgress = (_url, done, total) => {
+    Object.assign(loading, { done, total });
+    showProgress();
+  };
 
-  manager.onLoad = () => {
+  const prewarm = async () => {
+    robot.traverse((node) => (node.castShadow = false));
+    const shown = [];
+    scene.traverse((node) => {
+      if (!node.visible) {
+        node.visible = true;
+        shown.push(node);
+      }
+    });
+    try {
+      await renderer.compileAsync(scene, camera);
+    } catch (error) {
+      console.warn("Shader warm-up failed", error);
+    }
+    scene.traverse((node) => {
+      [node.material].flat().forEach((material) => {
+        ["map", "emissiveMap", "alphaMap", "gradientMap"].forEach((key) => material?.[key]?.isTexture && renderer.initTexture(material[key]));
+      });
+    });
+    bakeShadows();
+    renderer.render(scene, camera);
+    shown.forEach((node) => (node.visible = false));
+  };
+
+  const finishLoading = async () => {
+    if (!loading.textures || !loading.niko || loading.warm) return;
+    loading.warm = true;
+    await prewarm();
     loaded = true;
     reveal();
   };
 
+  manager.onLoad = () => {
+    loading.textures = true;
+    finishLoading();
+  };
+  nikoReady.then(() => {
+    loading.niko = true;
+    showProgress();
+    finishLoading();
+  });
+
+  window.setTimeout(() => {
+    loading.textures = true;
+    finishLoading();
+  }, 6000);
   window.setTimeout(() => {
     loaded = true;
+    bakeShadows();
     reveal();
-  }, 6000);
+  }, 12000);
 
   const seenIntro = (() => {
     try {
@@ -2592,6 +2630,9 @@ async function start() {
     sky.dawn = 1;
     setDawn();
     robot.visible = true;
+    shrineStar.visible = true;
+    shrineStar.material.opacity = 0.95;
+    island.beamMat.uniforms.strength.value = 0.85;
 
     try {
       window.sessionStorage.setItem("fy-intro", "1");
@@ -2599,7 +2640,7 @@ async function start() {
   };
 
   const fallFrom = new THREE.Vector3();
-  const fallTo = new THREE.Vector3(0, 0.45, 0);
+  const fallTo = landing.clone().add(new THREE.Vector3(0, 0.45, 0));
   const fall = { p: 0, spin: 0 };
 
   const placeStar = () => {
@@ -2619,7 +2660,7 @@ async function start() {
     bot.eyes.forEach((eye) => (eye.scale.y = 0.15));
     state.blinkAt = clock + 0.9;
 
-    bloom.position.set(0, 0.6, 0);
+    bloom.position.copy(landing).y += 0.6;
     gsap.fromTo(bloom.scale, { x: 3, y: 3 }, { x: 11, y: 11, duration: 0.5, ease: "expo.out" });
     gsap.fromTo(bloom.material, { opacity: 1 }, { opacity: 0, duration: 0.55, ease: "power2.out" });
     gsap.fromTo(impactLight, { intensity: 70 }, { intensity: 0, duration: 0.8, ease: "power2.out" });
@@ -2637,7 +2678,7 @@ async function start() {
       const speed = 2.6 + Math.random() * 3.6;
       bit.v.set(Math.cos(angle) * speed, 4 + Math.random() * 4.5, Math.sin(angle) * speed);
       bit.spin.set(Math.random() * 12 - 6, Math.random() * 12 - 6, Math.random() * 12 - 6);
-      bit.mesh.position.set(Math.cos(angle) * 0.45, 0.35, Math.sin(angle) * 0.45);
+      bit.mesh.position.set(landing.x + Math.cos(angle) * 0.45, landing.y + 0.35, landing.z + Math.sin(angle) * 0.45);
       bit.size = 0.6 + Math.random() * 0.8;
       bit.life = 1.2 + Math.random() * 0.5;
       bit.mesh.visible = true;
@@ -2654,8 +2695,9 @@ async function start() {
         bit.life -= dt;
         bit.v.y -= 22 * dt;
         bit.mesh.position.addScaledVector(bit.v, dt);
-        if (bit.mesh.position.y < 0.09) {
-          bit.mesh.position.y = 0.09;
+        const rest = island.groundAt(bit.mesh.position.x, bit.mesh.position.z) + 0.09;
+        if (bit.mesh.position.y < rest) {
+          bit.mesh.position.y = rest;
           bit.v.y *= -0.36;
           bit.v.x *= 0.55;
           bit.v.z *= 0.55;
@@ -2703,7 +2745,7 @@ async function start() {
 
     /* Start the fall just above the top edge, so the whole drop is on screen */
     const drop = (viewHeight / 2 / 0.8 + 1.5) / 0.8;
-    fallFrom.set(0, drop, 0).addScaledVector(screenRight, drop * 0.8 * lean);
+    fallFrom.copy(fallTo).add(new THREE.Vector3(0, drop, 0)).addScaledVector(screenRight, drop * 0.8 * lean);
 
     intro = gsap.timeline({ onComplete: endIntro, defaults: { ease: "power2.out" } });
     intro.timeScale(seenIntro ? 1.6 : 1);
@@ -2819,6 +2861,12 @@ async function start() {
       .fromTo(bot.buddy.scale, { x: 0.01, y: 0.01, z: 0.01 }, { x: 1, y: 1, z: 1, duration: 0.5, ease: "back.out(3)", immediateRender: false }, land + 1.35)
       .fromTo(bot.bulbGlow.scale, { x: 2.4, y: 2.4 }, { x: 0.7, y: 0.7, duration: 0.7, immediateRender: false }, land + 1.3)
 
+      /* The shrine wakes: its beam rises and a small Rigel settles into it */
+      .set(shrineStar, { visible: true }, land + 1.5)
+      .fromTo(shrineStar.material, { opacity: 0 }, { opacity: 0.95, duration: 0.9, immediateRender: false }, land + 1.5)
+      .fromTo(shrineStar.scale, { x: 0.4, y: 0.4 }, { x: 2.4, y: 2.4, duration: 0.9, ease: "back.out(2)", immediateRender: false }, land + 1.5)
+      .to(island.beamMat.uniforms.strength, { value: 0.85, duration: 1.4, ease: "sine.inOut" }, land + 1.4)
+
       /* The header, name plates and control card arrive once the robot is standing; controls unlock */
       .call(
         () => {
@@ -2853,7 +2901,7 @@ async function start() {
 
       if (href === "#select") {
         event.preventDefault();
-        goTo(new THREE.Vector3(0, 0, -6.4));
+        goTo(island.spot("games"));
         return;
       }
 
@@ -2884,12 +2932,37 @@ async function start() {
       /* Hold Niko at an angle (radians) relative to the camera; null releases him */
       holdYaw: (angle) => void (state.holdYaw = angle),
       bot: () => bot,
+      stats: () => ({
+        ms: Object.fromEntries(Object.entries(timing).map(([k, v]) => [k, +v.toFixed(2)])),
+        calls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        programs: renderer.info.programs.length,
+        textures: renderer.info.memory.textures,
+        pixelRatio: renderer.getPixelRatio(),
+        size: [renderer.domElement.width, renderer.domElement.height],
+      }),
       /* Render sharper than the normal DPR cap, for close-up review shots */
       pixelRatio: (ratio) => {
-        renderer.setPixelRatio(ratio);
-        renderer.setSize(renderer.domElement.clientWidth, renderer.domElement.clientHeight, false);
+        quality.locked = true;
+        setRatio(ratio);
       },
       faceImages: () => [bot.faceOpen.image.toDataURL()],
+      /* Island review: put Niko at a map spot (u, v from world-map.js), zoom, skip the intro */
+      placeUV: (u, v) => {
+        const p = island.fromUV(u, v);
+        robot.position.copy(p);
+        state.path = [];
+        started = false;
+      },
+      zoom: (z) => {
+        camera.zoom = z;
+        camera.updateProjectionMatrix();
+      },
+      finishIntro: () => void finishIntro(),
+      walkable: (x, z) => island.nav.walkable(x, z),
+      position: () => robot.position.toArray(),
+      route: () => state.path.map((p) => p.toArray().map((n) => +n.toFixed(2))),
+      bakeShadows: () => bakeShadows(),
     },
   };
 }

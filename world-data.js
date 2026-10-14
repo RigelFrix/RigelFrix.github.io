@@ -1,9 +1,12 @@
 /*
-  The play world. Each entry is something the robot can walk up to.
+  The play world. Each entry is something Niko can walk up to.
 
-  kind     built-in look: cabinet, desk, skills, signpost, mailbox, board, lamp, crate, bush
-  x, z     position on the floor (the floor runs from -16 to 16 on both axes)
-  facing   direction the front faces, in degrees (0 faces the camera side, +z)
+  kind     built-in look: monolith, hut, skills, milestones, mailbox, lectern
+  u, v     position on the island in screen terms: u runs right, v runs toward the camera (see world-map.js).
+           x, z (world axes) also work.
+  faceTo   [u, v] the front turns toward, so each stop faces what is around it (a fire, a plaza, a path)
+  facing   or a fixed direction in degrees (0 faces +z; 45 faces the camera)
+  lean     optional sideways tilt in degrees, for weathered stones
   action   what opens on arrival:
              { type: "project", project: "<id from gallery-data.js>" }
              { type: "section", section: "<section id in index.html>" }
@@ -13,42 +16,42 @@
   radius   optional collision radius
 */
 
-window.WORLD_OBJECTS = [
-  { id: "cab-dijoker", label: "DiJoker", kind: "cabinet", x: -7.5, z: -9, facing: 0, action: { type: "project", project: "dijoker" } },
-  { id: "cab-troublefixit", label: "TroubleFixIt", kind: "cabinet", x: -4.5, z: -9.6, facing: 0, action: { type: "project", project: "troublefixit" } },
-  { id: "cab-disaster", label: "Disaster Game", kind: "cabinet", x: -1.5, z: -10, facing: 0, action: { type: "project", project: "disaster" } },
-  { id: "cab-pcbuilding", label: "Build2Connect", kind: "cabinet", x: 1.5, z: -10, facing: 0, action: { type: "project", project: "pcbuilding" } },
-  { id: "cab-basketball3d", label: "3D Basketball", kind: "cabinet", x: 4.5, z: -9.6, facing: 0, action: { type: "project", project: "basketball3d" } },
-  { id: "cab-prototypelab", label: "Prototype Lab", kind: "cabinet", x: 7.5, z: -9, facing: 0, action: { type: "project", project: "prototypelab" } },
+(() => {
+  /* Cliffside: the games stand in an arc of shrine tablets along the back of a paved plaza, each turned toward
+     its middle, so the open side faces the bridge and the viewer */
+  const plaza = [13.2, -8];
+  const ring = (deg) => {
+    const a = (deg * Math.PI) / 180;
+    return { u: plaza[0] + Math.cos(a) * 4.3, v: plaza[1] + Math.sin(a) * 3, faceTo: plaza, scale: 0.9 };
+  };
 
-  { id: "about", label: "About me", kind: "desk", x: -10.5, z: 0.5, facing: 90, action: { type: "section", section: "player" } },
-  { id: "skills", label: "Skills", kind: "skills", x: 10.5, z: -1.5, facing: 0, action: { type: "section", section: "moves" } },
-  { id: "career", label: "Career", kind: "signpost", x: -7, z: 9, facing: 30, action: { type: "section", section: "career" } },
-  { id: "contact", label: "Contact", kind: "mailbox", x: 4.5, z: 9.5, facing: 15, action: { type: "section", section: "contact" } },
-  {
-    id: "resume",
-    label: "Resume",
-    kind: "board",
-    x: 10,
-    z: 6.5,
-    facing: 30,
-    action: { type: "link", href: "./assets/Francis-Yambao-Resume.pdf", text: "Open resume (PDF)" },
-  },
+  window.WORLD_OBJECTS = [
+    { id: "cab-dijoker", label: "DiJoker", kind: "monolith", ...ring(-165), lean: -2, action: { type: "project", project: "dijoker" } },
+    { id: "cab-troublefixit", label: "TroubleFixIt", kind: "monolith", ...ring(-135), lean: 1.5, action: { type: "project", project: "troublefixit" } },
+    { id: "cab-disaster", label: "Disaster Game", kind: "monolith", ...ring(-105), lean: 3, action: { type: "project", project: "disaster" } },
+    { id: "cab-pcbuilding", label: "Build2Connect", kind: "monolith", ...ring(-75), lean: -1.5, action: { type: "project", project: "pcbuilding" } },
+    { id: "cab-basketball3d", label: "3D Basketball", kind: "monolith", ...ring(-45), lean: 2, action: { type: "project", project: "basketball3d" } },
+    { id: "cab-prototypelab", label: "Prototype Lab", kind: "monolith", ...ring(-15), lean: -3, action: { type: "project", project: "prototypelab" } },
 
-  { id: "lamp-1", kind: "lamp", x: -13.5, z: -13.5 },
-  { id: "lamp-2", kind: "lamp", x: 13.5, z: -13.5 },
-  { id: "lamp-3", kind: "lamp", x: -13.5, z: 13.5 },
-  { id: "lamp-4", kind: "lamp", x: 13.5, z: 13.5 },
-  { id: "crate-1", kind: "crate", x: -12.5, z: -5.5, facing: 20 },
-  { id: "crate-2", kind: "crate", x: -11.6, z: -6.6, facing: -10, scale: 0.7 },
-  { id: "crate-3", kind: "crate", x: 12.4, z: -6, facing: 35 },
-  { id: "crate-4", kind: "crate", x: 1.5, z: 13, facing: 15, scale: 0.8 },
-  { id: "bush-1", kind: "bush", x: -14.2, z: -1.5, facing: 40 },
-  { id: "bush-2", kind: "bush", x: -13.6, z: 4.8, facing: 120, scale: 0.8 },
-  { id: "bush-3", kind: "bush", x: 14, z: 2.2, facing: -30 },
-  { id: "bush-4", kind: "bush", x: -10.8, z: -12.2, facing: 200, scale: 0.9 },
-  { id: "bush-5", kind: "bush", x: 10.8, z: -12.2, facing: 160 },
-  { id: "bush-6", kind: "bush", x: -2.5, z: 13.6, facing: 10, scale: 0.85 },
-  { id: "bush-7", kind: "bush", x: 8.8, z: 13.2, facing: -60 },
-  { id: "bush-8", kind: "bush", x: -12.6, z: 10.6, facing: 80, scale: 0.75 },
-];
+    /* Upper plateau camp: the tent and the move list turn in toward the campfire clearing */
+    { id: "about", label: "About me", kind: "hut", u: -12.8, v: -7.4, faceTo: [-9.8, -4.6], action: { type: "section", section: "player" } },
+    { id: "skills", label: "Skills", kind: "skills", u: -6.9, v: -7, faceTo: [-9.4, -3.8], action: { type: "section", section: "moves" } },
+
+    /* Ruins path: the career stones line the path up to the shrine */
+    { id: "career", label: "Career", kind: "milestones", u: 3.8, v: -8.4, faceTo: [2.4, -5.6], action: { type: "section", section: "career" } },
+
+    /* Beach and dock: the mailbox at the end of the pier, turned toward the walkway */
+    { id: "contact", label: "Contact", kind: "mailbox", u: -14.6, v: 18.5, faceTo: [-11.2, 16.4], action: { type: "section", section: "contact" } },
+
+    /* Star Shrine: the resume rests on a lectern that faces the dais */
+    {
+      id: "resume",
+      label: "Resume",
+      kind: "lectern",
+      u: -5.2,
+      v: -13.2,
+      faceTo: [-1, -14.4],
+      action: { type: "link", href: "./assets/Francis-Yambao-Resume.pdf", text: "Open resume (PDF)" },
+    },
+  ];
+})();
