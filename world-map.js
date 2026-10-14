@@ -51,7 +51,7 @@ export const stairs = [
   { a: [-7.6, 9.2], b: [-6.2, 3.6], w: 1.35, from: LEVEL.beach, to: LEVEL.low },
   { a: [-7.4, 2.4], b: [-8.6, -2.6], w: 1.35, from: LEVEL.low, to: LEVEL.mid },
   { a: [0.6, 0.6], b: [0.6, -4.8], w: 1.45, from: LEVEL.low, to: LEVEL.mid, arch: true },
-  { a: [-0.6, -7.4], b: [-0.9, -11.6], w: 1.45, from: LEVEL.mid, to: LEVEL.top, arch: true },
+  { a: [-0.6, -7.4], b: [-0.9, -10.9], w: 1.45, from: LEVEL.mid, to: LEVEL.top, arch: true },
 ].map((s) => {
   const du = s.b[0] - s.a[0];
   const dv = s.b[1] - s.a[1];
@@ -116,7 +116,7 @@ export const paths = [
   [[0.6, -4.8], [-0.4, -6.2], [-0.6, -7.4]],
   [[0.6, -4.8], [3.4, -5.8], [6.2, -6.2]],
   [[9.4, -6.6], [11.6, -7.2], [13.2, -8]],
-  [[-0.9, -11.6], [-1, -14.4]],
+  [[-0.9, -10.9], [-1, -14.4]],
 ];
 export const pathDist = (u, v) => {
   let best = Infinity;

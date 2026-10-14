@@ -1098,8 +1098,8 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   const glows = glowBake.build(glowing);
   if (glows) root.add(glows);
 
-  /* Walk grid: a cell is walkable when it is dry (or decked), not the stream, not next to a drop or a cliff foot,
-     and not under a blocker. Paths are A* over it, then pulled straight where the line of sight is clear. */
+  /* Walk grid: a cell is walkable when it is dry (or decked), not the stream, not next to a drop or a cliff foot
+     (stairs cut between cliffs, so they skip that test), and not under a blocker. Paths are A* over it, then pulled straight where the line of sight is clear. */
   const ground = new Float32Array(size * size);
   const walk = new Uint8Array(size * size);
   for (let j = 0; j < size; j += 1) {
@@ -1119,8 +1119,9 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
           let ok = g > -0.12;
           const deck = MAP.platformAt(u, v);
           if (ok && !deck && MAP.riverDist(u, v) < MAP.river.w + 0.3) ok = false;
-          for (let y = -1; ok && y <= 1; y += 1) for (let q = -1; ok && q <= 1; q += 1) if (Math.abs(gAt(i + q, j + y) - g) > 0.5) ok = false;
-          for (let y = -2; ok && y <= 2; y += 1) for (let q = -2; ok && q <= 2; q += 1) if (gAt(i + q, j + y) - g > 1.0) ok = false;
+          const step = sgrid[k] ? 0.65 : 0.5;
+          for (let y = -1; ok && y <= 1; y += 1) for (let q = -1; ok && q <= 1; q += 1) if (Math.abs(gAt(i + q, j + y) - g) > step) ok = false;
+          if (!sgrid[k]) for (let y = -2; ok && y <= 2; y += 1) for (let q = -2; ok && q <= 2; q += 1) if (gAt(i + q, j + y) - g > 1.0) ok = false;
           walk[k] = ok ? 1 : 0;
         }
       }
