@@ -51,10 +51,10 @@
         })();
 
         if (view !== "classic" && webgl2) {
-          root.classList.add("world");
+          root.classList.add("world", "world-intro");
           window.setTimeout(() => {
             if (!window.PortfolioWorld) {
-              root.classList.remove("world", "world-ready");
+              root.classList.remove("world", "world-ready", "world-intro");
             }
           }, 10000);
         }
@@ -151,8 +151,10 @@
       </div>
     </header>
 
-    <div class="world" id="world">
+    <div class="world-view" id="world">
+      <div class="world-sky" aria-hidden="true"></div>
       <canvas class="world-canvas" id="world-canvas" role="img" aria-label="Arcade floor. Use the name buttons to walk the robot to each stop."></canvas>
+      <div class="world-vignette" aria-hidden="true"></div>
       <div class="world-labels" id="world-labels"></div>
 
       <div class="world-help">
@@ -175,9 +177,37 @@
         </a>
       </div>
 
-      <div class="world-loading" aria-hidden="true">
-        <strong>Loading the floor</strong>
-        <span class="world-loading-bar"><span id="world-loading-fill"></span></span>
+      <span class="world-flash" aria-hidden="true"></span>
+
+      <div class="world-boot" aria-hidden="true">
+        <canvas class="world-starfield"></canvas>
+        <div class="world-boot-stage">
+          <div class="world-aura">
+            <span class="world-rays"></span>
+            <span class="world-glow"></span>
+          </div>
+          <div class="world-halo">
+            <span class="world-corona world-corona-1"></span>
+            <span class="world-corona world-corona-2"></span>
+            <span class="world-corona world-corona-3"></span>
+          </div>
+          <span class="world-ping"></span>
+          <div class="world-star">
+            <span class="world-tail"></span>
+            <div class="world-star-charge">
+              <span class="world-spike world-spike-x"></span>
+              <span class="world-spike world-spike-y"></span>
+              <span class="world-spike world-spike-d"></span>
+              <span class="world-spike world-spike-d world-spike-e"></span>
+              <span class="world-core"></span>
+            </div>
+          </div>
+          <div class="world-sparks"></div>
+        </div>
+        <div class="world-boot-hud">
+          <span class="world-boot-pct">0%</span>
+          <p class="world-boot-label">Loading the floor</p>
+        </div>
       </div>
     </div>
 
@@ -590,8 +620,8 @@
     <script src="./script.js"></script>
     <script src="./motion.js"></script>
     <script
-      src="./world.bundle.js"
-      onerror="document.documentElement.classList.remove('world', 'world-ready')"
+      src="./world.bundle.js?v=a9f52814"
+      onerror="document.documentElement.classList.remove('world', 'world-ready', 'world-intro')"
     ></script>
   </body>
 </html>

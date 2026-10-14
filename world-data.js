@@ -1,7 +1,7 @@
 /*
   The play world. Each entry is something the robot can walk up to.
 
-  kind     built-in look: cabinet, desk, skills, signpost, mailbox, board, lamp, crate
+  kind     built-in look: cabinet, desk, skills, signpost, mailbox, board, lamp, crate, bush
   x, z     position on the floor (the floor runs from -16 to 16 on both axes)
   facing   direction the front faces, in degrees (0 faces the camera side, +z)
   action   what opens on arrival:
@@ -43,4 +43,12 @@ window.WORLD_OBJECTS = [
   { id: "crate-2", kind: "crate", x: -11.6, z: -6.6, facing: -10, scale: 0.7 },
   { id: "crate-3", kind: "crate", x: 12.4, z: -6, facing: 35 },
   { id: "crate-4", kind: "crate", x: 1.5, z: 13, facing: 15, scale: 0.8 },
+  { id: "bush-1", kind: "bush", x: -14.2, z: -1.5, facing: 40 },
+  { id: "bush-2", kind: "bush", x: -13.6, z: 4.8, facing: 120, scale: 0.8 },
+  { id: "bush-3", kind: "bush", x: 14, z: 2.2, facing: -30 },
+  { id: "bush-4", kind: "bush", x: -10.8, z: -12.2, facing: 200, scale: 0.9 },
+  { id: "bush-5", kind: "bush", x: 10.8, z: -12.2, facing: 160 },
+  { id: "bush-6", kind: "bush", x: -2.5, z: 13.6, facing: 10, scale: 0.85 },
+  { id: "bush-7", kind: "bush", x: 8.8, z: 13.2, facing: -60 },
+  { id: "bush-8", kind: "bush", x: -12.6, z: 10.6, facing: 80, scale: 0.75 },
 ];

@@ -113,8 +113,11 @@
   const bootSplit = splitName();
   const boot = gsap.timeline({ defaults: { ease } });
 
+  if (!world) {
+    boot.from(".hud", { yPercent: -100, duration: 0.5 }, 0);
+  }
+
   boot
-    .from(".hud", { yPercent: -100, duration: 0.5 }, 0)
     .fromTo(".stage-screen", { clipPath: stageClipClosed }, { clipPath: stageClip, duration: 0.7, clearProps: "clipPath" }, 0.1)
     .from(".select-intro > *", { autoAlpha: 0, y: 24, duration: 0.55, stagger: 0.08 }, 0.15)
     .from(bootSplit.chars, { yPercent: 90, skewX: -24, autoAlpha: 0, duration: 0.5, stagger: 0.035 }, 0.35)

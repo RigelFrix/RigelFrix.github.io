@@ -30,8 +30,8 @@ const describeFootage = (project) => {
 
 const fillStats = (list, project) => {
   if (!list) {
-    return;
-  }
+      return;
+    }
 
   const values = {
     status: project.status || project.kicker,
@@ -42,8 +42,8 @@ const fillStats = (list, project) => {
 
   list.querySelectorAll("[data-stat]").forEach((node) => {
     node.textContent = values[node.dataset.stat] || "\u2014";
-  });
-};
+    });
+  };
 
 const playQuietly = (video) => {
   const attempt = video.play();
@@ -215,8 +215,8 @@ const renderRoster = () => {
     const current = event.target.closest?.(".tile");
 
     if (!step || !current) {
-      return;
-    }
+    return;
+  }
 
     const target = Number(current.dataset.index) + step;
     const tiles = roster.querySelectorAll(".tile");
@@ -867,8 +867,8 @@ if (stageScreen && projects.length) {
 
   stageScreen.addEventListener("pointerup", (event) => {
     if (!swipe) {
-      return;
-    }
+    return;
+  }
 
     const dx = event.clientX - swipe.x;
     const dy = event.clientY - swipe.y;
