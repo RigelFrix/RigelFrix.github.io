@@ -4,6 +4,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import nikoGlb from "./assets/niko.glb";
+import nikoEyesUrl from "./assets/niko-eyes.png";
 
 const root = document.documentElement;
 const host = document.getElementById("world");
@@ -931,8 +932,9 @@ async function start() {
     ink.customProgramCacheKey = () => `ink-${width}`;
     return ink;
   };
-  const addInk = (mesh, ink) => {
-    const geometry = mesh.geometry;
+  /* skip(x, y, z) drops the outline on triangles with a vertex in that (geometry-space) region */
+  const addInk = (mesh, ink, skip) => {
+    let geometry = mesh.geometry;
     if (!geometry.attributes.inkNormal) {
       const pos = geometry.attributes.position;
       const nrm = geometry.attributes.normal;
@@ -945,6 +947,17 @@ async function start() {
       const out = new Float32Array(pos.count * 3);
       for (let i = 0; i < pos.count; i += 1) sums.get(key(i)).clone().normalize().toArray(out, i * 3);
       geometry.setAttribute("inkNormal", new THREE.BufferAttribute(out, 3));
+    }
+    if (skip && geometry.index) {
+      const pos = geometry.attributes.position;
+      const src = geometry.index.array;
+      const keep = [];
+      const out = (i) => skip(pos.getX(i), pos.getY(i), pos.getZ(i));
+      for (let t = 0; t < src.length; t += 3) if (!out(src[t]) && !out(src[t + 1]) && !out(src[t + 2])) keep.push(src[t], src[t + 1], src[t + 2]);
+      const trimmed = new THREE.BufferGeometry();
+      for (const [name, attribute] of Object.entries(geometry.attributes)) trimmed.setAttribute(name, attribute);
+      trimmed.setIndex(keep);
+      geometry = trimmed;
     }
     const hull = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(geometry, ink) : new THREE.Mesh(geometry, ink);
     if (mesh.isSkinnedMesh) {
@@ -1440,83 +1453,43 @@ async function start() {
      .impeccable/tools/niko-split.mjs and niko-rig.mjs) takes over from the procedural mascot once parsed.
      It is 1 unit tall, feet at -0.5, facing +z, bound in a T-pose; the clips bring the arms down. */
   const NIKO_SCALE = 2.5;
-  /* One eye on a transparent canvas filling the eye decal's 0..1 UVs (v down, u toward model +x). side 1 = his left eye,
-     whose outer corner is toward +u. Bold shapes only: at game size it shows as a dark lash, a tall iris and a glint. */
-  const paintNikoEye = (side, shut) => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 256;
-    canvas.height = 256;
-    const ctx = canvas.getContext("2d");
-    ctx.scale(2, 2);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    const ink = "#1c1838";
-    const x = (v) => 64 + v * side;
-    const inner = [x(-36), 76];
-    const outer = [x(38), 62];
-    if (shut) {
-      ctx.strokeStyle = ink;
-      ctx.lineWidth = 9;
-      ctx.beginPath();
-      ctx.moveTo(...inner);
-      ctx.quadraticCurveTo(x(2), 96, ...outer);
-      ctx.stroke();
-      return eyeTexture(canvas);
+  /* Niko's eyes, Genshin style: layers cut straight from the reference (niko-eyes.py) into one atlas, 5 tiles per eye
+     (sclera, iris, lash, brow, shut lash; row 0 = his left eye). The eye pass stacks sclera, the iris (clipped to the
+     sclera, offset by eyeGaze so he can look around) and the lash, or the shut lash on blinks. Brows are their own pass. */
+  const eyeMaterial = (atlas, row, layer, { lift = 0, opacity = 1 } = {}) => {
+    const uniforms = { eyeRow: { value: row }, eyeShut: { value: 0 }, eyeGaze: { value: new THREE.Vector2() } };
+    const mat = new THREE.MeshBasicMaterial({ map: atlas, color: "#f4eeee", transparent: true, depthWrite: false, opacity });
+    if (lift) {
+      Object.assign(mat, { stencilWrite: true, stencilRef: 1, stencilFunc: THREE.EqualStencilFunc, stencilFail: THREE.KeepStencilOp, stencilZFail: THREE.KeepStencilOp, stencilZPass: THREE.KeepStencilOp });
     }
-    const lid = () => {
-      ctx.moveTo(...inner);
-      ctx.bezierCurveTo(x(-28), 34, x(22), 26, ...outer);
+    const tile = (col, uv) => `texture2D(map, (vec2(${col.toFixed(1)}, eyeRow) + clamp(${uv}, 0.004, 0.996)) * vec2(0.2, 0.5))`;
+    const fragment =
+      layer === "brow"
+        ? `diffuseColor *= ${tile(3, "vMapUv")};`
+        : [
+            `vec4 scl = ${tile(0, "vMapUv")};`,
+            `vec4 iris = ${tile(1, "vMapUv - eyeGaze")};`,
+            `vec4 lash = ${tile(2, "vMapUv")};`,
+            `vec4 shut = ${tile(4, "vMapUv")};`,
+            "vec3 eyeCol = mix(scl.rgb, iris.rgb, iris.a * scl.a);",
+            "eyeCol = mix(eyeCol, lash.rgb, lash.a);",
+            "vec4 eye = mix(vec4(eyeCol, max(scl.a, lash.a)), shut, eyeShut);",
+            "diffuseColor *= eye;",
+          ].join("\n");
+    mat.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, uniforms);
+      shader.fragmentShader = shader.fragmentShader
+        .replace("#include <common>", "#include <common>\nuniform float eyeRow;\nuniform float eyeShut;\nuniform vec2 eyeGaze;")
+        .replace("#include <map_fragment>", fragment);
+      if (lift) {
+        shader.vertexShader = shader.vertexShader.replace(
+          "#include <project_vertex>",
+          `#include <project_vertex>\nmvPosition.z += ${(lift * NIKO_SCALE).toFixed(3)} * smoothstep(0.45, 0.85, normalize(transformedNormal).z);\ngl_Position = projectionMatrix * mvPosition;`
+        );
+      }
     };
-    ctx.save();
-    ctx.beginPath();
-    lid();
-    ctx.bezierCurveTo(x(40), 100, x(14), 114, x(-4), 112);
-    ctx.bezierCurveTo(x(-24), 110, x(-36), 94, ...inner);
-    ctx.fillStyle = "#fbf8f2";
-    ctx.fill();
-    ctx.clip();
-    const iris = ctx.createLinearGradient(0, 34, 0, 110);
-    iris.addColorStop(0, "#161838");
-    iris.addColorStop(0.5, "#2c3378");
-    iris.addColorStop(1, "#8d98e6");
-    ctx.fillStyle = iris;
-    ctx.beginPath();
-    ctx.ellipse(x(2), 74, 27, 38, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#0f1029";
-    ctx.beginPath();
-    ctx.ellipse(x(2), 70, 12, 19, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "rgba(18,16,48,0.4)";
-    ctx.fillRect(0, 20, 128, 22);
-    ctx.fillStyle = "#ffffff";
-    ctx.beginPath();
-    ctx.arc(55, 55, 9.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(74, 94, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-    ctx.strokeStyle = ink;
-    ctx.lineWidth = 9;
-    ctx.beginPath();
-    lid();
-    ctx.lineTo(outer[0] + 9 * side, outer[1] - 9);
-    ctx.stroke();
-    ctx.globalAlpha = 0.45;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(x(32), 90);
-    ctx.quadraticCurveTo(x(14), 110, x(-8), 108);
-    ctx.stroke();
-    return eyeTexture(canvas);
-  };
-  const eyeTexture = (canvas) => {
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = 4;
-    texture.flipY = false;
-    return texture;
+    mat.customProgramCacheKey = () => `niko-eye-${layer}-${lift}`;
+    return { mat, uniforms };
   };
   const useNikoModel = async () => {
     const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
@@ -1539,41 +1512,50 @@ async function start() {
       noEyes: true,
       flipY: false,
     });
+    /* The face is drawn first (renderOrder -1) and marks its pixels in the stencil buffer, even where hair later covers them */
     const faceMat = withRim(new THREE.MeshToonMaterial({ map: faceOpen, emissive: "#000000", emissiveMap: faceOpen, gradientMap: ramp }));
-    /* Eye decals: drawn bold and simple for the small on-screen size (lash line, tall iris, two highlights), and pulled
-       toward the camera in depth while they face it so the remaining bang strands don't cut them */
-    const eyeDecals = [["eyeL", 1], ["eyeR", -1]].map(([name, side]) => {
-      const open = paintNikoEye(side, false);
-      const shut = paintNikoEye(side, true);
-      const mat = new THREE.MeshToonMaterial({ map: open, emissive: "#555555", emissiveMap: open, gradientMap: ramp, transparent: true, depthWrite: false });
-      mat.onBeforeCompile = (shader) => {
-        shader.vertexShader = shader.vertexShader.replace(
-          "#include <project_vertex>",
-          `#include <project_vertex>\nmvPosition.z += ${(0.04 * NIKO_SCALE).toFixed(3)} * smoothstep(0.35, 0.8, normalize(transformedNormal).z);\ngl_Position = projectionMatrix * mvPosition;`
-        );
-      };
-      mat.customProgramCacheKey = () => "niko-eye";
-      return { name, mat, open, shut };
-    });
+    Object.assign(faceMat, { stencilWrite: true, stencilRef: 1, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp });
+    /* Eye decals draw over the bang strands, anime style, but only inside the face's stencil mask, so at side and back
+       angles they never float over hair or cheeks. The depth pull only applies where the decal faces the camera; the
+       camera is orthographic, so it changes occlusion, never screen position. Brows draw twice: solid where nothing
+       covers them, and faintly through the bangs. */
+    const eyeAtlas = await new THREE.TextureLoader().loadAsync(nikoEyesUrl);
+    Object.assign(eyeAtlas, { colorSpace: THREE.SRGBColorSpace, flipY: false, anisotropy: 4 });
+    const eyeDecals = [["eyeL", 0], ["eyeR", 1]].map(([name, row]) => ({
+      name,
+      eye: eyeMaterial(eyeAtlas, row, "eye", { lift: 0.08 }),
+      brows: [eyeMaterial(eyeAtlas, row, "brow"), eyeMaterial(eyeAtlas, row, "brow", { lift: 0.08, opacity: 0.4 })],
+    }));
     const lining = withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: ramp }));
     const ink = inkMaterial(0.0038);
+    /* No outline on the bang edges around the eye cut-outs: at game size they framed the eyes like goggles */
+    const aroundEyes = (x, y, z) => z > 0.06 && y > 0.26 && y < 0.355 && Math.abs(x) < 0.11;
     meshes.forEach((mesh) => {
       const name = mesh.material.name;
       const eye = eyeDecals.find((e) => e.name === name);
       if (eye) {
-        mesh.material = eye.mat;
-        mesh.renderOrder = 2;
+        mesh.material = eye.eye.mat;
+        mesh.renderOrder = 3;
         mesh.frustumCulled = false;
+        eye.brows.forEach(({ mat }, i) => {
+          const brow = mesh.clone();
+          brow.material = mat;
+          brow.renderOrder = 2 + i * 2;
+          mesh.parent.add(brow);
+        });
         return;
       }
-      if (name === "face") mesh.material = faceMat;
-      else if (name === "glow") mesh.material = glow("#ffe7a0");
+      if (name === "face") {
+        mesh.material = faceMat;
+        mesh.renderOrder = -1;
+      } else if (name === "glow") mesh.material = glow("#ffe7a0");
       else if (name === "lining") mesh.material = lining;
       else mesh.material = toon(`#${mesh.material.color.getHexString()}`);
       mesh.castShadow = name !== "glow";
-      mesh.receiveShadow = name !== "lining" && name !== "glow";
+      /* No cast shadows on the face: the bang strands' shadow-map shadows read as dirty smudges around the eyes */
+      mesh.receiveShadow = name !== "lining" && name !== "glow" && name !== "face";
       mesh.frustumCulled = false;
-      if (name !== "face" && name !== "glow" && name !== "lining") addInk(mesh, ink);
+      if (name !== "face" && name !== "glow" && name !== "lining") addInk(mesh, ink, aroundEyes);
     });
     const sockets = {};
     model.traverse((node) => {
@@ -2302,7 +2284,8 @@ async function start() {
     /* Standing still, he turns three-quarters toward the camera and looks up, so his face reads from above */
     state.still = moving ? 0 : state.still + dt;
     const faceCam = bot.mixer && robot.visible && state.still > 0.9 && !state.path.length && !root.classList.contains("world-intro");
-    if (faceCam) {
+    if (state.holdYaw != null) state.yaw = Math.atan2(camOffset.x, camOffset.z) + state.holdYaw;
+    else if (faceCam) {
       const camYaw = Math.atan2(camOffset.x, camOffset.z);
       let rel = state.yaw - camYaw;
       rel = Math.atan2(Math.sin(rel), Math.cos(rel));
@@ -2443,12 +2426,7 @@ async function start() {
       bot.faceMat.map = face;
       bot.faceMat.emissiveMap = face;
     }
-    bot.eyeDecals?.forEach((eye) => {
-      const map = shut ? eye.shut : eye.open;
-      if (eye.mat.map === map) return;
-      eye.mat.map = map;
-      eye.mat.emissiveMap = map;
-    });
+    bot.eyeDecals?.forEach((decal) => (decal.eye.uniforms.eyeShut.value = shut ? 1 : 0));
 
     if (!calm) {
       spinners.forEach((spinner) => {
@@ -2903,7 +2881,15 @@ async function start() {
         const box = renderer.domElement.getBoundingClientRect();
         return { x: box.left + ((p.x + 1) / 2) * box.width, y: box.top + ((1 - p.y) / 2) * box.height };
       },
-      faceImages: () => [bot.faceOpen, ...(bot.eyeDecals || []).flatMap((e) => [e.open, e.shut])].map((t) => t.image.toDataURL()),
+      /* Hold Niko at an angle (radians) relative to the camera; null releases him */
+      holdYaw: (angle) => void (state.holdYaw = angle),
+      bot: () => bot,
+      /* Render sharper than the normal DPR cap, for close-up review shots */
+      pixelRatio: (ratio) => {
+        renderer.setPixelRatio(ratio);
+        renderer.setSize(renderer.domElement.clientWidth, renderer.domElement.clientHeight, false);
+      },
+      faceImages: () => [bot.faceOpen.image.toDataURL()],
     },
   };
 }
