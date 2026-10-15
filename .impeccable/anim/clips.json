@@ -1,0 +1,5 @@
+{
+  "idle": { "file": "/.impeccable/anim/Xbot.glb", "clip": "idle" },
+  "walk": { "file": "/.impeccable/anim/Xbot.glb", "clip": "walk" },
+  "run": { "file": "/Running.fbx" }
+}

@@ -1,0 +1,70 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8f7db1e64e6b9eb40b6fe4f7473b512b, type: 3}
+  m_Name: DefaultGrassSettings
+  m_EditorClassIdentifier: Assembly-CSharp::PixelPass.Grass.PixelPassGrassSettings
+  grassLeaf: {fileID: 2800000, guid: 0bb0c3a3753db1f40ad4923a871245d2, type: 3}
+  accentLeaf1: {fileID: 2800000, guid: 0bb0c3a3753db1f40ad4923a871245d2, type: 3}
+  accentLeaf2: {fileID: 2800000, guid: d8d2ad584813e0b4b8414c085bbb5ed8, type: 3}
+  usePatchColors: 1
+  albedo1: {r: 0.443, g: 0.635, b: 0, a: 1}
+  albedo2: {r: 0.557, g: 0.678, b: 0.212, a: 1}
+  albedo3: {r: 0.502, g: 0.655, b: 0.224, a: 1}
+  albedo2Noise: {fileID: 2800000, guid: e36c207521dbd1544bc643c150bd0226, type: 2}
+  albedo3Noise: {fileID: 2800000, guid: 682b1a1bae7d75643b93cd995a8e4302, type: 2}
+  albedo2Scale: 0.11
+  albedo2Threshold: 0.537
+  albedo3Scale: 0.1
+  albedo3Threshold: 0.471
+  accentAlbedo1: {r: 0.604, g: 0.718, b: 0, a: 1}
+  accentAlbedo2: {r: 0.424, g: 0.604, b: 0, a: 1}
+  accentFrequency1: 0.001
+  accentProbability2: 0.0001
+  accentHeight1: 0.1
+  accentHeight2: 0.185
+  accentScale1: 1
+  accentScale2: 1
+  windStyle: 0
+  grassBendAmount: 1
+  windNoise: {fileID: 2800000, guid: 4d31410fe3a0728439afd4b7e7537764, type: 2}
+  stepFramerate: 5
+  quantisedFramerate: 0
+  worldSpaceSway: 1
+  viewSpaceSway: 0
+  worldSwayAngle: 60
+  fakePerspectiveScale: 0.3
+  windNoiseThreshold: 0.365
+  windNoiseScale: 0.071
+  windNoiseSpeed: 0.025
+  windDirection: {x: 0, y: 1}
+  windDivergeAngle: 10
+  viewSwaySpeed: 0.1
+  viewSwayAngle: 10
+  characterDisplacement: 1
+  displacementAngleZ: 60
+  displacementAngleX: 62.7
+  radiusExponent: 0.9
+  shadeSteps: 3
+  wrap: 0
+  steepness: 1
+  thresholdGradientSize: 0.255
+  alphaCutoff: 0.99
+  shadowAtTuftBase: 1
+  cloudInfluence: 1
+  bladeSize: {x: 0.24, y: 0.38}
+  instanceScaleMin: 0.88
+  instanceScaleMax: 1.12
+  randomYaw: 1
+  densityPerSquareMeter: 64
+  scaleInstanceCountWithArea: 1
+  maxInstances: 40000
+  visibleInstanceCap: 30000

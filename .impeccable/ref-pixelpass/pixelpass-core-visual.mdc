@@ -1,0 +1,66 @@
+---
+description: Protect PixelPass core visual design. Vertex VFX must use the hook; do not edit look, grid, outlines, or Frag lighting unless the task is the look itself.
+alwaysApply: true
+---
+
+# PixelPass core visual lock
+
+This project’s look is a **stable 3D pixel silhouette**: integer pixel grid, camera snap + sub-pixel remainder, cel/toon lighting, and depth/normal outlines. Treat that as frozen unless the user asked to change the art direction.
+
+## Art scale + zoom (do not bypass)
+
+Zoom changes framing, but snap / pixelation must stay coherent with it. `PixelPerfectGrid` owns orthographic size and recomputes `WorldUnitsPerPixel` from the effective zoom so camera snap and sub-pixel remainder stay locked to the grid.
+
+- Gameplay zoom: `CameraZoomController` → `PixelPerfectGrid.SetRuntimeZoomMultiplier` (or push/clear requests on the controller). Do not write `Camera.orthographicSize` for zoom while the grid drives size.
+- Volume pixel chunkiness only changes how coarse the image is, never how much world is on screen. Zoom is the opposite lever: framing changes, grid contract updates with it.
+- If zoom wrote ortho size alone, pixelation would look “stuck” (wrong snap step vs framing) — that regression is why zoom goes through the grid.
+
+## Outline polarity (adaptive recolor)
+
+The outline is **not** a colour, it is a scalar written to `_LowEdgeTexture`: `<1` darkens a silhouette, `>1` brightens a crease, `1` means no edge. Because it is a plain multiply, outline contrast is proportional to the pixel's own brightness, so a pure gain **cannot** rescue a dark object or an unlit scene — `0 × anything` is still `0`.
+
+Also note **Depth Edge Strength above 1 drives that scalar negative** (`1 - 1.12 = -0.12`), which flips the colour and clamps to a flat black carrying no shading. `SampleSceneProfile` ships at 1.12, so this is the normal case, not an edge case.
+
+`PixelPassApplyEdge` (in `PixelPassEdge.hlsl`) handles both, for silhouettes only:
+
+- Works from `amount = saturate(1 - edge)` instead of the raw scalar, so a strength above 1 means "fully black", never "inverted".
+- Darkening branch is `lerp(color, 0, amount)`, identical to the old `color * edge` wherever that was well defined.
+- Lifting branch is `lerp(color, 1, …)`, a blend not a gain, so it still moves a pixel that is already black.
+- Polarity comes from **the surface the outline is painted on** plus **the backdrop behind that edge**, compared in sRGB. The silhouette sits on the near side of the depth step, so a black object must not get a black outline no matter how bright the sky behind it is — dark surfaces always lift. Background-only was wrong because a bright backdrop would force a dark outline on a dark surface (`0 × anything` is still `0`). Mid-tones in the threshold band instead contrast with the backdrop: dark void / ground → lift, bright sky / emissive prop → darken.
+- Surface luma is averaged over a **short walk into the object** along `-depthGradient` (`Smoothing`, in grid pixels), with taps past a silhouette rejected via `_DepthEdgeThreshold`. Backdrop luma uses the same span **outward** along `+depthGradient`, accepting only taps clearly farther than the edge depth. **Do not go back to sampling the single edge pixel:** cel shading puts hard bands across a surface, so a one-pixel threshold flips polarity on every band boundary and the outline breaks into alternating light and dark runs. This is the same per-pixel-classification failure the Screen Impact object floor hit, and the same fix — judge the object, not the pixel, and pair it with the local backdrop for mid-tones.
+- Polarity is quantized to halves, matching the depth indicator — the outline switches in flat bands, never a gradient.
+
+Both `Composite` and `Upscale` call it, so outline-only layers stay consistent. Creases keep the plain response. Volume controls: **Adaptive Outline / Threshold / Smoothing / Softness / Lift**.
+
+## Do not touch unless the task is the look
+
+- `PixelPerfectGrid`, `CameraZoomController`, `CinemachineThirdPersonTarget` snap/damp path
+- `OutlinedPixelateRendererFeature`, `OutlinedPixelate.shader`, `PixelPassEdge.hlsl`, `OutlinedPixelateVolume`
+- Cel/Toon **Frag** lighting loops, shade steps, rim, custom lights (except the dedicated main-light cloud hook below)
+- URP renderer / camera / volume pixelation settings
+
+## World lighting (dedicated — not Screen Impact)
+
+`PixelPassWorldLighting` owns Dylearn cloudy daylight: white directional sun pose + projected cloud shade globals. Surface shaders call `PixelPassEvaluateMainLightBand`, which does `min(diffuse, PixelPassSampleCloudShade(world))` **before** band quantization on the main light only. Additional lights stay on `PixelPassEvaluateLightBand`. Future weather presets go on this component, not into Frag loops or the pixel grid. Details: `Assets/PixelPass/World/WORLD_LIGHTING.md`.
+
+## Screen impact filters (separate path)
+
+Screen Impact is a **sibling** path (`ScreenImpactDirector` + `ScreenImpactRendererFeature`), not part of PixelPass. It runs at `AfterRenderingPostProcessing + 1`. While Screen Impact is active, `OutlinedPixelate` **skips enqueue** so the flash sees the unpixelated frame — do not change grid/snap/cel Frag for that. Optional solid fullscreen tint and/or Vefects radial distort + fullscreen grade (`ScreenImpactFrame.hlsl`: Boost → Contrast → Desaturate) with Screen Color ink/paper polarity, plus optional LUT Core spikes (Effect 4). No per-object layer masks. Full conversation handoff: `Assets/Scripts/ScreenImpact/SCREEN_IMPACT_HANDOFF.md`. Do not fold impact into `OutlinedPixelate` / `PixelPerfectGrid` / lit Frag. Screen shake is a different future channel (unsnapped camera pose).
+
+**Object floor:** `ScreenImpactSilhouette.shader` draws all opaque renderers as an override shader into a tone/coverage/objectId mask, so each object floors to one flat tone instead of speckling per pixel. It is part of Screen Impact, not PixelPass. **Floor Mode** decides what a covered pixel becomes: **Silhouette** (default) floods every object with ink from coverage alone, **Tone** lets each object's albedo pick its pole. Tone keeps the scene's light/dark read but a light object floors to the same pole as the background, so its interior disappears and only the rim survives — that is what "the flash only affects the outline" means, and why the default is Silhouette. The boundary rim draws in the **opposite pole to the surface it lands on**, so touching forms stay separate once they floor together.
+
+**One flash path.** The Vefects Port A/B (key **G**) was deleted 2026-08-30; its behaviour lives in the Director as per-channel Custom Data curves. Add new impact effects as `ScreenImpactTintFlash` step fields, not as a second renderer feature.
+
+## Vertex VFX (smear, squash, wind, hit flash)
+
+Edit only:
+
+1. New `Assets/PixelPass/ShaderLibrary/PixelPassYourEffect.hlsl`
+2. Constants appended to `PIXELPASS_VERTEX_EFFECT_PROPERTIES`
+3. One call inside `PixelPassApplyVertexEffects`
+4. Matching `[HideInInspector]` Properties on **both** lit shaders
+5. A driver script that writes a **MaterialPropertyBlock created in Awake**
+
+Do not add vertex math to `Frag`, do not `UsePass` URP Lit for ShadowCaster/Depth/DepthNormals, do not clone meshes on CPU.
+
+Details: `.cursor/rules/pixelpass-vertex-vfx.mdc`

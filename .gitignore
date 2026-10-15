@@ -2,11 +2,10 @@
 Thumbs.db
 desktop.ini
 
-.agents/
-.cursor/
-skills-lock.json
-.impeccable/
-PRODUCT.md
-DESIGN.md
+# Regenerated: screenshots from the check scripts, and `npm install` in .impeccable/tools
+.impeccable/review/
+node_modules/
+
+# Vercel link and token; never commit
 .vercel
 .env*

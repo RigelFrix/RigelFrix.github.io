@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-09T13:54:00+08:00",
+  "title": "Design System: Francis Yambao, game developer",
+  "extensions": {
+    "colorMeta": {
+      "cobalt": { "role": "primary", "displayName": "Select-Screen Cobalt", "canonical": "#2430E6", "oklch": "oklch(46.0% 0.261 267.9)", "cssVar": "--cobalt", "tonalRamp": ["#020038", "#0b0277", "#1a07c2", "#2a3ef2", "#4f75f9", "#7fa0fd", "#b3c8ff", "#e8eeff"] },
+      "cobalt-deep": { "role": "primary", "displayName": "Stage-Shadow Cobalt", "canonical": "#1A21B8", "oklch": "oklch(38.5% 0.224 268.0)", "cssVar": "--cobalt-deep", "tonalRamp": ["#030038", "#0b0277", "#191eb6", "#2e4add", "#4f75f9", "#7fa0fd", "#b3c8ff", "#e8eeff"] },
+      "cobalt-line": { "role": "primary", "displayName": "Cobalt Line", "canonical": "#5560FF", "oklch": "oklch(57.8% 0.232 273.5)", "cssVar": "--cobalt-line", "status": "declared in :root, not yet painted by any shipped rule", "tonalRamp": ["#060037", "#170075", "#2c0db9", "#4142e1", "#5f6ffd", "#8a9dfc", "#b8c6fd", "#e9eeff"] },
+      "red": { "role": "secondary", "displayName": "P1 Red", "canonical": "#F23A2E", "oklch": "oklch(63.1% 0.221 28.9)", "cssVar": "--red", "tonalRamp": ["#220000", "#4d0001", "#810102", "#b80506", "#e93025", "#fe7464", "#fdb4a9", "#ffe9e5"] },
+      "red-deep": { "role": "secondary", "displayName": "Button Red", "canonical": "#D42A1F", "oklch": "oklch(56.5% 0.206 29.2)", "cssVar": "--red-deep", "tonalRamp": ["#220000", "#4e0000", "#800503", "#b60e08", "#e33c2e", "#fd7665", "#ffb3a7", "#fee9e5"] },
+      "yellow": { "role": "tertiary", "displayName": "Ready Yellow", "canonical": "#FFC93C", "oklch": "oklch(86.1% 0.159 86.4)", "cssVar": "--yellow", "tonalRamp": ["#130900", "#312300", "#543e00", "#7a5c01", "#a37c04", "#cc9d14", "#f6c130", "#ffedc6"] },
+      "ink": { "role": "neutral", "displayName": "Arcade Ink", "canonical": "#0E0C2B", "oklch": "oklch(17.9% 0.061 281.3)", "cssVar": "--ink", "tonalRamp": ["#080623", "#202142", "#3c3e62", "#5b5d83", "#7c7ea6", "#9ea1cb", "#c2c5f1", "#ebedff"] },
+      "ink-raise": { "role": "neutral", "displayName": "Raised Ink", "canonical": "#1C1950", "oklch": "oklch(25.6% 0.097 279.4)", "cssVar": "--ink-raise", "tonalRamp": ["#090032", "#1e1b52", "#383a74", "#565a97", "#767cbc", "#989fe1", "#bec4fd", "#ebedfe"] },
+      "ink-dim": { "role": "neutral", "displayName": "Dim Ink", "canonical": "#45436F", "oklch": "oklch(40.5% 0.073 284.7)", "cssVar": "--ink-dim", "status": "declared in :root, not yet painted by any shipped rule", "tonalRamp": ["#0a0328", "#221e47", "#3e3c67", "#5d5b89", "#7d7cad", "#9f9fd2", "#c3c3f8", "#ecedfe"] },
+      "cream": { "role": "neutral", "displayName": "Title Cream", "canonical": "#FFF6E0", "oklch": "oklch(97.4% 0.030 88.4)", "cssVar": "--cream", "tonalRamp": ["#100a00", "#2b2413", "#49412f", "#68614e", "#8a826e", "#ada490", "#d1c9b3", "#f7eed8"] },
+      "cream-dim": { "role": "neutral", "displayName": "Lavender Cream", "canonical": "#D3D6FB", "oklch": "oklch(88.6% 0.051 281.6)", "cssVar": "--cream-dim", "tonalRamp": ["#090720", "#21223d", "#3d3f5d", "#5c5e7e", "#7d7fa1", "#9fa2c5", "#c3c6ea", "#ebedff"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Selected game name on the stage; also Continue? and the VS splash name. Uppercase, skewed -8deg.", "textTransform": "uppercase" },
+      "headline": { "displayName": "Headline", "purpose": "Section titles and the dossier title. Uppercase, skewed -8deg from bottom-left.", "textTransform": "uppercase" },
+      "intro": { "displayName": "Intro", "purpose": "Select-screen h1. Uppercase, balanced wrap, upright.", "textTransform": "uppercase" },
+      "title": { "displayName": "Title", "purpose": "Move names and career roles (career steps up to clamp(1.8rem, 3vw, 2.5rem)).", "textTransform": "uppercase" },
+      "label": { "displayName": "Label", "purpose": "Short yellow block headings (Choose a game, Loadout, Build notes) and fact values. Sentence case." },
+      "button": { "displayName": "Button", "purpose": "Button faces and HUD nav; 1.45rem on big buttons." },
+      "stat": { "displayName": "Stat", "purpose": "Stat-slot labels, P1 cursor, tile names." },
+      "lead": { "displayName": "Lead", "purpose": "Opening paragraphs of the player profile and Continue?." },
+      "body": { "displayName": "Body", "purpose": "All reading text; 1rem under 760px; measures 34–60ch." },
+      "small": { "displayName": "Small", "purpose": "Chips, tags, fact labels, stat values, footer (0.85–0.95rem)." }
+    },
+    "geometry": {
+      "slant": { "value": "-8deg", "cssVar": "--slant", "purpose": "skewX applied to every plate: buttons, arrows, chips, tags, tile names, cursor, section titles, wipes." },
+      "unslant": { "value": "8deg", "cssVar": "--unslant", "purpose": "Counter-skew on the inner face so text and icons stand upright inside a slanted plate." },
+      "cut": { "value": "calc(100vw * 0.1405)", "cssVar": "--cut", "purpose": "Section-edge triangle height, 100vw × tan(8deg). Clip-path polygon(0 100%, 100% 0, 100% 100%), background: inherit, bottom: calc(100% - 1px)." },
+      "parallelogramFormula": { "value": "offset = tan(8deg) × height / width = 0.1405 × h / w; polygon(o 0, 100% 0, calc(100% - o) 100%, 0 100%)", "examples": { "stage-16x9": "7.9%", "tile-16x10": "8.8%" } },
+      "fluidRowInsets": { "stat": "0.9rem", "move-row": "1.4rem", "career-row": "1.75rem", "mobile": "0.9rem" }
+    },
+    "shadows": [
+      { "name": "hud-lift", "value": "0 6px 18px rgba(8, 6, 32, 0.35)", "purpose": "Sticky HUD over scrolling content." },
+      { "name": "name-lift", "value": "text-shadow: 0 6px 22px rgba(8, 6, 32, 0.45)", "purpose": "Stage name over bright footage." },
+      { "name": "dialog-lift", "value": "0 24px 60px rgba(4, 3, 20, 0.55)", "purpose": "Dossier dialog over its rgba(14, 12, 43, 0.88) backdrop." },
+      { "name": "ghost-stroke", "value": "inset 0 0 0 2px #FFF6E0", "purpose": "Ghost button outline inside the skewed plate." },
+      { "name": "focus-ring", "value": "outline: 3px solid #FFC93C; outline-offset: 3px", "purpose": "Default focus everywhere; ink outline inside the red Continue? section." },
+      { "name": "focus-clipped", "value": "filter: drop-shadow(3px 0 0 #FFC93C) drop-shadow(-3px 0 0 #FFC93C) drop-shadow(0 3px 0 #FFC93C) drop-shadow(0 -3px 0 #FFC93C)", "purpose": "Focus on clip-path tiles; traces the parallelogram where an outline would be clipped." }
+    ],
+    "motion": [
+      { "name": "ease-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Hover and state transitions, 160–300ms." },
+      { "name": "ease-swap", "value": "cubic-bezier(0.7, 0, 0.3, 1)", "purpose": "Stage wipe and VS splash." },
+      { "name": "button-lift", "value": "160ms ease-out; translateY(-2px) hover, translateY(1px) active", "purpose": "Button plate response, preserving skewX(-8deg)." },
+      { "name": "stage-wipe", "value": "440ms ease-swap; red slab skewX(-8deg) translateX(-130%) → 0 (hold 40–55%) → 130%; repaint at 170ms", "purpose": "Every stage change." },
+      { "name": "roster-preview-delay", "value": "110ms", "purpose": "Hover (fine pointer) or focus on a tile previews it on the stage." },
+      { "name": "vs-splash", "value": "900ms ease-swap; slab holds 36–62%; name slides from +40vw, holds 38–58%, exits to -40vw; dossier revealed at 380ms", "purpose": "Opening a game into its dossier." },
+      { "name": "reduced-motion", "value": "animation/transition-duration 0.01ms; scroll-behavior auto; no stage wipe; no VS splash; no autoplay", "purpose": "prefers-reduced-motion: reduce." }
+    ],
+    "breakpoints": [
+      { "name": "stack", "value": "max-width: 1100px", "purpose": "HUD nav hides; select screen stacks; roster 3 columns; move list and dossier single column." },
+      { "name": "phone", "value": "max-width: 760px", "purpose": "HUD 60px; stage and stage card display: contents, reordered intro → screen → name → roster → tagline → stats → open; roster becomes scroll-snap strip at 42% tiles." }
+    ],
+    "sectionSequence": [
+      { "section": "select", "ground": "cobalt", "edge": "cobalt-deep slab behind stage, polygon(0 0, 100% 0, calc(100% - 14vh) 100%, 0 100%)" },
+      { "section": "player", "ground": "cobalt-deep", "edge": "bottom padding reserves cut" },
+      { "section": "moves", "ground": "ink", "edge": "cut triangle climbing into player" },
+      { "section": "career", "ground": "cobalt", "edge": "cut triangle climbing into moves" },
+      { "section": "continue", "ground": "red", "edge": "cut triangle climbing into career" },
+      { "section": "footer", "ground": "ink", "edge": "flat" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Red Button",
+      "kind": "button",
+      "refersTo": "button-red",
+      "description": "Primary action: skewed red-deep plate with an upright face.",
+      "html": "<a class=\"ds-btn ds-btn-red\" href=\"#\"><span class=\"ds-btn-face\"><svg class=\"ds-icon\" viewBox=\"0 0 24 24\"><path d=\"M7 4v16l13-8Z\"/></svg>Open DiJoker</span></a>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 1.15rem; border: 0; background: var(--red-deep, #d42a1f); color: var(--cream, #fff6e0); font-family: var(--display, \"Big Shoulders Display\", \"Arial Narrow\", sans-serif); font-size: 1.2rem; font-weight: 800; letter-spacing: 0.01em; text-decoration: none; transform: skewX(-8deg); transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), background-color 160ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-face { display: inline-flex; align-items: center; gap: 0.5rem; transform: skewX(8deg); white-space: nowrap; } .ds-icon { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; } .ds-btn-red:hover { background: #c42319; transform: skewX(-8deg) translateY(-2px); } .ds-btn-red:active { transform: skewX(-8deg) translateY(1px); } .ds-btn-red:focus-visible { outline: 3px solid var(--yellow, #ffc93c); outline-offset: 3px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "HUD secondary action: transparent skewed plate with an inset cream stroke.",
+      "html": "<a class=\"ds-btn-ghost\" href=\"#\"><span class=\"ds-btn-ghost-face\"><svg class=\"ds-icon\" viewBox=\"0 0 24 24\"><rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\"/><path d=\"m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7\"/></svg>Contact</span></a>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 1.15rem; background: transparent; color: var(--cream, #fff6e0); box-shadow: inset 0 0 0 2px var(--cream, #fff6e0); font-family: var(--display, \"Big Shoulders Display\", \"Arial Narrow\", sans-serif); font-size: 1.2rem; font-weight: 800; letter-spacing: 0.01em; text-decoration: none; transform: skewX(-8deg); transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), background-color 160ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-ghost-face { display: inline-flex; align-items: center; gap: 0.5rem; transform: skewX(8deg); } .ds-icon { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; } .ds-btn-ghost:hover { background: rgba(255, 246, 224, 0.12); transform: skewX(-8deg) translateY(-2px); } .ds-btn-ghost:focus-visible { outline: 3px solid var(--yellow, #ffc93c); outline-offset: 3px; }"
+    },
+    {
+      "name": "Cream Button",
+      "kind": "button",
+      "refersTo": "button-cream",
+      "description": "Secondary action on red grounds and Close in dialogs.",
+      "html": "<a class=\"ds-btn-cream\" href=\"#\"><span class=\"ds-btn-cream-face\">Open resume (PDF)</span></a>",
+      "css": ".ds-btn-cream { display: inline-flex; align-items: center; justify-content: center; min-height: 56px; padding: 0 1.6rem; background: var(--cream, #fff6e0); color: var(--ink, #0e0c2b); font-family: var(--display, \"Big Shoulders Display\", \"Arial Narrow\", sans-serif); font-size: 1.45rem; font-weight: 800; letter-spacing: 0.01em; text-decoration: none; transform: skewX(-8deg); transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-cream-face { display: inline-flex; align-items: center; gap: 0.5rem; transform: skewX(8deg); } .ds-btn-cream:hover { transform: skewX(-8deg) translateY(-2px); } .ds-btn-cream:active { transform: skewX(-8deg) translateY(1px); } .ds-btn-cream:focus-visible { outline: 3px solid var(--ink, #0e0c2b); outline-offset: 3px; }"
+    },
+    {
+      "name": "Stage Arrow",
+      "kind": "button",
+      "refersTo": "stage-arrow",
+      "description": "Previous/next control on the stage and dossier media.",
+      "html": "<button class=\"ds-stage-arrow\" type=\"button\" aria-label=\"Next game\"><svg class=\"ds-stage-arrow-icon\" viewBox=\"0 0 24 24\"><path d=\"m9 18 6-6-6-6\"/></svg></button>",
+      "css": ".ds-stage-arrow { display: grid; place-items: center; width: 46px; height: 46px; padding: 0; border: 0; background: var(--ink, #0e0c2b); color: var(--cream, #fff6e0); cursor: pointer; transform: skewX(-8deg); transition: background-color 160ms cubic-bezier(0.16, 1, 0.3, 1), color 160ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-stage-arrow-icon { width: 1.4rem; height: 1.4rem; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transform: skewX(8deg); } .ds-stage-arrow:hover { background: var(--yellow, #ffc93c); color: var(--ink, #0e0c2b); } .ds-stage-arrow:focus-visible { outline: 3px solid var(--yellow, #ffc93c); outline-offset: 3px; }"
+    },
+    {
+      "name": "Roster Tile (current)",
+      "kind": "custom",
+      "refersTo": "tile-current",
+      "description": "Selectable fighter tile: 16:10 parallelogram frame; current state floods red with a P1 cursor; focus traced by yellow drop-shadows.",
+      "html": "<button class=\"ds-tile is-current\" type=\"button\"><span class=\"ds-tile-frame\"><span class=\"ds-tile-art\"></span><span class=\"ds-tile-name\">DiJoker</span><span class=\"ds-tile-cursor\" aria-hidden=\"true\">P1</span></span></button>",
+      "css": ".ds-tile { display: block; width: 240px; padding: 0; border: 0; background: none; cursor: pointer; } .ds-tile:focus-visible { outline: none; filter: drop-shadow(3px 0 0 #ffc93c) drop-shadow(-3px 0 0 #ffc93c) drop-shadow(0 3px 0 #ffc93c) drop-shadow(0 -3px 0 #ffc93c); } .ds-tile-frame { position: relative; display: block; aspect-ratio: 16 / 10; padding: 5px; background: var(--ink, #0e0c2b); clip-path: polygon(8.8% 0, 100% 0, 91.2% 100%, 0 100%); transition: background-color 160ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-tile-art { display: block; width: 100%; height: 100%; background: linear-gradient(135deg, #3c3e62, #1c1950); clip-path: polygon(8.8% 0, 100% 0, 91.2% 100%, 0 100%); filter: saturate(0.85) brightness(0.88); } .ds-tile-name { position: absolute; z-index: 1; left: 10%; bottom: 12%; padding: 0.1rem 0.55rem; background: var(--ink, #0e0c2b); color: var(--cream, #fff6e0); font-family: var(--display, \"Big Shoulders Display\", \"Arial Narrow\", sans-serif); font-size: 1.3rem; font-weight: 900; line-height: 1.2; text-transform: uppercase; transform: skewX(-8deg); } .ds-tile-cursor { position: absolute; z-index: 1; top: 9%; right: 12%; padding: 0.05rem 0.5rem; background: var(--yellow, #ffc93c); color: var(--ink, #0e0c2b); font-family: var(--display, \"Big Shoulders Display\", \"Arial Narrow\", sans-serif); font-size: 1.05rem; font-weight: 900; line-height: 1.2; opacity: 0; transform: skewX(-8deg) scale(0.6); transition: opacity 160ms cubic-bezier(0.16, 1, 0.3, 1), transform 220ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-tile.is-current .ds-tile-frame { background: var(--red, #f23a2e); } .ds-tile.is-current .ds-tile-art { filter: grayscale(1) contrast(1.15) brightness(1.05); background: linear-gradient(135deg, #e93025, #810102); } .ds-tile.is-current .ds-tile-name { font-size: 1.5rem; } .ds-tile.is-current .ds-tile-cursor { opacity: 1; transform: skewX(-8deg) scale(1); }"
+    },
+    {
+      "name": "Stat Strip",
+      "kind": "custom",
+      "refersTo": "stat-slot",
+      "description": "Fixed one-fact stat slots under the stage and in the dossier header.",
+      "html": "<dl class=\"ds-stats\"><div><dt>Status</dt><dd>Live production</dd></div><div><dt>Engine</dt><dd>Phaser + TypeScript</dd></div><div><dt>Platform</dt><dd>Web</dd></div><div><dt>Footage</dt><dd>5 clips</dd></div></dl>",
+      "css": ".ds-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.35rem; margin: 0; } .ds-stats > div { padding: 0.55rem 0.9rem 0.6rem; background: var(--ink, #0e0c2b); clip-path: polygon(0.9rem 0, 100% 0, calc(100% - 0.9rem) 100%, 0 100%); } .ds-stats dt { color: var(--yellow, #ffc93c); font-family: var(--display, \"Big Shoulders Display\", \"Arial Narrow\", sans-serif); font-size: 0.95rem; font-weight: 800; line-height: 1.2; } .ds-stats dd { margin: 0; color: var(--cream, #fff6e0); font-family: var(--body, \"Rubik\", \"Segoe UI\", system-ui, sans-serif); font-size: 0.95rem; font-weight: 500; line-height: 1.3; }"
+    },
+    {
+      "name": "Move Row",
+      "kind": "card",
+      "refersTo": "move-row",
+      "description": "Raised-ink parallelogram row: uppercase title beside a dim description.",
+      "html": "<ul class=\"ds-moves\"><li><h3>Gameplay systems</h3><p>Unity since 2019: gameplay loops, physics feel, animation, and Shader Graph rendering experiments.</p></li></ul>",
+      "css": ".ds-moves { margin: 0; padding: 0; list-style: none; } .ds-moves li { display: grid; grid-template-columns: minmax(10rem, 0.8fr) minmax(0, 1.2fr); gap: 1rem; align-items: baseline; padding: 1.15rem 2.4rem 1.25rem; background: var(--ink-raise, #1c1950); clip-path: polygon(1.4rem 0, 100% 0, calc(100% - 1.4rem) 100%, 0 100%); } .ds-moves h3 { margin: 0; color: var(--cream, #fff6e0); font-family: var(--display, \"Big Shoulders Display\", \"Arial Narrow\", sans-serif); font-size: 1.6rem; font-weight: 900; line-height: 1.05; text-transform: uppercase; } .ds-moves p { margin: 0; color: var(--cream-dim, #d3d6fb); font-family: var(--body, \"Rubik\", \"Segoe UI\", system-ui, sans-serif); line-height: 1.6; }"
+    },
+    {
+      "name": "Loadout Chip",
+      "kind": "chip",
+      "refersTo": "chip-loadout",
+      "description": "Skewed cobalt chip for tools and stack items on ink.",
+      "html": "<ul class=\"ds-chips\"><li>Unity</li><li>C#</li><li>Phaser</li><li>TypeScript</li></ul>",
+      "css": ".ds-chips { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0; padding: 0; list-style: none; } .ds-chips li { padding: 0.3rem 0.85rem; background: var(--cobalt, #2430e6); color: var(--cream, #fff6e0); font-family: var(--body, \"Rubik\", \"Segoe UI\", system-ui, sans-serif); font-size: 0.95rem; font-weight: 500; transform: skewX(-8deg); }"
+    },
+    {
+      "name": "HUD",
+      "kind": "nav",
+      "refersTo": "hud",
+      "description": "Sticky ink bar: portrait plate and name, section links, Resume and Contact.",
+      "html": "<header class=\"ds-hud\"><span class=\"ds-hud-plate\"></span><span class=\"ds-hud-name\"><strong>Francis Yambao</strong><span>Game developer</span></span><nav class=\"ds-hud-nav\"><a href=\"#\">Games</a><a href=\"#\">About</a><a href=\"#\">Skills</a><a href=\"#\">Career</a></nav></header>",
+      "css": ".ds-hud { display: flex; align-items: center; gap: 0.85rem; height: 68px; padding: 0 clamp(1rem, 3.2vw, 2.5rem); background: var(--ink, #0e0c2b); color: var(--cream, #fff6e0); box-shadow: 0 6px 18px rgba(8, 6, 32, 0.35); } .ds-hud-plate { width: 64px; height: 52px; background: var(--red, #f23a2e); clip-path: polygon(14% 0, 100% 0, 86% 100%, 0 100%); } .ds-hud-name { display: grid; line-height: 1.1; } .ds-hud-name strong { font-family: var(--display, \"Big Shoulders Display\", \"Arial Narrow\", sans-serif); font-size: 1.45rem; font-weight: 900; letter-spacing: 0.01em; text-transform: uppercase; } .ds-hud-name span { color: var(--cream-dim, #d3d6fb); font-family: var(--body, \"Rubik\", \"Segoe UI\", system-ui, sans-serif); font-size: 0.875rem; } .ds-hud-nav { display: flex; gap: 0.25rem; margin-left: auto; } .ds-hud-nav a { padding: 0.5rem 0.8rem; color: var(--cream-dim, #d3d6fb); font-family: var(--display, \"Big Shoulders Display\", \"Arial Narrow\", sans-serif); font-size: 1.2rem; font-weight: 800; text-decoration: none; transition: color 160ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-hud-nav a:hover { color: var(--yellow, #ffc93c); } .ds-hud-nav a:focus-visible { outline: 3px solid var(--yellow, #ffc93c); outline-offset: 3px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Character Select Screen",
+    "overview": "The whole site is a fighting-game roster screen that still scrolls and clicks like a normal page. Every shipped game is a fighter: a slanted tile on the roster, its footage on a slanted stage, its name in huge condensed caps. A flat, saturated cobalt field owns most of the page; deep ink is the stage and the HUD; P1 red marks what is selected and what to press; ready yellow marks focus, cursors, and the small labels that orient a skimmer. Cream carries the words.\n\nOne angle runs the system. Every vertical edge leans 8° forward (`skewX(-8deg)`), and every section boundary climbs 8° to the right (`100vw × tan 8°`). Panels, tiles, stats, chips, buttons, wipes, and the VS splash all share that lean, so the page reads as one cabinet rather than a collection of styled boxes. The density is arcade, not editorial: big blocks of flat color, short heavy type, tight gutters between tiles, and motion that happens as a single decisive sweep rather than a scatter of small effects.\n\nDepth comes from color stacking (ink on cobalt, cobalt-deep behind the stage, red flooding the current tile), not from soft card shadows. Nothing is rounded.",
+    "keyCharacteristics": [
+      "One angle everywhere: -8deg lean on verticals, +8° climb on section edges.",
+      "Flat saturated grounds: cobalt, cobalt-deep, ink, red, in a fixed section sequence.",
+      "Selection is flooded, not outlined: the current tile turns red and gets a yellow P1 cursor.",
+      "Condensed heavy caps for names and headings; Rubik for anything read as a sentence.",
+      "Slanted plates, upright text: the shape leans, the words stay straight.",
+      "Motion is one diagonal red slab, used for stage swaps and the VS splash, and removed entirely under reduced motion."
+    ],
+    "rules": [
+      { "name": "The Flooded Selection Rule", "body": "The current thing is shown by flooding its surface red, never by a thin ring alone. A selected tile, a selected thumb, a primary button: red fills it.", "section": "colors" },
+      { "name": "The Red Carries Ink Rule", "body": "Text set directly on P1 red is ink, or cream only at display size (the Continue? title). Any red surface that holds button-size cream text uses red-deep instead.", "section": "colors" },
+      { "name": "The Yellow Points Rule", "body": "Yellow marks where you are and what to read next (focus, cursor, labels, section titles on deep grounds). It never fills a large surface.", "section": "colors" },
+      { "name": "The Caps Are Names Rule", "body": "Uppercase is for names and titles set in the display face (games, sections, moves, roles). Labels, buttons, and every Rubik line stay in sentence case.", "section": "typography" },
+      { "name": "The Lean Is For Names Rule", "body": "Display type that names something (the stage name, section titles, the dossier title, Continue?, tile names) is skewed -8deg from its bottom-left corner. Reading text never leans.", "section": "typography" },
+      { "name": "The Flat Plates Rule", "body": "Panels, rows, tiles, chips, and stats carry no shadow. Separation comes from a different ground color and the gap between slanted plates.", "section": "elevation" }
+    ],
+    "dos": [
+      "**Do** lean every new panel, tile, chip, and button at the one angle: `skewX(-8deg)` for plates, `tan 8° × height / width` for clipped parallelograms of known ratio.",
+      "**Do** keep text upright inside a skewed plate by counter-skewing the face (`skewX(8deg)`).",
+      "**Do** show the current item by flooding it red (`red`) and marking it with the yellow P1 cursor, not by an outline alone.",
+      "**Do** use `red-deep` for any red surface that carries button-size cream text.",
+      "**Do** draw focus on clipped elements with yellow `drop-shadow` filters so the ring follows the parallelogram; use the 3px yellow outline everywhere else.",
+      "**Do** join a new section to the one above with the `cut` triangle in its own ground, and add `cut` to the previous section's bottom padding.",
+      "**Do** keep reading text in Rubik at 34–60ch and names and headings in Big Shoulders Display.",
+      "**Do** make any new motion a single diagonal red sweep on the swap curve, and give it an instant path under reduced motion."
+    ],
+    "donts": [
+      "**Don't** round any corner; the system has no radius.",
+      "**Don't** introduce a second deliberate angle; slants, wipes, and section edges are all designed to 8°.",
+      "**Don't** set cream body-size text directly on P1 red.",
+      "**Don't** put soft shadows on panels, rows, tiles, or chips; separation is by ground color and gap.",
+      "**Don't** skew reading text or set Rubik in uppercase.",
+      "**Don't** fill large areas with yellow; it marks focus and labels only."
+    ]
+  }
+}

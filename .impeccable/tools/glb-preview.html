@@ -1,0 +1,106 @@
+<!doctype html>
+<html>
+<head>
+<style>html,body{margin:0;background:#3a3a3e}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"/vendor/three/three.module.min.js","three/addons/":"/vendor/three/addons/"}}</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+const params = new URLSearchParams(location.search);
+const file = params.get("file") || "/Low-Poly Starry Mage Explorer.glb";
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(1);
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color("#3a3fd0");
+scene.add(new THREE.HemisphereLight("#ffffff", "#666688", 1.6));
+const sun = new THREE.DirectionalLight("#ffffff", 1.6);
+sun.position.set(2, 4, 3);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.01, 100);
+const gltf = await new GLTFLoader().loadAsync(encodeURI(file));
+const model = gltf.scene;
+scene.add(model);
+const bones = {};
+model.traverse((o) => { if (o.isBone) bones[o.name] = o; });
+window.bones = bones;
+if (params.get("hide")) {
+  const names = params.get("hide").split(",");
+  model.traverse((o) => { if (o.isMesh && names.includes(o.material.name)) o.visible = false; });
+}
+if (params.get("hl")) {
+  model.traverse((o) => { if (o.isMesh && o.material.name === params.get("hl")) o.material = new THREE.MeshBasicMaterial({ color: "#ff2050" }); });
+}
+/* face=<png> and/or tex=<material>:<png>,... paint materials with textures (e.g. dumped by niko-face.mjs) */
+const texParams = [params.get("face") && `face:${params.get("face")}`, ...(params.get("tex") || "").split(",")].filter(Boolean);
+for (const entry of texParams) {
+  const [name, url] = [entry.slice(0, entry.indexOf(":")), entry.slice(entry.indexOf(":") + 1)];
+  const tex = await new THREE.TextureLoader().loadAsync(url);
+  tex.flipY = false;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: name !== "face", depthWrite: name === "face" });
+  /* lift=<model units>: same view-depth pull toward the camera as world.js gives the eye decals */
+  if (name.startsWith("eye") && params.get("lift")) {
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader.replace("#include <project_vertex>",
+        `#include <project_vertex>\nmvPosition.z += ${Number(params.get("lift")).toFixed(3)} * smoothstep(0.35, 0.8, normalize(normalMatrix * objectNormal).z);\ngl_Position = projectionMatrix * mvPosition;`);
+    };
+  }
+  model.traverse((o) => { if (o.isMesh && o.material.name === name) { o.material = mat; o.renderOrder = name === "face" ? 0 : 2; } });
+}
+window.pose = (p) => {
+  for (const [name, rot] of Object.entries(p)) if (bones[name]) bones[name].rotation.set(...rot);
+};
+if (params.get("ink")) {
+  const width = Number(params.get("ink"));
+  const ramp = new THREE.DataTexture(new Uint8Array([72, 118, 168, 214, 255]), 5, 1, THREE.RedFormat);
+  ramp.needsUpdate = true;
+  const ink = new THREE.MeshBasicMaterial({ color: "#2b1b24", side: THREE.BackSide });
+  ink.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nattribute vec3 inkNormal;")
+      .replace("#include <begin_vertex>", `vec3 transformed = position + inkNormal * ${width.toFixed(4)};`);
+  };
+  const meshes = [];
+  model.traverse((o) => { if (o.isSkinnedMesh) meshes.push(o); });
+  for (const mesh of meshes) {
+    const name = mesh.material.name;
+    mesh.material = new THREE.MeshToonMaterial({ color: mesh.material.color, vertexColors: name === "lining", gradientMap: ramp });
+    if (name === "face" || name === "glow" || name === "lining" || width <= 0) continue;
+    const g = mesh.geometry, pos = g.attributes.position, nrm = g.attributes.normal, sums = new Map();
+    const key = (i) => `${pos.getX(i).toFixed(4)},${pos.getY(i).toFixed(4)},${pos.getZ(i).toFixed(4)}`;
+    for (let i = 0; i < pos.count; i += 1) sums.set(key(i), (sums.get(key(i)) || new THREE.Vector3()).add(new THREE.Vector3(nrm.getX(i), nrm.getY(i), nrm.getZ(i))));
+    const out = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i += 1) sums.get(key(i)).clone().normalize().toArray(out, i * 3);
+    g.setAttribute("inkNormal", new THREE.BufferAttribute(out, 3));
+    const hull = new THREE.SkinnedMesh(g, ink);
+    hull.bind(mesh.skeleton, mesh.bindMatrix);
+    mesh.add(hull);
+  }
+}
+if (params.get("clip")) {
+  const mixer = new THREE.AnimationMixer(model);
+  const clip = gltf.animations.find((a) => a.name === params.get("clip"));
+  mixer.clipAction(clip).play();
+  mixer.update(Number(params.get("t") || 0));
+  model.updateMatrixWorld(true);
+}
+const box = new THREE.Box3().set(new THREE.Vector3(-0.46, -0.5, -0.24), new THREE.Vector3(0.46, 0.5, 0.24));
+const center = box.getCenter(new THREE.Vector3());
+const size = box.getSize(new THREE.Vector3());
+window.view = (yaw, elev = 0.15, zoom = 1, target = null) => {
+  const t = target ? new THREE.Vector3(...target) : center;
+  const d = (size.y / zoom) * 2.1;
+  camera.position.set(t.x + Math.sin(yaw) * Math.cos(elev) * d, t.y + Math.sin(elev) * d, t.z + Math.cos(yaw) * Math.cos(elev) * d);
+  camera.lookAt(t);
+  renderer.render(scene, camera);
+};
+window.boneAt = (name) => bones[name].getWorldPosition(new THREE.Vector3()).toArray();
+window.info = { size: size.toArray(), center: center.toArray() };
+window.ready = true;
+</script>
+</body>
+</html>

@@ -1,0 +1,128 @@
+{
+  "title": "Choose the visual world",
+  "question": "The roll assigned Character Select. Keep it, take an alternate, or re-roll.",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "Character Select",
+      "kicker": "THE ROLL",
+      "lineage": "Arcade and console fighting-game roster screens",
+      "thesis": "Every project is a playable fighter; the recruiter picks one and the footage steps into the ring.",
+      "palette": ["#2430E6", "#F23A2E", "#FFC93C", "#FFF6E0", "#0E0C2B"],
+      "materials": ["slanted panel cuts", "roster portrait tiles", "VS splash transition"],
+      "viewport": "Project select screen: selected project's footage fills a slanted stage with its name in huge condensed italic, a fixed stat block, and the six-project roster grid beside it; a P1 HUD bar carries Francis, Resume, and Contact.",
+      "risk": "Can tip into costume if the slants and splashes outnumber the footage; the video must stay the hero.",
+      "raised": [
+        { "from": "challenger-cape", "raise": "One gesture, one transformation: choosing a project runs a single VS-splash transition into its dossier instead of scattered effects." },
+        { "from": "challenger-chromatophore", "raise": "State is drawn on the surface itself: the selected tile floods with the P1 colour rather than gaining a badge." },
+        { "from": "challenger-algorave", "raise": "Preview before commit: hovering or focusing a roster tile plays that project on the stage before it opens." },
+        { "from": "challenger-sixpack", "raise": "Every stat slot owns one fact in a fixed position (engine, platform, role, status) so projects cross-compare at a glance." },
+        { "from": "challenger-pulp", "raise": "One diagonal angle governs every cut, panel, and transition on the page." },
+        { "from": "challenger-nightmarket", "raise": "A permanent escape route: the HUD's Resume and Contact stay reachable from every screen." }
+      ],
+      "comp": ".impeccable/mocks/decision/assigned.png"
+    },
+    {
+      "id": "model-pick",
+      "label": "Console Game Library",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "Console home-screen game libraries",
+      "thesis": "The portfolio as a console home screen: each project a game tile that wakes up with its trailer when selected.",
+      "palette": ["#0B2A4A", "#E8F1FA", "#36C2FF", "#14324F"],
+      "materials": ["cover-art tiles", "ambient trailer backdrop", "system font UI"],
+      "viewport": "A horizontal row of project tiles over the selected game's full-bleed trailer, title and short blurb beneath, and a top bar with profile and resume.",
+      "risk": "Familiar: this is where most game-dev portfolio redesigns land, and it reads like a console clone."
+    },
+    {
+      "id": "challenger-cape",
+      "label": "Drawcord Cape",
+      "verdict": "declined",
+      "lineage": "Transforming silk fashion",
+      "thesis": "A flat plane that one pull turns into volume.",
+      "palette": ["#0A0A0A", "#C9A227", "#4A4F57"],
+      "materials": ["matte silk", "gold drawcord"],
+      "viewport": "A black semicircle that gathers into a project shell.",
+      "risk": "Studio recruiters do not see games in tailoring.",
+      "case": "Loses both axes: no game identity and project content hides behind the cloth.",
+      "kept": "One gesture drives one complete transformation."
+    },
+    {
+      "id": "challenger-chromatophore",
+      "label": "Chromatophore Skin",
+      "verdict": "declined",
+      "lineage": "Cephalopod signalling",
+      "thesis": "A living surface that signals state through its own colour.",
+      "palette": ["#F1E6D2", "#8A3B22", "#2FB8A6"],
+      "materials": ["pigment cells", "shader skin"],
+      "viewport": "A pulsing skin where projects surface as patterns.",
+      "risk": "Beautiful, but reads as biology art rather than a developer portfolio.",
+      "case": "Loses both axes: abstract signals obscure which game is which.",
+      "kept": "State lives in the surface, not in badges."
+    },
+    {
+      "id": "challenger-algorave",
+      "label": "Algorave Source Floor",
+      "verdict": "declined",
+      "lineage": "Live-coded club nights",
+      "thesis": "Code on the wall changes what happens next.",
+      "palette": ["#000000", "#39FF6A", "#FF2BD6", "#FFB000"],
+      "materials": ["projected terminal", "live buffer"],
+      "viewport": "A stage-scale code buffer driving the reel.",
+      "risk": "Neon-on-black terminal is the category rut for developer portfolios.",
+      "case": "Loses both axes: recruiters skim games, not source buffers.",
+      "kept": "Upcoming changes are previewed before they commit."
+    },
+    {
+      "id": "challenger-sixpack",
+      "label": "Night Flight Six-Pack",
+      "verdict": "declined",
+      "lineage": "Aircraft instrument panels",
+      "thesis": "Six calm instruments, each owning one truth.",
+      "palette": ["#0C0C0C", "#F2F2F2", "#5CFF8A", "#FFB020"],
+      "materials": ["round gauges", "luminous markings"],
+      "viewport": "Projects as six dials on a black panel.",
+      "risk": "Gauges imply numeric metrics the portfolio cannot truthfully show.",
+      "case": "Loses both axes: aviation, not games, and invites invented numbers.",
+      "kept": "Fixed positions, one fact per slot, a cross-check reading order."
+    },
+    {
+      "id": "challenger-pulp",
+      "label": "Pulp Rocket Plate",
+      "verdict": "declined",
+      "lineage": "1950s pulp sci-fi illustration",
+      "thesis": "Everything travels one confident diagonal.",
+      "palette": ["#B8402A", "#16244A", "#E9D9A8"],
+      "materials": ["airbrushed chrome", "yellowed pulp paper"],
+      "viewport": "A rocket crossing the frame with the name in speed-lined caps.",
+      "risk": "Retro sci-fi nostalgia, not game development.",
+      "case": "Loses both axes: the world competes with the footage.",
+      "kept": "One diagonal rules the whole composition."
+    },
+    {
+      "id": "challenger-nightmarket",
+      "label": "Night-Market Sign River",
+      "verdict": "declined",
+      "lineage": "Asian night-market wayfinding",
+      "thesis": "Lantern signs lead visitors stall to stall.",
+      "palette": ["#121212", "#F5A623", "#1F5FA8", "#C8202F"],
+      "materials": ["lantern glow", "hand-painted boards"],
+      "viewport": "A lantern-lit street where each stall is a project.",
+      "risk": "Wayfinding through a street slows recruiters down.",
+      "case": "Loses both axes: charming but indirect for a one-minute skim.",
+      "kept": "A simple escape route stays visible everywhere."
+    }
+  ],
+  "reroll": { "registers": ["safer", "bolder"] },
+  "buildPath": { "value": "code", "toggle": true },
+  "canon": true,
+  "canonCard": {
+    "label": "The category standard",
+    "thesis": "A clean developer portfolio: hero, project grid, about, contact, executed impeccably.",
+    "palette": ["#FFFFFF", "#111827", "#2563EB"],
+    "materials": ["clean grid", "project thumbnails"],
+    "viewport": "Name and role headline, a short intro, and a grid of project cards below.",
+    "risk": "Indistinguishable from other portfolios, and not game-like at all.",
+    "comp": ".impeccable/mocks/decision/canon.png"
+  },
+  "steer": true
+}

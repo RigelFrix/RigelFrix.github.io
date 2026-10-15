@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head>
+<script type="importmap">{"imports":{"three":"/vendor/three/three.module.min.js","three/addons/":"/vendor/three/addons/"}}</script>
+</head>
+<body>
+<script type="module">
+/* Loads a Mixamo-rigged FBX or GLB clip and samples every bone's world rotation relative to its rest (bind) pose
+   at 30fps, in the scene root's frame, plus the hips position. Bone names lose the "mixamorig" prefix.
+   ?file=<url>&clip=<name for multi-clip GLBs>. Result goes to window.result. */
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { FBXLoader } from "/.impeccable/fbx/addons/loaders/FBXLoader.js";
+
+const params = new URLSearchParams(location.search);
+const file = params.get("file");
+let object;
+let clips;
+if (/\.fbx$/i.test(file)) {
+  object = await new FBXLoader().loadAsync(encodeURI(file));
+  clips = object.animations;
+} else {
+  const gltf = await new GLTFLoader().loadAsync(encodeURI(file));
+  object = gltf.scene;
+  clips = gltf.animations;
+}
+const clip = params.get("clip") ? clips.find((c) => c.name === params.get("clip")) : clips[0];
+if (!clip) throw new Error(`no clip ${params.get("clip")} in ${clips.map((c) => c.name)}`);
+const bones = [];
+object.traverse((n) => { if (n.isBone) bones.push(n); });
+const strip = (name) => name.replace(/^mixamorig\d*:?/, "");
+object.updateMatrixWorld(true);
+const rootInv = object.matrixWorld.clone().invert();
+const rootQInv = object.getWorldQuaternion(new THREE.Quaternion()).invert();
+const worldQ = (b) => rootQInv.clone().multiply(b.getWorldQuaternion(new THREE.Quaternion()));
+const localP = (b) => b.getWorldPosition(new THREE.Vector3()).applyMatrix4(rootInv);
+const rest = new Map(bones.map((b) => [b, worldQ(b)]));
+const restPositions = Object.fromEntries(bones.map((b) => [strip(b.name), localP(b).toArray()]));
+const hips = bones.find((b) => strip(b.name) === "Hips");
+const hipsRest = localP(hips);
+const armDir = localP(bones.find((b) => strip(b.name) === "LeftForeArm")).sub(localP(bones.find((b) => strip(b.name) === "LeftArm"))).normalize().toArray();
+
+const mixer = new THREE.AnimationMixer(object);
+mixer.clipAction(clip).play();
+const fps = 30;
+const frames = Math.round(clip.duration * fps) + 1;
+const out = Object.fromEntries(bones.map((b) => [strip(b.name), []]));
+const hipsPos = [];
+for (let f = 0; f < frames; f += 1) {
+  mixer.setTime(Math.min(clip.duration, f / fps));
+  object.updateMatrixWorld(true);
+  for (const b of bones) {
+    const q = worldQ(b).multiply(rest.get(b).clone().invert());
+    out[strip(b.name)].push(q.x, q.y, q.z, q.w);
+  }
+  hipsPos.push(...localP(hips).toArray());
+}
+window.result = { name: clip.name, duration: clip.duration, fps, frames, hipsRest: hipsRest.toArray(), armDir, restPositions, bones: out, hips: hipsPos };
+</script>
+</body>
+</html>

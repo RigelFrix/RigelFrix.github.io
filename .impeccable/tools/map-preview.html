@@ -1,0 +1,60 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>map preview</title>
+<style>
+  body { margin: 0; background: #222; }
+  canvas { display: block; }
+</style>
+<canvas id="c" width="900" height="900"></canvas>
+<script type="module">
+  import * as M from "/world-map.js";
+  const c = document.getElementById("c");
+  const ctx = c.getContext("2d");
+  const span = 44;
+  const px = c.width / span;
+  const img = ctx.createImageData(c.width, c.height);
+  const at = (i, j) => [i / px - span / 2, j / px - span / 2];
+  for (let j = 0; j < c.height; j += 1) {
+    for (let i = 0; i < c.width; i += 1) {
+      const [u, v] = at(i, j);
+      const t = M.terrainAtUV(u, v);
+      const r = M.terrainAtUV(u + 0.15, v + 0.15).h - t.h;
+      let col;
+      if (t.h < 0) col = [70, 140, 210 + t.h * 20];
+      else if (t.stair) col = [190, 180, 160];
+      else if (t.region?.beach) col = [232, 200, 144];
+      else {
+        const g = t.h / 8.2;
+        col = [90 + g * 80, 150 + g * 60, 70 + g * 40];
+      }
+      if (M.riverDist(u, v) < M.river.w && t.h > 0) col = [90, 180, 240];
+      if (M.pathDist(u, v) < 0.6 && t.h > 0) col = [col[0] * 0.8 + 40, col[1] * 0.8 + 30, col[2] * 0.8];
+      if (M.platformAt(u, v)) col = [140, 95, 60];
+      const shade = Math.max(-80, Math.min(80, r * 60));
+      const k = (j * c.width + i) * 4;
+      img.data[k] = col[0] - shade;
+      img.data[k + 1] = col[1] - shade;
+      img.data[k + 2] = col[2] - shade;
+      img.data[k + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const to = ([u, v]) => [(u + span / 2) * px, (v + span / 2) * px];
+  ctx.font = "13px sans-serif";
+  for (const [name, p] of Object.entries(M.spots)) {
+    const [x, y] = to(p);
+    ctx.fillStyle = "#f23a2e";
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, 7);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillText(name, x + 7, y + 4);
+  }
+  ctx.strokeStyle = "rgba(255,255,255,0.25)";
+  for (let g = -20; g <= 20; g += 5) {
+    const [a] = to([g, 0]);
+    ctx.beginPath(); ctx.moveTo(a, 0); ctx.lineTo(a, c.height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, a); ctx.lineTo(c.width, a); ctx.stroke();
+  }
+  document.title = "ready";
+</script>
