@@ -75,30 +75,40 @@ const WIND_GLSL = [
 ].join("\n");
 
 /* Tree and bush crowns bend downwind: aSway = (weight, base x, base z), baked per vertex by makeBake.put, so the
-   whole crown follows the gust at its trunk and only the tips flutter */
-const windSway = (material) => {
+   whole crown follows the gust at its trunk and its top moves most. On top of the lean a wave rolls downwind through
+   the crown, so it breathes instead of moving as one block, and with `leaves` every leaf card stirs a little on its
+   own (aLeaf from cardShell). Everything stays slow: fast or large motion read as someone hitting the tree. */
+const windSway = (material, leaves = false) => {
   const previous = material.onBeforeCompile;
   const key = material.customProgramCacheKey?.() || "";
+  if (leaves) material.defines = { ...material.defines, LEAF_FLUTTER: "" };
   material.onBeforeCompile = (shader, renderer) => {
     previous?.(shader, renderer);
     shader.uniforms.windTime = windTime;
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", `#include <common>\nuniform float windTime;\nattribute vec3 aSway;\n${WIND_GLSL}`)
+      .replace("#include <common>", `#include <common>\nuniform float windTime;\nattribute vec3 aSway;\nattribute vec2 aLeaf;\n${WIND_GLSL}`)
       .replace(
         "#include <begin_vertex>",
         [
           "#include <begin_vertex>",
           "if (aSway.x > 0.0) {",
-          "  float gust = windGust(aSway.yz, windTime);",
-          "  float flutter = windNoise(transformed.xz * 0.8 + WIND_DIR * windTime * 1.4) - 0.5;",
-          "  float push = (0.18 + gust * 0.8 + sin(windTime * 1.6 + aSway.y * 0.37 + aSway.z * 0.23) * 0.06) * aSway.x + flutter * aSway.x * 0.35;",
-          "  transformed.xz += WIND_DIR * push;",
-          "  transformed.y -= push * push * 0.2;",
+          /* Trees answer a gust slowly (sampled at half speed), so it swells and settles instead of shoving them */
+          "  float gust = windGust(aSway.yz, windTime * 0.5);",
+          "  float lean = (0.25 + gust * 0.45 + sin(windTime * 0.8 + aSway.y * 0.37 + aSway.z * 0.23) * 0.12) * aSway.x;",
+          "  float wave = windTime * 0.9 - dot(transformed.xz, WIND_DIR) * 0.55 - transformed.y * 0.35;",
+          "  vec3 roll = vec3(sin(wave), sin(wave * 1.21 + 1.3) * 0.4, cos(wave * 0.87 + 0.4)) * aSway.x * 0.1;",
+          "  transformed.xz += WIND_DIR * lean;",
+          "  transformed.y -= lean * lean * 0.2;",
+          "  transformed += roll;",
+          "  #ifdef LEAF_FLUTTER",
+          "  float flap = sin(windTime * (1.8 + aLeaf.y * 1.2) + aLeaf.y * 40.0) * (0.06 + gust * 0.08);",
+          "  transformed += objectNormal * flap * aLeaf.x;",
+          "  #endif",
           "}",
         ].join("\n")
       );
   };
-  material.customProgramCacheKey = () => `${key}-sway`;
+  material.customProgramCacheKey = () => `${key}-sway${leaves ? "-leaf" : ""}`;
   return material;
 };
 
@@ -299,7 +309,9 @@ const makeBake = ({ dry = false } = {}) => {
     },
     build(material) {
       if (!list.length) return null;
-      if (list.some((g) => g.attributes.aSway)) list.forEach((g) => g.attributes.aSway || g.setAttribute("aSway", new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 3), 3)));
+      [["aSway", 3], ["aLeaf", 2]].forEach(([name, n]) => {
+        if (list.some((g) => g.attributes[name])) list.forEach((g) => g.attributes[name] || g.setAttribute(name, new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * n), n)));
+      });
       const merged = mergeGeometries(list);
       list.forEach((g) => g.dispose());
       list.length = 0;
@@ -485,35 +497,46 @@ const rampPaint = (g, stops, pick) => {
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
 /* Foliage, after sampleModels/stylized_bush.glb: every bush and tree is a dark core shape wrapped in a shell of
-   leaf cards. One atlas, two tiles: a cluster of small rounded leaves (bushes, round trees) and a needle spray
-   (pines). Cards take the core's normal, so each mass shades as one soft ball; leaves are sized from Niko (2.5 units
-   tall): a bush leaf is about a twentieth of his height, a tree leaf a little bigger. */
+   leaf cards. One atlas, three tiles: a sprig of small rounded leaves (bushes), a needle spray (pines) and three
+   twigs of tiny leaves (round trees, whose copies are scaled up more, so their leaves are drawn smaller). Cards take
+   the core's normal, so each mass shades as one soft ball; leaves are sized from Niko (2.5 units tall): a leaf on a
+   bush or a tree is about a thirtieth of his height. */
 const LEAF_TILE = 0;
 const NEEDLE_TILE = 1;
+const TWIG_TILE = 2;
+const TILES = 3;
 const foliageTexture = () => {
-  const W = 64;
-  const data = new Uint8Array(W * 2 * W * 4);
-  /* Leaves fan up from the card's bottom centre: [angle from vertical, length, half width] */
-  const leaves = [
-    [-1.05, 0.4, 0.13],
-    [1.0, 0.42, 0.13],
-    [-0.62, 0.52, 0.14],
-    [0.58, 0.5, 0.14],
-    [-0.22, 0.6, 0.15],
-    [0.26, 0.58, 0.15],
-    [0.02, 0.7, 0.16],
-  ];
+  const W = 128;
+  const data = new Uint8Array(W * TILES * W * 4);
+  /* Leaves alternate up a stem and close in toward its tip: [base x, base y, angle from vertical, length, half width];
+     stems are [base x, base y, angle, length] */
+  const sprig = (bx, by, angle, stem, count, len, half, seed, leaves, stems) => {
+    stems.push([bx, by, angle, stem]);
+    for (let k = 0; k < count; k += 1) {
+      const t = (k + 0.5) / count;
+      const side = k % 2 ? 1 : -1;
+      const x = bx + Math.sin(angle) * stem * t * 0.92;
+      const y = by + Math.cos(angle) * stem * t * 0.92;
+      leaves.push([x, y, angle + side * (1.15 - t * 0.95) + (hash3(k, seed, 2) - 0.5) * 0.25, len * (1 - t * 0.18), half]);
+    }
+  };
+  const bushLeaves = [];
+  const bushStems = [];
+  sprig(0.5, 0.04, 0, 0.62, 13, 0.34, 0.09, 1, bushLeaves, bushStems);
+  const twigLeaves = [];
+  const twigStems = [];
+  [[-0.55, 0.6], [0.55, 0.6], [0, 0.82]].forEach(([angle, stem], j) => sprig(0.5, 0.04, angle, stem, 9, 0.17, 0.052, j + 3, twigLeaves, twigStems));
   const needles = [];
   for (let k = 0; k < 22; k += 1) {
     const s = 0.06 + (k / 21) * 0.84;
     needles.push([s, k % 2 ? 1 : -1, 0.42 * (1 - s * 0.6)]);
   }
-  /* Which leaf covers (fx, fy) on top, and where on it: returns [shade] or null */
-  const leafAt = (fx, fy) => {
+  /* Which leaf covers (fx, fy) on top, and where on it: returns a shade or null */
+  const leafAt = (leaves, stems) => (fx, fy) => {
     for (let i = leaves.length - 1; i >= 0; i -= 1) {
-      const [a, len, half] = leaves[i];
-      const dx = fx - 0.5;
-      const dy = fy - 0.04;
+      const [bx, by, a, len, half] = leaves[i];
+      const dx = fx - bx;
+      const dy = fy - by;
       const s = (dx * Math.sin(a) + dy * Math.cos(a)) / len;
       const w = (dx * Math.cos(a) - dy * Math.sin(a)) / half;
       if (s <= 0 || s >= 1) continue;
@@ -523,8 +546,15 @@ const foliageTexture = () => {
       const rib = Math.abs(w) < 0.08 && s < 0.8 ? 0.9 : 1;
       return (0.74 + s * 0.26 + (i % 3) * 0.03) * rim * rib;
     }
+    for (const [bx, by, a, len] of stems) {
+      const dx = fx - bx;
+      const dy = fy - by;
+      const s = dx * Math.sin(a) + dy * Math.cos(a);
+      if (s > 0 && s < len && Math.abs(dx * Math.cos(a) - dy * Math.sin(a)) < 0.012) return 0.6;
+    }
     return null;
   };
+  const tiles = [leafAt(bushLeaves, bushStems), null, leafAt(twigLeaves, twigStems)];
   const needleAt = (fx, fy) => {
     const dx = fx - 0.5;
     if (Math.abs(dx) < 0.03 && fy < 0.95) return 0.72;
@@ -536,17 +566,17 @@ const foliageTexture = () => {
     }
     return null;
   };
+  tiles[NEEDLE_TILE] = needleAt;
   for (let py = 0; py < W; py += 1) {
-    for (let px = 0; px < W * 2; px += 1) {
-      const tile = px >= W ? NEEDLE_TILE : LEAF_TILE;
-      const at = tile === LEAF_TILE ? leafAt : needleAt;
+    for (let px = 0; px < W * TILES; px += 1) {
+      const at = tiles[Math.floor(px / W)];
       let cover = 0;
       for (let s = 0; s < 4; s += 1) if (at(((px % W) + (s % 2) * 0.5 + 0.25) / W, (py + (s >> 1) * 0.5 + 0.25) / W) != null) cover += 0.25;
       const shade = at(((px % W) + 0.5) / W, (py + 0.5) / W) ?? 0.8;
-      data.set([255 * shade, 255 * shade, 255 * shade, cover * 255], (py * W * 2 + px) * 4);
+      data.set([255 * shade, 255 * shade, 255 * shade, cover * 255], (py * W * TILES + px) * 4);
     }
   }
-  const texture = new THREE.DataTexture(data, W * 2, W, THREE.RGBAFormat);
+  const texture = new THREE.DataTexture(data, W * TILES, W, THREE.RGBAFormat);
   texture.magFilter = THREE.LinearFilter;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.generateMipmaps = true;
@@ -554,12 +584,14 @@ const foliageTexture = () => {
   return texture;
 };
 
-/* Collects leaf cards into one geometry: position, the core's normal, colour, atlas uv */
+/* Collects leaf cards into one geometry: position, the core's normal, colour, atlas uv, and aLeaf = (how far up the
+   card, in world units, so the tip flutters and the base stays; a random phase) */
 const cardShell = () => {
   const pos = [];
   const nrm = [];
   const col = [];
   const uv = [];
+  const flap = [];
   const out = new THREE.Color();
   const side = new THREE.Vector3();
   return {
@@ -569,14 +601,17 @@ const cardShell = () => {
       const base = centre.clone().addScaledVector(tip, -size * 0.3);
       const end = base.clone().addScaledVector(tip, size);
       const corners = [base.clone().sub(side), base.clone().add(side), end.clone().add(side), end.clone().sub(side)];
-      const u0 = tile * 0.5;
-      const uvs = [[u0, 0], [u0 + 0.5, 0], [u0 + 0.5, 1], [u0, 1]];
+      const u0 = tile / TILES;
+      const u1 = (tile + 1) / TILES;
+      const uvs = [[u0, 0], [u1, 0], [u1, 1], [u0, 1]];
       out.copy(colour);
+      const phase = hash3(centre.x, centre.y, centre.z);
       [0, 1, 2, 0, 2, 3].forEach((i) => {
         pos.push(corners[i].x, corners[i].y, corners[i].z);
         nrm.push(normal.x, normal.y, normal.z);
         col.push(out.r, out.g, out.b);
         uv.push(...uvs[i]);
+        flap.push(i > 1 ? size : 0, phase);
       });
     },
     build() {
@@ -585,6 +620,7 @@ const cardShell = () => {
       g.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
       g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
       g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+      g.setAttribute("aLeaf", new THREE.Float32BufferAttribute(flap, 2));
       return g;
     },
   };
@@ -674,7 +710,7 @@ const roundTreeGeo = (seed) => {
     [Math.cos(a + 3.6) * 0.75, 1.72, Math.sin(a + 3.6) * 0.75, 0.5],
   ];
   const shell = cardShell();
-  crown.forEach(([x, y, z, r], k) => leafBall(shell, V(x, y, z), V(r, r * 0.86, r), 0.42, LEAF, seed * 7 + k));
+  crown.forEach(([x, y, z, r], k) => leafBall(shell, V(x, y, z), V(r, r * 0.86, r), 0.3, LEAF, seed * 7 + k, TWIG_TILE));
   const core = gradeY(
     combine([
       limb(V(0, -0.1, 0), fork, 0.2, 0.13, 0.9),
@@ -739,7 +775,7 @@ const bushParts = (seed) => {
   const c = V(0, 0.26, 0);
   const r = V(0.62, 0.48, 0.62);
   const shell = cardShell();
-  leafBall(shell, c, r, 0.3, BUSH_LEAF, seed * 5 + 1, LEAF_TILE, -0.35);
+  leafBall(shell, c, r, 0.26, BUSH_LEAF, seed * 5 + 1, LEAF_TILE, -0.35);
   return swayPair(coreBall(c, r, LEAF_CORE, seed), shell.build());
 };
 
@@ -794,8 +830,45 @@ export const makeRamp = (levels = [100, 176, 255], edges = [0.5, 0.63], blend = 
   return ramp;
 };
 
-/* Atmosphere on every lit surface: crisp-edged cloud shadows drift over the island, and ground right at the sea
-   takes a light cool haze, so the levels read as height. */
+/* Lamp light: each lantern (and the campfire) lights a warm pool around it, a sphere (x, y, z, radius) with a soft
+   squared falloff. buildIsland fills the list and flickers the radii. */
+const LAMPS = 24;
+export const lampLights = { value: Array.from({ length: LAMPS }, () => new THREE.Vector4(0, -999, 0, 1)) };
+const LAMP_GLSL = [
+  `uniform vec4 lampLights[${LAMPS}];`,
+  "float lampAt(vec3 p){",
+  "  float k = 0.0;",
+  `  for (int i = 0; i < ${LAMPS}; i++) {`,
+  "    vec3 d = p - lampLights[i].xyz;",
+  "    float f = max(0.0, 1.0 - dot(d, d) / (lampLights[i].w * lampLights[i].w));",
+  "    k += f * f;",
+  "  }",
+  "  return k;",
+  "}",
+  "const vec3 LAMP_COLOUR = vec3(1.0, 0.62, 0.28);",
+].join("\n");
+const LAMP_LIGHT = "outgoingLight += (diffuseColor.rgb * 0.75 + 0.025) * LAMP_COLOUR * lampAt(LAMP_POS);";
+
+/* Lamp light for materials that skip atmos (Niko) */
+export const lamped = (material) => {
+  const previous = material.onBeforeCompile;
+  const key = material.customProgramCacheKey?.() || "";
+  material.onBeforeCompile = (shader, renderer) => {
+    previous?.(shader, renderer);
+    shader.uniforms.lampLights = lampLights;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vLampPos;")
+      .replace("#include <fog_vertex>", "vLampPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\n#include <fog_vertex>");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>\nvarying vec3 vLampPos;\n${LAMP_GLSL}`)
+      .replace("#include <opaque_fragment>", `${LAMP_LIGHT.replace("LAMP_POS", "vLampPos")}\n#include <opaque_fragment>`);
+  };
+  material.customProgramCacheKey = () => `${key}-lamp`;
+  return material;
+};
+
+/* Atmosphere on every lit surface: crisp-edged cloud shadows drift over the island, ground right at the sea takes
+   a light cool haze, so the levels read as height, and the lamps light their surroundings. */
 export const atmosTime = { value: 0 };
 export const atmos = (material) => {
   const previous = material.onBeforeCompile;
@@ -803,6 +876,7 @@ export const atmos = (material) => {
   material.onBeforeCompile = (shader, renderer) => {
     previous?.(shader, renderer);
     shader.uniforms.atmosTime = atmosTime;
+    shader.uniforms.lampLights = lampLights;
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vAtmos;")
       .replace(
@@ -819,6 +893,7 @@ export const atmos = (material) => {
           "float atmosHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
           "float atmosNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
           "  return mix(mix(atmosHash(i), atmosHash(i + vec2(1.0, 0.0)), f.x), mix(atmosHash(i + vec2(0.0, 1.0)), atmosHash(i + vec2(1.0, 1.0)), f.x), f.y); }",
+          LAMP_GLSL,
         ].join("\n")
       )
       .replace(
@@ -829,6 +904,7 @@ export const atmos = (material) => {
           "  float cloud = atmosNoise(cp) * 0.65 + atmosNoise(cp * 2.3 + 7.3) * 0.35;",
           "  float shade = smoothstep(0.6, 0.63, cloud);",
           "  outgoingLight *= mix(vec3(1.0), vec3(0.74, 0.8, 0.95), shade * 0.7);",
+          `  ${LAMP_LIGHT.replace("LAMP_POS", "vAtmos")}`,
           "  float low = 1.0 - smoothstep(-1.2, 1.6, vAtmos.y);",
           "  outgoingLight = mix(outgoingLight, outgoingLight * vec3(0.72, 0.84, 0.98) + vec3(0.01, 0.04, 0.07), low * 0.45);",
           "}",
@@ -849,13 +925,15 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   const ramp = makeRamp();
   const painted = atmos(withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: ramp }), 0.06));
   const paintedProps = atmos(occlude(withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: ramp }), 0.06)));
+  /* Lantern glass, lit windows, shrine stars: brighter than white, so the bloom spreads them */
   const glowing = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
+  glowing.color.setScalar(2.4);
 
   const bake = makeBake();
   const glowBake = makeBake();
   const leafBake = makeBake();
   const leafTex = foliageTexture();
-  const leafMaterial = atmos(occlude(windSway(new THREE.MeshToonMaterial({ vertexColors: true, map: leafTex, alphaTest: 0.5, side: THREE.DoubleSide, gradientMap: ramp }))));
+  const leafMaterial = atmos(occlude(windSway(new THREE.MeshToonMaterial({ vertexColors: true, map: leafTex, alphaTest: 0.5, side: THREE.DoubleSide, gradientMap: ramp }), true)));
   const leafDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: leafTex, alphaTest: 0.5, side: THREE.DoubleSide });
   /* A tree or bush: its core into the props, its leaf cards into the leaf mesh, swaying together */
   const plant = (model, matrix, vary, seed, sway) => {
@@ -1369,7 +1447,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     const flame = new THREE.Group();
     flame.position.set(fire.x, fire.h + 0.24, fire.z);
     [["#ff8a3c", 0.42, 1.05], ["#ffd36a", 0.26, 0.72]].forEach(([c, r, hgt]) => {
-      const m = new THREE.Mesh(G.cone, new THREE.MeshBasicMaterial({ color: c, toneMapped: false }));
+      const m = new THREE.Mesh(G.cone, new THREE.MeshBasicMaterial({ color: new THREE.Color(c).multiplyScalar(2.2), toneMapped: false }));
       m.scale.set(r, hgt, r);
       m.position.y = hgt / 2;
       flame.add(m);
@@ -1726,9 +1804,89 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   /* Grass, after the Pixel_Pass field: leaf cards that always face the camera, rooted on the ground and painted the
      ground's own colour, lit as if they were the ground at their base (up normal, the base's shadow and cloud), so the
      meadow reads as one surface that ruffles at its edges. Wind rolls each card in its plane from two scrolling noises;
-     Niko tips the cards away from him. Sized from Niko (2.5 units tall): a tuft is about a fifth of his height. */
+     Niko tramples them (trail below). Sized from Niko (2.5 units tall): a tuft is about a fifth of his height. */
   const player = new THREE.Vector3(999, 0, 999);
   const swayUniforms = { time: windTime, player: { value: player } };
+
+  /* Trampled grass: Niko's feet stamp a trail map over the whole island (rg = push direction × amount, b = amount).
+     Blades fold over away from his feet and the way he walks, stay down while he stands on them and spring back
+     over a couple of seconds once he leaves. One small render-target pass per frame, skipped once it has faded. */
+  const trail = (() => {
+    const res = coarse ? 192 : 256;
+    const span = size * cell;
+    const make = () => {
+      const t = new THREE.WebGLRenderTarget(res, res, { type: THREE.HalfFloatType, depthBuffer: false });
+      t.texture.minFilter = t.texture.magFilter = THREE.LinearFilter;
+      t.texture.generateMipmaps = false;
+      return t;
+    };
+    let read = make();
+    let write = make();
+    const uniforms = {
+      prev: { value: null },
+      foot: { value: new THREE.Vector2(9999, 9999) },
+      move: { value: new THREE.Vector2() },
+      radius: { value: 1 },
+      decay: { value: 1 },
+      lo: { value: min },
+      span: { value: span },
+    };
+    const material = new THREE.ShaderMaterial({
+      uniforms,
+      depthTest: false,
+      depthWrite: false,
+      vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+      fragmentShader: [
+        "uniform sampler2D prev; uniform vec2 foot; uniform vec2 move; uniform float radius; uniform float decay;",
+        "uniform float lo; uniform float span; varying vec2 vUv;",
+        "void main(){",
+        "  vec4 p = texture2D(prev, vUv) * decay;",
+        "  vec2 d = lo + vUv * span - foot;",
+        "  float hit = smoothstep(radius, radius * 0.3, length(d));",
+        "  if (hit > p.b) {",
+        "    vec2 dir = normalize(normalize(d + vec2(1e-4, 0.0)) * 0.7 + move);",
+        "    p = vec4(dir * hit, hit, 1.0);",
+        "  }",
+        "  gl_FragColor = p;",
+        "}",
+      ].join("\n"),
+    });
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+    quad.frustumCulled = false;
+    const stage = new THREE.Scene();
+    stage.add(quad);
+    const eye = new THREE.Camera();
+    const last = new THREE.Vector3();
+    let idle = 99;
+    const map = { value: read.texture };
+    return {
+      map,
+      lo: { value: min },
+      span: { value: span },
+      step(renderer, dt, foot) {
+        const on = Boolean(foot) && Math.abs(foot.y - MAP.groundAt(foot.x, foot.z)) < 0.35;
+        idle = on ? 0 : idle + dt;
+        if (!renderer || idle > 8) return;
+        uniforms.decay.value = Math.exp(-dt * 0.9);
+        if (on) {
+          const mx = foot.x - last.x;
+          const mz = foot.z - last.z;
+          const speed = Math.hypot(mx, mz) / Math.max(dt, 1e-3);
+          const along = speed > 0.3 && speed < 40 ? Math.min(1, speed / 4) / Math.hypot(mx, mz) : 0;
+          uniforms.foot.value.set(foot.x, foot.z);
+          uniforms.move.value.set(mx * along, mz * along);
+          last.copy(foot);
+        } else uniforms.foot.value.set(9999, 9999);
+        uniforms.prev.value = read.texture;
+        const before = renderer.getRenderTarget();
+        renderer.setRenderTarget(write);
+        renderer.render(stage, eye);
+        renderer.setRenderTarget(before);
+        [read, write] = [write, read];
+        map.value = read.texture;
+      },
+    };
+  })();
   {
     const blocked = new Uint8Array(size * size);
     blockers.forEach(({ x, z, r }) => {
@@ -1815,6 +1973,9 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     material.onBeforeCompile = (shader) => {
       shader.uniforms.time = swayUniforms.time;
       shader.uniforms.player = swayUniforms.player;
+      shader.uniforms.trailMap = trail.map;
+      shader.uniforms.trailLo = trail.lo;
+      shader.uniforms.trailSpan = trail.span;
       shader.uniforms.leafTex = { value: leafTex };
       shader.uniforms.accentTex = { value: accentTex };
       shader.vertexShader = shader.vertexShader
@@ -1824,9 +1985,13 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
             "#include <common>",
             "uniform float time;",
             "uniform vec3 player;",
+            "uniform sampler2D trailMap;",
+            "uniform float trailLo;",
+            "uniform float trailSpan;",
             "attribute vec2 aGrass;",
             "varying vec4 vGrass;",
             "varying float vGust;",
+            "varying float vPress;",
             "float grassHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
             "float grassNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
             "  return mix(mix(grassHash(i), grassHash(i + vec2(1.0, 0.0)), f.x), mix(grassHash(i + vec2(0.0, 1.0)), grassHash(i + vec2(1.0, 1.0)), f.x), f.y); }",
@@ -1847,14 +2012,17 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
             "vec3 camFwd = -vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);",
             "vec2 fwd = normalize(camFwd.xz + 1e-5);",
             "vec2 perp = vec2(fwd.y, -fwd.x);",
-            /* Niko pushes the cards over (roll) and flattens the ones in front of or behind him */
-            "vec2 toGrass = origin.xz - player.xz;",
-            "float strength = pow(clamp(1.0 - length(toGrass) / 1.5, 0.0, 1.0), 0.9) * step(abs(origin.y - player.y), 1.2);",
-            "vec2 dirG = normalize(toGrass + 1e-5);",
-            "float pushX = clamp(strength * dot(perp, dirG), -1.0, 1.0);",
-            "float pushY = clamp(strength * dot(fwd, dirG), -1.0, 1.0);",
-            "card = grassRotate(card, pushX * radians(60.0));",
-            "card.y *= cos(pushY * radians(62.7));",
+            /* Trampled: the trail folds the card over along its push (a roll where that points across the screen, a
+               squash where it points into it) and the blade quivers as it springs back */
+            "vec4 trail = texture2D(trailMap, (origin.xz - trailLo) / trailSpan);",
+            "float press = clamp(trail.b, 0.0, 1.0);",
+            "vec2 dirG = press > 0.01 ? trail.rg / trail.b : vec2(0.0);",
+            "float pushX = clamp(dot(perp, dirG), -1.0, 1.0) * press;",
+            "float pushY = abs(dot(fwd, dirG)) * press;",
+            "float quiver = sin(time * 11.0 + aGrass.x * 6.283) * press * (1.0 - press) * 0.5;",
+            "card = grassRotate(card, (pushX + quiver * 0.3) * radians(80.0));",
+            "card.y *= 1.0 - press * 0.45 - pushY * 0.35;",
+            "vPress = press;",
             /* Wind blows one way across the island: broad gust bands, stretched across the wind and broken up by a
                second noise, roll downwind over the meadow, with a small per-blade flutter on top. Every card leans
                downwind a little; a passing gust pushes it over and lightens its tip. */
@@ -1878,7 +2046,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
           ].join("\n")
         );
       shader.fragmentShader = shader.fragmentShader
-        .replace("#include <common>", "#include <common>\nuniform sampler2D leafTex;\nuniform sampler2D accentTex;\nvarying vec4 vGrass;\nvarying float vGust;")
+        .replace("#include <common>", "#include <common>\nuniform sampler2D leafTex;\nuniform sampler2D accentTex;\nvarying vec4 vGrass;\nvarying float vGust;\nvarying float vPress;")
         .replace(
           "#include <alphatest_fragment>",
           [
@@ -1888,7 +2056,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
             "  float leaf = vGrass.w > 0.5 ? texture2D(accentTex, leafUv).a : texture2D(leafTex, leafUv).a;",
             "  if (leaf < 0.5) discard;",
             "  float tip = smoothstep(0.15, 0.95, vGrass.y);",
-            "  diffuseColor.rgb *= mix(0.8, 1.14, tip) + vGust * tip * 0.12;",
+            "  diffuseColor.rgb *= (mix(0.8, 1.14, tip) + vGust * tip * 0.12) * (1.0 - vPress * 0.14);",
             "}",
           ].join("\n")
         )
@@ -2324,8 +2492,20 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     },
   };
 
+  /* Light pools: lanterns low enough that the ground under them is lit, the campfire wider */
+  const lampSpots = [
+    ...lanterns.map((p) => [p.x, p.y - 1.4, p.z, 3.4]),
+    ...fires.map((f) => [f.position.x, f.position.y + 0.9, f.position.z, 3.6]),
+  ].slice(0, LAMPS);
+  lampSpots.forEach(([x, y, z, r], k) => lampLights.value[k].set(x, y, z, r));
+
   /* Everything that moves on its own */
-  const update = (dt, time, robot) => {
+  const update = (dt, time, robot, renderer) => {
+    trail.step(renderer, dt, robot);
+    lampSpots.forEach(([, , , r], k) => {
+      const fire = k >= lanterns.length ? Math.sin(time * 17 + k) * 0.035 + Math.sin(time * 9.3) * 0.03 : 0;
+      lampLights.value[k].w = r * (1 + Math.sin(time * 7.1 + k * 1.7) * 0.02 + Math.sin(time * 12.3 + k) * 0.012 + fire);
+    });
     waterUniforms.time.value = time;
     flowUniforms.time.value = time;
     swayUniforms.time.value = time;

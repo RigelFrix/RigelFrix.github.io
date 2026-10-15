@@ -6,8 +6,9 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import nikoGlb from "./assets/niko.glb";
 import nikoEyesUrl from "./assets/niko-eyes.png";
-import { atmos, buildIsland, ISLE, makeRamp, occlude, seeThrough } from "./world-island.js";
+import { atmos, buildIsland, ISLE, lamped, makeRamp, occlude, seeThrough } from "./world-island.js";
 import { lay, toXZ } from "./world-map.js";
+import { windLines } from "./world-wind.js";
 
 const root = document.documentElement;
 const host = document.getElementById("world");
@@ -198,11 +199,15 @@ async function start() {
      creases (rock and cliff edges, steps) with a light edge. With `pixel` > 1 the target is that many times smaller and
      scaled up unfiltered, and the camera snaps to whole texels (the remainder slides the image) so nothing shimmers.
      Off by default (the painted look keeps edges soft); ?fx=1 turns it on, ?pixel=3 pixelates. Grass writes alpha 0.99
-     so its blades get no crease highlight. */
+     so its blades get no crease highlight.
+     Bloom (on unless ?bloom=0): the target is half float, so glows (lanterns, the fire, gems, stars) can be brighter than
+     white. Whatever passes `threshold` is pulled out, halved down a mip chain and tent-filtered back up (dual filter),
+     then added over the image, so bright things spill a soft light onto what is around them. */
   const post = (() => {
     const params = new URLSearchParams(location.search);
     const pixel = Math.max(1, Math.round(+params.get("pixel") || 1));
-    const state = { on: params.get("fx") === "1" || pixel > 1, pixel };
+    const state = { on: params.get("fx") === "1" || pixel > 1, pixel, bloom: params.get("bloom") !== "0" };
+    const active = () => state.on || state.bloom;
     const size = new THREE.Vector2();
     let target = null;
     const makeTarget = () => {
@@ -227,6 +232,9 @@ async function start() {
         ink: { value: 1 },
         lift: { value: 1 },
         reach: { value: 1 },
+        edges: { value: 0 },
+        tBloom: { value: null },
+        bloomStrength: { value: 0 },
       },
       depthTest: false,
       depthWrite: false,
@@ -235,10 +243,13 @@ async function start() {
       fragmentShader: [
         "uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec4 res; uniform vec2 span; uniform vec2 range;",
         "uniform vec2 shift; uniform float ink; uniform float lift; uniform float reach; varying vec2 vUv;",
+        "uniform float edges; uniform sampler2D tBloom; uniform float bloomStrength;",
         "float depthAt(vec2 uv){ return range.x + texture2D(tDepth, uv).r * (range.y - range.x); }",
         "void main(){",
         "  vec2 uv = vUv + shift;",
         "  vec4 colour = texture2D(tColor, uv);",
+        "  float grass = step(abs(colour.a - 0.99), 0.004);",
+        "  if (edges > 0.5) {",
         "  float d = depthAt(uv);",
         "  vec2 o = res.zw * reach;",
         "  float l = depthAt(uv - vec2(o.x, 0.0));",
@@ -252,12 +263,16 @@ async function start() {
         "  float texel = span.y * res.w * reach;",
         "  float near = max(max(abs(l - d), abs(r - d)), max(abs(b - d), abs(t - d)));",
         "  float crease = (l + r + b + t) * 0.25 - d;",
-        "  float grass = step(abs(colour.a - 0.99), 0.004);",
         "  float edge = smoothstep(texel * 0.3, texel * 0.6, crease) * step(near, 0.9) * (1.0 - grass) * (1.0 - outline);",
         "  colour.rgb *= 1.0 + edge * 0.35 * lift;",
         "  colour.rgb = mix(colour.rgb, colour.rgb * vec3(0.3, 0.32, 0.5), outline * 0.9 * ink);",
-        "  if (grass > 0.5) colour.a = 1.0;",
         "  if (ink > 5.0) colour = vec4(fract(d * 0.1), outline, edge, 1.0);",
+        "  }",
+        "  if (grass > 0.5) colour.a = 1.0;",
+        /* The sky is CSS behind a transparent canvas: bloom over it raises the alpha, so it reads as light on the sky */
+        "  vec3 bloom = texture2D(tBloom, uv).rgb * bloomStrength;",
+        "  colour.rgb += bloom;",
+        "  colour.a = max(colour.a, clamp(max(bloom.r, max(bloom.g, bloom.b)), 0.0, 1.0));",
         "  gl_FragColor = colour;",
         "  #include <colorspace_fragment>",
         "}",
@@ -268,6 +283,97 @@ async function start() {
     const quadScene = new THREE.Scene();
     quadScene.add(quad);
     const quadCamera = new THREE.Camera();
+    const draw = (shader, out) => {
+      quad.material = shader;
+      renderer.setRenderTarget(out);
+      renderer.render(quadScene, quadCamera);
+    };
+
+    const bloom = (() => {
+      const levels = coarse ? 4 : 5;
+      const make = () => {
+        const t = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
+        t.texture.minFilter = t.texture.magFilter = THREE.LinearFilter;
+        t.texture.generateMipmaps = false;
+        return t;
+      };
+      const down = Array.from({ length: levels }, make);
+      const up = Array.from({ length: levels - 1 }, make);
+      const vertexShader = "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }";
+      const pass = (fragmentShader, uniforms) =>
+        new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader, depthTest: false, depthWrite: false, blending: THREE.NoBlending });
+      /* Halve: a 4x4 box from five bilinear taps; the first level keeps only what is brighter than the threshold */
+      const shrink = pass(
+        [
+          "uniform sampler2D tSrc; uniform vec2 texel; uniform vec3 cut; varying vec2 vUv;",
+          "vec3 tap(vec2 uv){",
+          "  vec3 c = texture2D(tSrc, uv).rgb;",
+          "  if (cut.z < 0.5) return c;",
+          "  float bright = max(c.r, max(c.g, c.b));",
+          "  float soft = clamp(bright - cut.x + cut.y, 0.0, 2.0 * cut.y);",
+          "  soft = soft * soft / (4.0 * cut.y + 1e-4);",
+          "  return c * max(soft, bright - cut.x) / max(bright, 1e-4);",
+          "}",
+          "void main(){",
+          "  vec3 sum = tap(vUv) * 4.0;",
+          "  sum += tap(vUv + texel * vec2(-1.0, -1.0)) + tap(vUv + texel * vec2(1.0, -1.0));",
+          "  sum += tap(vUv + texel * vec2(-1.0, 1.0)) + tap(vUv + texel * vec2(1.0, 1.0));",
+          "  gl_FragColor = vec4(sum / 8.0, 1.0);",
+          "}",
+        ].join("\n"),
+        { tSrc: { value: null }, texel: { value: new THREE.Vector2() }, cut: { value: new THREE.Vector3() } }
+      );
+      /* Double: a tent filter over the smaller level, added onto this level's own halved image */
+      const grow = pass(
+        [
+          "uniform sampler2D tSrc; uniform sampler2D tBase; uniform vec2 texel; varying vec2 vUv;",
+          "void main(){",
+          "  vec2 h = texel;",
+          "  vec3 sum = texture2D(tSrc, vUv + vec2(-2.0 * h.x, 0.0)).rgb + texture2D(tSrc, vUv + vec2(2.0 * h.x, 0.0)).rgb;",
+          "  sum += texture2D(tSrc, vUv + vec2(0.0, -2.0 * h.y)).rgb + texture2D(tSrc, vUv + vec2(0.0, 2.0 * h.y)).rgb;",
+          "  sum += (texture2D(tSrc, vUv + vec2(-h.x, -h.y)).rgb + texture2D(tSrc, vUv + vec2(h.x, -h.y)).rgb) * 2.0;",
+          "  sum += (texture2D(tSrc, vUv + vec2(-h.x, h.y)).rgb + texture2D(tSrc, vUv + vec2(h.x, h.y)).rgb) * 2.0;",
+          "  gl_FragColor = vec4(texture2D(tBase, vUv).rgb + sum / 12.0, 1.0);",
+          "}",
+        ].join("\n"),
+        { tSrc: { value: null }, tBase: { value: null }, texel: { value: new THREE.Vector2() } }
+      );
+      const settings = { threshold: 1, knee: 0.35, strength: 0.32 };
+      const sized = new THREE.Vector2();
+      return {
+        settings,
+        fit(w, h) {
+          if (sized.x === w && sized.y === h) return;
+          sized.set(w, h);
+          down.forEach((t, k) => t.setSize(Math.max(1, w >> (k + 1)), Math.max(1, h >> (k + 1))));
+          up.forEach((t, k) => t.setSize(Math.max(1, w >> (k + 1)), Math.max(1, h >> (k + 1))));
+        },
+        /* Returns the bloom texture (half the size of `source`) */
+        run(source, w, h) {
+          this.fit(w, h);
+          const s = shrink.uniforms;
+          s.cut.value.set(settings.threshold, settings.knee, 1);
+          s.tSrc.value = source;
+          s.texel.value.set(1 / w, 1 / h);
+          draw(shrink, down[0]);
+          s.cut.value.z = 0;
+          for (let k = 1; k < levels; k += 1) {
+            s.tSrc.value = down[k - 1].texture;
+            s.texel.value.set(1 / down[k - 1].width, 1 / down[k - 1].height);
+            draw(shrink, down[k]);
+          }
+          const g = grow.uniforms;
+          for (let k = levels - 2; k >= 0; k -= 1) {
+            const from = k === levels - 2 ? down[k + 1] : up[k + 1];
+            g.tSrc.value = from.texture;
+            g.tBase.value = down[k].texture;
+            g.texel.value.set(1 / from.width, 1 / from.height);
+            draw(grow, up[k]);
+          }
+          return up[0].texture;
+        },
+      };
+    })();
     const drawing = new THREE.Vector2();
     const right = new THREE.Vector3();
     const up = new THREE.Vector3();
@@ -293,7 +399,7 @@ async function start() {
       },
       /* Shaders compile per output target, so warm-up has to aim at the same target the frames will use */
       bind() {
-        if (!state.on) return;
+        if (!active()) return;
         if (!target) makeTarget();
         this.fit();
         renderer.setRenderTarget(target);
@@ -308,7 +414,7 @@ async function start() {
         }
       },
       render() {
-        if (!state.on) {
+        if (!active()) {
           renderer.render(scene, camera);
           return;
         }
@@ -324,21 +430,25 @@ async function start() {
         u.range.value.set(camera.near, camera.far);
         u.tColor.value = target.texture;
         u.tDepth.value = target.depthTexture;
+        u.edges.value = state.on ? 1 : 0;
         renderer.setRenderTarget(target);
         renderer.render(scene, camera);
-        renderer.setRenderTarget(null);
-        renderer.render(quadScene, quadCamera);
+        u.tBloom.value = state.bloom ? bloom.run(target.texture, w, h) : null;
+        u.bloomStrength.value = state.bloom ? bloom.settings.strength : 0;
+        draw(material, null);
       },
       set(options = {}) {
         const pixel = options.pixel == null ? state.pixel : Math.max(1, Math.round(options.pixel));
         if (options.on != null) state.on = options.on;
+        if (options.bloom != null) state.bloom = options.bloom;
+        ["threshold", "knee", "strength"].forEach((key) => options[key] != null && (bloom.settings[key] = options[key]));
         if (options.ink != null) material.uniforms.ink.value = options.ink;
         if (options.lift != null) material.uniforms.lift.value = options.lift;
         if (pixel !== state.pixel) {
           state.pixel = pixel;
           makeTarget();
         }
-        return { ...state, ink: material.uniforms.ink.value, lift: material.uniforms.lift.value };
+        return { ...state, ...bloom.settings, ink: material.uniforms.ink.value, lift: material.uniforms.lift.value };
       },
     };
   })();
@@ -408,7 +518,7 @@ async function start() {
   const flatToon = new Map();
   const toon = (color) => {
     if (!toonCache.has(color)) {
-      const material = withRim(new THREE.MeshToonMaterial({ color, gradientMap: ramp }));
+      const material = lamped(withRim(new THREE.MeshToonMaterial({ color, gradientMap: ramp })));
       toonCache.set(color, material);
       flatToon.set(material, "toon");
     }
@@ -424,8 +534,10 @@ async function start() {
     return softCache.get(color);
   };
   const softMapped = (map) => atmos(withRim(new THREE.MeshToonMaterial({ map, gradientMap: softRamp }), 0.06));
-  const glow = (color) => {
+  /* `power` above 1 makes a light source: brighter than white, so bloom spreads it */
+  const glow = (color, power = 1) => {
     const material = new THREE.MeshBasicMaterial({ color, toneMapped: false });
+    material.color.multiplyScalar(power);
     material.userData.flatGlow = true;
     return material;
   };
@@ -451,7 +563,7 @@ async function start() {
      colours moved into vertex colours. Anything under a node marked userData.live (spinning gems, the mailbox flag)
      keeps its own mesh so it can still move. */
   const painted = {
-    toon: withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: ramp })),
+    toon: lamped(withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: ramp }))),
     soft: atmos(occlude(withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: softRamp }), 0.06))),
     glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
   };
@@ -654,6 +766,8 @@ async function start() {
         ];
       }),
   });
+  const wind = calm ? null : windLines({ scene, groundAt: island.groundAt, count: coarse ? 4 : 6 });
+  const windPixels = new THREE.Vector2();
 
   /* World objects */
 
@@ -672,7 +786,7 @@ async function start() {
       part(g, box(2.06, 0.38, 0.86, 0.08), soft(ISLE.ruin), 0, 3.4, -0.05);
       const cap = part(g, new THREE.ConeGeometry(0.66, 0.6, 4), soft(ISLE.ruin), 0, 3.88, -0.05);
       cap.rotation.y = Math.PI / 4;
-      flat(g, new THREE.OctahedronGeometry(0.2), glow(trim), 0, 3.88, 0.28);
+      flat(g, new THREE.OctahedronGeometry(0.2), glow(trim, 2.2), 0, 3.88, 0.28);
 
       flat(g, new THREE.PlaneGeometry(1.52, 1.12), glow(trim), 0, 2.08, 0.285);
       const screenMat = project?.select?.tile
@@ -748,7 +862,7 @@ async function start() {
       [-0.95, 0, 0.95].forEach((x, i) => {
         part(g, new THREE.CylinderGeometry(0.3, 0.4, 0.9, 8), soft(ISLE.ruin), x, 0.45, 0);
         part(g, new THREE.CylinderGeometry(0.36, 0.36, 0.08, 8), soft(ISLE.ruinDeep), x, 0.93, 0);
-        const gem = part(g, gems[i], glow(gemColours[i]), x, 1.36, 0);
+        const gem = part(g, gems[i], glow(gemColours[i], 1.8), x, 1.36, 0);
         gem.userData.live = true;
         gem.castShadow = false;
         spinners.push({ mesh: gem, base: 1.36, offset: i * 1.7 });
@@ -771,7 +885,7 @@ async function start() {
         part(s, box(1.0, stone.h, 0.5, 0.08), soft(i === 1 ? ISLE.rockLight : ISLE.rock), 0, stone.h / 2, 0);
         part(s, box(1.12, 0.2, 0.62, 0.04), soft(ISLE.ruinDeep), 0, 0.1, 0);
         flat(s, new THREE.PlaneGeometry(0.88, 0.3), softMapped(textTexture(stone.text, { bg: ISLE.ruin, fg: "#3b3848", width: 512, height: 160 })), 0, stone.h * 0.62, 0.255);
-        flat(s, new THREE.OctahedronGeometry(0.13), glow(ISLE.star), 0, stone.h + 0.2, 0);
+        flat(s, new THREE.OctahedronGeometry(0.13), glow(ISLE.star, 2.2), 0, stone.h + 0.2, 0);
       });
       return { group: g, labelY: 3.4, radius: 1.6, reach: 2.0 };
     },
@@ -1135,7 +1249,7 @@ async function start() {
     body.add(lantern);
     part(lantern, tube(0.008, 0.008, 0.06, 4), mat(NIKO.brownDeep), 0, -0.03, 0);
     part(lantern, facet(new THREE.ConeGeometry(0.075, 0.06, 6)), mat(NIKO.brownDeep), 0, -0.08, 0);
-    const bulb = flat(lantern, new THREE.CylinderGeometry(0.05, 0.05, 0.11, 6), glow("#ffd27a"), 0, -0.165, 0);
+    const bulb = flat(lantern, new THREE.CylinderGeometry(0.05, 0.05, 0.11, 6), glow("#ffd27a", 2.5), 0, -0.165, 0);
     [0, 1, 2].forEach((i) => {
       const a = (i / 3) * Math.PI * 2 + Math.PI / 6;
       part(lantern, new THREE.BoxGeometry(0.014, 0.12, 0.014), mat(NIKO.brownDeep), Math.sin(a) * 0.054, -0.165, Math.cos(a) * 0.054);
@@ -1450,7 +1564,7 @@ async function start() {
     /* The fallen star, now a small companion that floats beside him */
     const buddy = new THREE.Group();
     robot.add(buddy);
-    const buddyStar = flat(buddy, starGeo(0.14, 0.04, 0.05), glow("#ffe08a"), 0, 0, 0);
+    const buddyStar = flat(buddy, starGeo(0.14, 0.04, 0.05), glow("#ffe08a", 1.6), 0, 0, 0);
     halo(buddy, { color: "#ffcf5a", size: 1.1, opacity: 0.55 });
     halo(buddy, { color: "#9fc0ff", size: 0.5, opacity: 0.35 });
 
@@ -1626,7 +1740,7 @@ async function start() {
       eye: eyeMaterial(eyeAtlas, row, "eye", { lift: 0.08 }),
       brows: [eyeMaterial(eyeAtlas, row, "brow"), eyeMaterial(eyeAtlas, row, "brow", { lift: 0.08, opacity: 0.4 })],
     }));
-    const lining = withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: ramp }));
+    const lining = lamped(withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: ramp })));
     const ink = inkMaterial(0.0038);
     /* No outline on the bang edges around the eye cut-outs: at game size they framed the eyes like goggles */
     const aroundEyes = (x, y, z) => z > 0.06 && y > 0.26 && y < 0.355 && Math.abs(x) < 0.11;
@@ -1648,7 +1762,7 @@ async function start() {
       if (name === "face") {
         mesh.material = faceMat;
         mesh.renderOrder = -1;
-      } else if (name === "glow") mesh.material = glow("#ffe7a0");
+      } else if (name === "glow") mesh.material = glow("#ffe7a0", 2.4);
       else if (name === "lining") mesh.material = lining;
       else mesh.material = toon(`#${mesh.material.color.getHexString()}`);
       mesh.castShadow = false;
@@ -2576,7 +2690,7 @@ async function start() {
       }
     }
 
-    island.update(dt, calm ? 0 : time, robot.visible ? robot.position : null);
+    island.update(dt, calm ? 0 : time, robot.visible ? robot.position : null, renderer);
     if (shrineStar.visible) {
       shrineStar.position.y = island.shrine.y + 4.6 + (calm ? 0 : Math.sin(time * 1.4) * 0.18);
       shrineStar.material.rotation = calm ? 0 : Math.sin(time * 0.5) * 0.15;
@@ -2597,6 +2711,10 @@ async function start() {
     camera.lookAt(camLook);
     camera.updateMatrixWorld();
     post.snap();
+    if (wind) {
+      renderer.getDrawingBufferSize(windPixels);
+      wind.update(dt, { camera, level: camLook.y, pixels: windPixels, ratio: renderer.getPixelRatio(), on: started && !introLive });
+    }
     if (robot.visible) seeThrough.playerView.value.set(robot.position.x, robot.position.y + 0.95, robot.position.z).applyMatrix4(camera.matrixWorldInverse);
     else seeThrough.playerView.value.set(0, 0, -9999);
 
@@ -2628,11 +2746,16 @@ async function start() {
     const average = (quality.time / quality.frames) * 1000;
     quality.time = 0;
     quality.frames = 0;
-    if (average > 22 && quality.ratio > 0.75) setRatio(Math.max(0.75, quality.ratio - 0.25));
+    if (average <= 22) return;
+    /* Resolution goes first down to 1x, then bloom, then the last step to 0.75x */
+    if (quality.ratio > 1) setRatio(Math.max(1, quality.ratio - 0.25));
+    else if (post.state.bloom) post.set({ bloom: false });
+    else if (quality.ratio > 0.75) setRatio(0.75);
   };
 
   renderer.setAnimationLoop((now) => {
-    const dt = Math.min((now - last) / 1000, 0.05);
+    /* The frame timestamp can trail performance.now() (settle resets `last` with it), so never step backward */
+    const dt = THREE.MathUtils.clamp((now - last) / 1000, 0, 0.05);
     last = now;
 
     if (overlayOpen()) {
@@ -2725,9 +2848,7 @@ async function start() {
       });
     });
     bakeShadows();
-    post.bind();
-    renderer.render(scene, camera);
-    renderer.setRenderTarget(null);
+    post.render();
     shown.forEach((node) => (node.visible = false));
   };
 
@@ -3119,6 +3240,7 @@ async function start() {
         camera.updateProjectionMatrix();
       },
       finishIntro: () => void finishIntro(),
+      wind: () => wind?.peek(),
       walkable: (x, z) => island.nav.walkable(x, z),
       position: () => robot.position.toArray(),
       route: () => state.path.map((p) => p.toArray().map((n) => +n.toFixed(2))),
