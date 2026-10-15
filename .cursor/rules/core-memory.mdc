@@ -13,7 +13,7 @@ Update this file whenever a task finishes: move items between Done and Open, kee
 - Brand: cobalt #2430E6, ink #0E0C2B, red #F23A2E, yellow #FFC93C, cream #FFF6E0; one 8° slant everywhere; Big Shoulders Display + Rubik. `html.world` overrides the UI vars with a sea/sky palette (cobalt #2f86d6, ink #102b44...); island palette = `ISLE` in world-island.js.
 
 ## Build and test
-- Edit `world.js`, then ALWAYS rebuild: `node .impeccable/tools/build-world.mjs` (esbuild to `world.bundle.js`, stamps `?v=hash` in `index.html`). `.impeccable/` is gitignored.
+- Edit `world.js`, then ALWAYS rebuild: `node .impeccable/tools/build-world.mjs` (esbuild to `world.bundle.js`, stamps `?v=hash` in `index.html`). Repo is private, so `.impeccable/`, `.cursor/`, `.agents/`, docs and sampleModels are tracked; only `.impeccable/review/`, `node_modules/`, `.vercel`, `.env*` are gitignored; `.vercelignore` keeps all dev files off the site. New machine: clone, then `npm install` in `.impeccable/tools`.
 - Server: `python -m http.server 8765 --bind 127.0.0.1` from repo root (start in background; user often stops it).
 - Puppeteer + Edge swiftshader scripts in `.impeccable/tools/`: `intro-check.mjs [base] [outDir must exist] [desktop|mobile|closeup]`, `world-check.mjs [base] [outDir]` (uses `walkTo`, plates are off-screen on the big island), `world-reduced.mjs`, `file-check.mjs`, `island-shots.mjs [base] [prefix] [zoom] "name:u:v,..."`, `walk-trace.mjs <stopId> [u] [v]`, `walk-grid.mjs u0 v0 u1 v1` (ASCII walkable strip), `gl-errors.mjs`. Screens go to `.impeccable/review/`. Debug: `PortfolioWorld.debug.placeUV/zoom/finishIntro/walkable/position/route/bakeShadows`.
 - Gotcha: never return a GSAP object from `page.evaluate` (wrap in `void`), it hangs the protocol.
