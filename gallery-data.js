@@ -191,31 +191,31 @@ window.PROJECT_ALBUMS = [
     media: [
       {
         type: "video",
-        src: "./assets/Games i created from a company/DiJoker _ Play. Win Wild. DiJoker Style. - Opera 2026-04-09 04-10-36.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/dijoker-01.mp4",
         label: "Company capture 01",
         alt: "Company production game capture 01",
       },
       {
         type: "video",
-        src: "./assets/Games i created from a company/DiJoker _ Play. Win Wild. DiJoker Style. - Opera 2026-04-09 04-11-40.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/dijoker-02.mp4",
         label: "Company capture 02",
         alt: "Company production game capture 02",
       },
       {
         type: "video",
-        src: "./assets/Games i created from a company/DiJoker _ Play. Win Wild. DiJoker Style. - Opera 2026-04-09 04-12-55.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/dijoker-03.mp4",
         label: "Company capture 03",
         alt: "Company production game capture 03",
       },
       {
         type: "video",
-        src: "./assets/Games i created from a company/DiJoker _ Play. Win Wild. DiJoker Style. - Opera 2026-04-09 04-13-46.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/dijoker-04.mp4",
         label: "Company capture 04",
         alt: "Company production game capture 04",
       },
       {
         type: "video",
-        src: "./assets/Games i created from a company/DiJoker _ Play. Win Wild. DiJoker Style. - Opera 2026-04-09 04-14-55.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/dijoker-05.mp4",
         label: "Company capture 05",
         alt: "Company production game capture 05",
       },
@@ -250,7 +250,7 @@ window.PROJECT_ALBUMS = [
     media: [
       {
         type: "video",
-        src: "./assets/game 1/327088453_5837725289652355_6039840848180428191_n.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/troublefixit-gameplay.mp4",
         label: "Research support gameplay capture",
         alt: "TroubleFixIt gameplay capture",
       },
@@ -345,7 +345,7 @@ window.PROJECT_ALBUMS = [
     media: [
       {
         type: "video",
-        src: "./assets/game 2/349137502_6044536535615693_960418786072884950_n.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/disaster-game-gameplay.mp4",
         label: "Disaster escape gameplay capture",
         alt: "Disaster Game gameplay capture",
       },
@@ -458,7 +458,7 @@ window.PROJECT_ALBUMS = [
       },
       {
         type: "video",
-        src: "./assets/game 3/463219946_8378020175580017_348565960043939382_n.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/build2connect-gameplay.mp4",
         label: "Build2Connect gameplay capture",
         alt: "Build2Connect gameplay capture",
       },
@@ -494,7 +494,7 @@ window.PROJECT_ALBUMS = [
       },
       {
         type: "video",
-        src: "./assets/game 3/PC Building Game - Cutscene - Android - Unity 2022.3.3f1 _DX11_ 2023-12-25 01-39-26.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/build2connect-cutscene.mp4",
         label: "Build2Connect cutscene capture",
         alt: "Build2Connect cutscene capture",
       },
@@ -539,7 +539,7 @@ window.PROJECT_ALBUMS = [
     media: [
       {
         type: "video",
-        src: "./assets/game 4/3D basketball shooting game 2026-04-13 06-15-57.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/basketball3d-01.mp4",
         poster: "./assets/game 4/screenshot-3.png",
         label: "Gameplay capture 01",
         alt: "3D Basketball Shooting Game gameplay capture 01",
@@ -558,7 +558,7 @@ window.PROJECT_ALBUMS = [
       },
       {
         type: "video",
-        src: "./assets/game 4/3D basketball shooting game 2026-04-13 06-14-16.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/basketball3d-02.mp4",
         poster: "./assets/game 4/screenshot-2.png",
         label: "Gameplay capture 02",
         alt: "3D Basketball Shooting Game gameplay capture 02",
@@ -577,7 +577,7 @@ window.PROJECT_ALBUMS = [
       },
       {
         type: "video",
-        src: "./assets/game 4/3D basketball shooting game - SampleScene - Windows, Mac, Linux - Unity 6.3 LTS (6000.3.10f1)_ _DX12_ 2026-04-12 11-50-39.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/basketball3d-03.mp4",
         poster: "./assets/game 4/screenshot-4.png",
         label: "Gameplay capture 03",
         alt: "3D Basketball Shooting Game gameplay capture 03",
@@ -613,19 +613,19 @@ window.PROJECT_ALBUMS = [
     media: [
       {
         type: "video",
-        src: "./assets/other projects/AQMad2U61PiFBZMb6jHirqcsPWIDenTp_3FFNxYWDu0Fsq0e60iGLXCWLMGOh2you0KNxwJF2Y5E4mq9hKg59-dK.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/prototype-lab-01.mp4",
         label: "R&D capture 01",
         alt: "R&D capture 01",
       },
       {
         type: "video",
-        src: "./assets/other projects/Boobies Trap - Opera 2026-04-06 14-53-05.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/prototype-lab-02.mp4",
         label: "R&D capture 02",
         alt: "R&D capture 02",
       },
       {
         type: "video",
-        src: "./assets/other projects/Pixel_Pass - SampleScene - Windows, Mac, Linux - Unity 6.3 LTS (6000.3.10f1)_ _DX12_ 2026-04-05 03-53-34.mp4",
+        src: "https://rigelfrix.github.io/portfolio-videos/pixel-pass.mp4",
         label: "Pixel Pass capture",
         alt: "Pixel Pass capture",
       },
