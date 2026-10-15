@@ -1396,9 +1396,10 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     fragmentShader: [
       "uniform float time; uniform float strength; varying vec2 vUv; varying float vFace;",
       "void main(){",
-      "  float rise = pow(1.0 - vUv.y, 1.5);",
+      /* MSAA can sample the varyings just past the top edge; pow of a negative is NaN on D3D, and bloom spreads it */
+      "  float rise = pow(clamp(1.0 - vUv.y, 0.0, 1.0), 1.5);",
       "  float shimmer = 0.85 + 0.15 * sin(vUv.y * 40.0 + time * 3.0);",
-      "  float a = pow(vFace, 2.5) * rise * shimmer * strength;",
+      "  float a = pow(clamp(vFace, 0.0, 1.0), 2.5) * rise * shimmer * strength;",
       "  gl_FragColor = vec4(vec3(0.78, 0.9, 1.0), a);",
       "}",
     ].join("\n"),
@@ -2499,8 +2500,55 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   ].slice(0, LAMPS);
   lampSpots.forEach(([x, y, z, r], k) => lampLights.value[k].set(x, y, z, r));
 
+  /* Halos: phones draw straight to the screen without bloom, so soft additive sprites stand in for the glow around
+     lanterns, the campfire and the shrine inlay. Hidden while bloom is on. */
+  const halos = new THREE.Group();
+  halos.name = "halos";
+  halos.visible = false;
+  root.add(halos);
+  const haloTexture = (() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 128;
+    const ctx = c.getContext("2d");
+    const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.25, "rgba(255,255,255,0.45)");
+    g.addColorStop(0.6, "rgba(255,255,255,0.12)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 128, 128);
+    const texture = new THREE.CanvasTexture(c);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  })();
+  const haloMaterial = (color, opacity) =>
+    new THREE.SpriteMaterial({ map: haloTexture, color, opacity, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+  const lanternHalo = haloMaterial("#ffb45c", 0.6);
+  lanterns.forEach((p) => {
+    const s = new THREE.Sprite(lanternHalo);
+    s.position.copy(p);
+    s.scale.setScalar(1.5);
+    halos.add(s);
+  });
+  const fireHalos = fires.map((f) => {
+    const s = new THREE.Sprite(haloMaterial("#ff8a30", 0.7));
+    s.position.copy(f.position).y += 0.55;
+    s.scale.setScalar(3);
+    halos.add(s);
+    return s;
+  });
+  {
+    const inlay = new THREE.Mesh(
+      new THREE.PlaneGeometry(6.4, 6.4).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: haloTexture, color: "#ffd873", opacity: 0.4, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false })
+    );
+    inlay.position.copy(shrine).y += 0.06;
+    halos.add(inlay);
+  }
+
   /* Everything that moves on its own */
   const update = (dt, time, robot, renderer) => {
+    if (halos.visible) fireHalos.forEach((s, k) => s.scale.setScalar(3 * (1 + Math.sin(time * 11 + k) * 0.06 + Math.sin(time * 6.3) * 0.05)));
     trail.step(renderer, dt, robot);
     lampSpots.forEach(([, , , r], k) => {
       const fire = k >= lanterns.length ? Math.sin(time * 17 + k) * 0.035 + Math.sin(time * 9.3) * 0.03 : 0;
@@ -2533,6 +2581,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     beamMat,
     shrine,
     lanterns,
+    halos,
     groundAt: MAP.groundAt,
     nav,
     blockers,

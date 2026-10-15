@@ -46,6 +46,11 @@ async function start() {
 
   const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const coarse = window.matchMedia("(pointer: coarse)").matches;
+  /* Lite (phones, or ?lite=1; ?lite=0 opts out): draw straight to the screen with no offscreen bloom chain, which costs
+     several times the scene itself on phone GPUs, and spend the savings on resolution; halo sprites stand in for bloom */
+  const liteParam = new URLSearchParams(location.search).get("lite");
+  const lite = liteParam === "1" || (coarse && liteParam !== "0");
+  const MAX_RATIO = 2;
   const gsap = window.gsap;
   const projects = window.PROJECT_ALBUMS || [];
   const defs = (window.WORLD_OBJECTS || []).map((def) => {
@@ -173,8 +178,9 @@ async function start() {
   /* Renderer, scene, camera */
 
   /* The sky is CSS behind a transparent canvas, so the intro can fade it from night to dusk. */
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "high-performance" });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, coarse ? 1.5 : 2));
+  /* stencil: Niko's eyes are masked to his face, also when frames go straight to the screen */
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, stencil: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_RATIO));
   renderer.setClearColor(0x000000, 0);
   renderer.info.autoReset = false;
   renderer.shadowMap.enabled = true;
@@ -206,17 +212,25 @@ async function start() {
   const post = (() => {
     const params = new URLSearchParams(location.search);
     const pixel = Math.max(1, Math.round(+params.get("pixel") || 1));
-    const state = { on: params.get("fx") === "1" || pixel > 1, pixel, bloom: params.get("bloom") !== "0" };
+    /* Some phone GPUs can't draw into half float; there glows clip at white, so bloom keys off near-white instead */
+    const hdr = params.get("hdr") !== "0" && (renderer.extensions.has("EXT_color_buffer_float") || renderer.extensions.has("EXT_color_buffer_half_float"));
+    const colorType = hdr ? THREE.HalfFloatType : THREE.UnsignedByteType;
+    const state = { on: params.get("fx") === "1" || pixel > 1, pixel, bloom: params.get("bloom") === "1" || (params.get("bloom") !== "0" && !lite), hdr, msaa: params.get("msaa") === "1" || (params.get("msaa") !== "0" && renderer.getPixelRatio() < 1.5) };
     const active = () => state.on || state.bloom;
     const size = new THREE.Vector2();
     let target = null;
+    /* Only the edge pass reads depth; without it, a plain depth/stencil buffer is far cheaper than a resolved texture */
+    let targetEdges = false;
     const makeTarget = () => {
       target?.dispose();
-      const depth = new THREE.DepthTexture(1, 1);
-      depth.format = THREE.DepthStencilFormat;
-      depth.type = THREE.UnsignedInt248Type;
-      target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: state.pixel > 1 ? 0 : 4, stencilBuffer: true });
-      target.depthTexture = depth;
+      target = new THREE.WebGLRenderTarget(1, 1, { type: colorType, samples: state.pixel > 1 || !state.msaa ? 0 : 4, stencilBuffer: true });
+      targetEdges = state.on;
+      if (state.on) {
+        const depth = new THREE.DepthTexture(1, 1);
+        depth.format = THREE.DepthStencilFormat;
+        depth.type = THREE.UnsignedInt248Type;
+        target.depthTexture = depth;
+      }
       const filter = state.pixel > 1 ? THREE.NearestFilter : THREE.LinearFilter;
       target.texture.minFilter = target.texture.magFilter = filter;
       size.set(0, 0);
@@ -292,7 +306,7 @@ async function start() {
     const bloom = (() => {
       const levels = coarse ? 4 : 5;
       const make = () => {
-        const t = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
+        const t = new THREE.WebGLRenderTarget(1, 1, { type: colorType, depthBuffer: false });
         t.texture.minFilter = t.texture.magFilter = THREE.LinearFilter;
         t.texture.generateMipmaps = false;
         return t;
@@ -305,11 +319,16 @@ async function start() {
       /* Halve: a 4x4 box from five bilinear taps; the first level keeps only what is brighter than the threshold */
       const shrink = pass(
         [
-          "uniform sampler2D tSrc; uniform vec2 texel; uniform vec3 cut; varying vec2 vUv;",
+          "uniform sampler2D tSrc; uniform vec2 texel; uniform vec4 cut; varying vec2 vUv;",
           "vec3 tap(vec2 uv){",
           "  vec3 c = texture2D(tSrc, uv).rgb;",
           "  if (cut.z < 0.5) return c;",
+          /* One NaN or Inf pixel would smear into black blocks down the mip chain; drop it here */
+          "  if (!(c.r + c.g + c.b < 1e4)) return vec3(0.0);",
           "  float bright = max(c.r, max(c.g, c.b));",
+          /* Without HDR there is no excess over white to measure. Glows clip to white in every channel, while sunlit
+             sand keeps its blue lower, so the weakest channel picks them out and a fixed gain stands in for the excess. */
+          "  if (cut.w > 0.0) return c * smoothstep(cut.x, 1.0, min(c.r, min(c.g, c.b))) * cut.w;",
           "  float soft = clamp(bright - cut.x + cut.y, 0.0, 2.0 * cut.y);",
           "  soft = soft * soft / (4.0 * cut.y + 1e-4);",
           "  return c * max(soft, bright - cut.x) / max(bright, 1e-4);",
@@ -321,7 +340,7 @@ async function start() {
           "  gl_FragColor = vec4(sum / 8.0, 1.0);",
           "}",
         ].join("\n"),
-        { tSrc: { value: null }, texel: { value: new THREE.Vector2() }, cut: { value: new THREE.Vector3() } }
+        { tSrc: { value: null }, texel: { value: new THREE.Vector2() }, cut: { value: new THREE.Vector4() } }
       );
       /* Double: a tent filter over the smaller level, added onto this level's own halved image */
       const grow = pass(
@@ -338,7 +357,7 @@ async function start() {
         ].join("\n"),
         { tSrc: { value: null }, tBase: { value: null }, texel: { value: new THREE.Vector2() } }
       );
-      const settings = { threshold: 1, knee: 0.35, strength: 0.32 };
+      const settings = hdr ? { threshold: 1, knee: 0.35, strength: 0.32, gain: 0 } : { threshold: 0.93, knee: 0, strength: 0.32, gain: 1.5 };
       const sized = new THREE.Vector2();
       return {
         settings,
@@ -352,7 +371,7 @@ async function start() {
         run(source, w, h) {
           this.fit(w, h);
           const s = shrink.uniforms;
-          s.cut.value.set(settings.threshold, settings.knee, 1);
+          s.cut.value.set(settings.threshold, settings.knee, 1, settings.gain);
           s.tSrc.value = source;
           s.texel.value.set(1 / w, 1 / h);
           draw(shrink, down[0]);
@@ -418,7 +437,7 @@ async function start() {
           renderer.render(scene, camera);
           return;
         }
-        if (!target) makeTarget();
+        if (!target || targetEdges !== state.on) makeTarget();
         this.fit();
         const w = size.x;
         const h = size.y;
@@ -444,8 +463,9 @@ async function start() {
         ["threshold", "knee", "strength"].forEach((key) => options[key] != null && (bloom.settings[key] = options[key]));
         if (options.ink != null) material.uniforms.ink.value = options.ink;
         if (options.lift != null) material.uniforms.lift.value = options.lift;
-        if (pixel !== state.pixel) {
+        if (pixel !== state.pixel || (options.msaa != null && options.msaa !== state.msaa)) {
           state.pixel = pixel;
+          if (options.msaa != null) state.msaa = options.msaa;
           makeTarget();
         }
         return { ...state, ...bloom.settings, ink: material.uniforms.ink.value, lift: material.uniforms.lift.value };
@@ -2919,6 +2939,7 @@ async function start() {
       }
     }
 
+    island.halos.visible = !post.state.bloom;
     island.update(dt, calm ? 0 : time, robot.visible ? robot.position : null, renderer);
     if (shrineStar.visible) {
       shrineStar.position.y = island.shrine.y + 4.6 + (calm ? 0 : Math.sin(time * 1.4) * 0.18);
@@ -2976,15 +2997,40 @@ async function start() {
     quality.time = 0;
     quality.frames = 0;
     if (average <= 22) return;
-    /* Resolution goes first down to 1x, then bloom, then the last step to 0.75x */
-    if (quality.ratio > 1) setRatio(Math.max(1, quality.ratio - 0.25));
+    /* MSAA on the offscreen target goes first (resolving it costs more than the scene), then bloom (halos take over
+       the glow), then resolution in quarter steps, never below 1x: under that the island turns visibly pixelated */
+    if (post.state.bloom && post.state.msaa) post.set({ msaa: false });
     else if (post.state.bloom) post.set({ bloom: false });
-    else if (quality.ratio > 0.75) setRatio(0.75);
+    else if (quality.ratio > 1) setRatio(Math.max(1, quality.ratio - 0.25));
+  };
+
+  /* ?diag=1: a readout for checking a real phone (frame time, resolution, bloom, HDR, reduced motion, GPU) */
+  const diag = new URLSearchParams(location.search).has("diag")
+    ? (() => {
+        const el = document.createElement("pre");
+        el.style.cssText = "position:absolute;left:8px;bottom:8px;z-index:6;margin:0;padding:6px 8px;background:rgba(0,0,0,.65);color:#fff;font:11px/1.35 monospace;pointer-events:none;white-space:pre-wrap;max-width:70vw";
+        host.append(el);
+        const gl = renderer.getContext();
+        const info = gl.getExtension("WEBGL_debug_renderer_info");
+        return { el, gpu: info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : "unknown", ms: 16, at: 0 };
+      })()
+    : null;
+  const showDiag = (now, raw) => {
+    diag.ms += (raw - diag.ms) * 0.1;
+    if (now - diag.at < 500) return;
+    diag.at = now;
+    diag.el.textContent = [
+      `${diag.ms.toFixed(1)} ms  dpr ${renderer.getPixelRatio()}`,
+      `bloom ${post.state.bloom ? "on" : "off"}  hdr ${post.state.hdr ? "yes" : "no"}  lite ${lite}  msaa ${post.state.msaa}`,
+      `reduced motion ${calm ? "ON" : "off"}  coarse ${coarse}`,
+      diag.gpu,
+    ].join("\n");
   };
 
   renderer.setAnimationLoop((now) => {
     /* The frame timestamp can trail performance.now() (settle resets `last` with it), so never step backward */
     const dt = THREE.MathUtils.clamp((now - last) / 1000, 0, 0.05);
+    if (diag) showDiag(now, Math.max(0, now - last));
     last = now;
 
     if (overlayOpen()) {
@@ -3027,7 +3073,7 @@ async function start() {
     last = performance.now();
 
     if (document.visibilityState === "visible") {
-      setRatio(Math.min(window.devicePixelRatio, coarse ? 1.5 : 2, quality.ratio));
+      setRatio(Math.min(window.devicePixelRatio, MAX_RATIO, quality.ratio));
     }
 
     intro?.progress(1);
@@ -3071,6 +3117,12 @@ async function start() {
     post.bind();
     try {
       await renderer.compileAsync(scene, camera);
+      /* Programs differ per output; if adaptive quality later drops bloom, the screen versions are ready too */
+      if (renderer.getRenderTarget()) {
+        renderer.setRenderTarget(null);
+        await renderer.compileAsync(scene, camera);
+        post.bind();
+      }
     } catch (error) {
       console.warn("Shader warm-up failed", error);
     }
@@ -3102,15 +3154,21 @@ async function start() {
     finishLoading();
   });
 
+  /* Fallbacks for a stalled network: stop waiting on textures, then on Niko, but still warm up before revealing */
   window.setTimeout(() => {
     loading.textures = true;
     finishLoading();
-  }, 6000);
+  }, 15000);
+  window.setTimeout(() => {
+    loading.textures = true;
+    loading.niko = true;
+    finishLoading();
+  }, 25000);
   window.setTimeout(() => {
     loaded = true;
     bakeShadows();
     reveal();
-  }, 12000);
+  }, 40000);
 
   const seenIntro = (() => {
     try {
@@ -3443,6 +3501,9 @@ async function start() {
       /* Hold Niko at an angle (radians) relative to the camera; null releases him */
       holdYaw: (angle) => void (state.holdYaw = angle),
       bot: () => bot,
+      scene: () => scene,
+      island: () => island,
+      shrineStar: () => shrineStar,
       /* Final pass: { on, pixel, ink, lift } */
       post: (options) => post.set(options),
       stats: () => ({

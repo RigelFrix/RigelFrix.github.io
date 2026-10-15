@@ -30,7 +30,7 @@ const material = (res) =>
       "  dir = length(dir) > 1e-4 ? normalize(dir) : vec2(1.0, 0.0);",
       "  float along = clamp((aS - tail) / max(head - tail, 1e-3), 0.0, 1.0);",
       "  float inside = step(tail, aS) * step(aS, head);",
-      "  float taper = inside * pow(sin(3.14159 * along), 0.45);",
+      "  float taper = inside * pow(max(sin(3.14159 * along), 0.0), 0.45);",
       "  a.xy += vec2(-dir.y, dir.x) * aSide * width * taper / res * a.w;",
       "  vShow = inside;",
       "  gl_Position = a;",
