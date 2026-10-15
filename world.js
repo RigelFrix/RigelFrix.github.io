@@ -2228,8 +2228,8 @@ async function start() {
 
   let press = null;
 
-  /* Floating stick: a touch that drags turns into a joystick under the thumb; a quick tap still walks there.
-     Past the rim the base trails the thumb, so turning around never needs a long drag back. */
+  /* Floating stick: a touch that drags turns into a joystick where the drag began, and the base stays put there;
+     a quick tap still walks there. Two fingers pinch to zoom instead. */
   const STICK = 46;
   const stick = { on: false, x: 0, y: 0, base: { x: 0, y: 0 } };
   const stickEl = document.createElement("div");
@@ -2252,17 +2252,68 @@ async function start() {
     stickEl.classList.remove("is-on");
   };
 
+  /* Zoom: the wheel and pinches move a goal that the camera eases toward; the intro tweens the camera itself */
+  const ZOOM_MIN = 0.7;
+  const ZOOM_MAX = 1.7;
+  let zoomGoal = null;
+  const zoomBy = (factor, now = false) => {
+    zoomGoal = THREE.MathUtils.clamp((zoomGoal ?? camera.zoom) * factor, ZOOM_MIN, ZOOM_MAX);
+    if (now) {
+      camera.zoom = zoomGoal;
+      camera.updateProjectionMatrix();
+    }
+  };
+  const easeZoom = (dt) => {
+    if (zoomGoal == null || introLive) return;
+    camera.zoom = THREE.MathUtils.damp(camera.zoom, zoomGoal, 14, dt);
+    if (Math.abs(camera.zoom - zoomGoal) < 0.0005) {
+      camera.zoom = zoomGoal;
+      zoomGoal = null;
+    }
+    camera.updateProjectionMatrix();
+  };
+
+  const touches = new Map();
+  let pinch = null;
+  const spread = () => {
+    const [a, b] = touches.values();
+    return Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
+  };
+
   canvas.addEventListener("pointerdown", (event) => {
-    if (press) return;
+    if (event.pointerType !== "mouse") {
+      touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      canvas.setPointerCapture?.(event.pointerId);
+    }
+    if (touches.size >= 2) {
+      press = null;
+      releaseStick();
+      if (!pinch && !introLive) pinch = { dist: spread() };
+      return;
+    }
+    if (press || pinch) return;
     press = document.hasFocus() ? { id: event.pointerId, x: event.clientX, y: event.clientY, touch: event.pointerType !== "mouse" } : null;
-    if (press?.touch) canvas.setPointerCapture?.(event.pointerId);
   });
 
   canvas.addEventListener("pointermove", (event) => {
+    const touch = touches.get(event.pointerId);
+    if (touch) {
+      touch.x = event.clientX;
+      touch.y = event.clientY;
+    }
+    if (pinch) {
+      if (touches.size >= 2) {
+        const dist = spread();
+        zoomBy(dist / pinch.dist, true);
+        pinch.dist = dist;
+      }
+      return;
+    }
+
     if (!press?.touch || event.pointerId !== press.id || introLive || overlayOpen()) return;
-    let dx = event.clientX - press.x;
-    let dy = event.clientY - press.y;
-    let len = Math.hypot(dx, dy);
+    const dx = event.clientX - press.x;
+    const dy = event.clientY - press.y;
+    const len = Math.hypot(dx, dy);
 
     if (!stick.on) {
       if (len < 12) return;
@@ -2272,21 +2323,23 @@ async function start() {
       stickEl.classList.add("is-on");
     }
 
-    if (len > STICK) {
-      press.x += dx * (1 - STICK / len);
-      press.y += dy * (1 - STICK / len);
-      dx = event.clientX - press.x;
-      dy = event.clientY - press.y;
-      len = STICK;
-    }
-    stick.base.x = press.x;
-    stick.base.y = press.y;
-    stick.x = dx / STICK;
-    stick.y = dy / STICK;
+    const k = len > STICK ? STICK / len : 1;
+    stick.x = (dx * k) / STICK;
+    stick.y = (dy * k) / STICK;
     placeStick();
   });
 
+  /* Returns true while the touch belonged to a pinch, so lifting a finger from it neither taps nor steers */
+  const lift = (event) => {
+    touches.delete(event.pointerId);
+    if (!pinch) return false;
+    if (!touches.size) pinch = null;
+    press = null;
+    return true;
+  };
+
   const dropPress = (event) => {
+    if (lift(event)) return;
     if (press && event.pointerId !== press.id) return;
     press = null;
     releaseStick();
@@ -2295,6 +2348,9 @@ async function start() {
   canvas.addEventListener("lostpointercapture", dropPress);
 
   canvas.addEventListener("pointerup", (event) => {
+    if (lift(event)) {
+      return;
+    }
     if (press && event.pointerId !== press.id) {
       return;
     }
@@ -2351,8 +2407,9 @@ async function start() {
     "wheel",
     (event) => {
       event.preventDefault();
-      camera.zoom = THREE.MathUtils.clamp(camera.zoom * (1 - event.deltaY * 0.0012), 0.7, 1.7);
-      camera.updateProjectionMatrix();
+      if (introLive) return;
+      const lines = event.deltaMode === 1 ? 33 : event.deltaMode === 2 ? 400 : 1;
+      zoomBy(Math.exp(-THREE.MathUtils.clamp(event.deltaY * lines, -240, 240) * 0.0015));
     },
     { passive: false }
   );
@@ -2403,6 +2460,8 @@ async function start() {
   window.addEventListener("blur", () => {
     state.keys.clear();
     press = null;
+    touches.clear();
+    pinch = null;
     releaseStick();
   });
 
@@ -2846,6 +2905,7 @@ async function start() {
     });
 
     updateRoute(dt);
+    easeZoom(dt);
     if (marker.visible) {
       markerAge += dt / 0.55;
       marker.scale.setScalar(0.6 + markerAge * 0.9);
@@ -2960,6 +3020,8 @@ async function start() {
   const settle = () => {
     state.keys.clear();
     press = null;
+    touches.clear();
+    pinch = null;
     releaseStick();
     started = false;
     last = performance.now();
@@ -3405,7 +3467,9 @@ async function start() {
         state.path = [];
         started = false;
       },
+      zoomNow: () => +camera.zoom.toFixed(3),
       zoom: (z) => {
+        zoomGoal = null;
         camera.zoom = z;
         camera.updateProjectionMatrix();
       },
