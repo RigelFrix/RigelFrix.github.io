@@ -2231,6 +2231,8 @@ html.world main > section:not(.is-open) {
 .world-sky {
   position: absolute;
   inset: 0;
+  isolation: isolate;
+  pointer-events: none;
   background:
     radial-gradient(38% 16% at 14% 22%, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0) 70%),
     radial-gradient(30% 12% at 82% 14%, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0) 70%),
@@ -2480,6 +2482,51 @@ html.world-moved .world-help {
     opacity: 0;
     transform: translateY(12px);
   }
+}
+
+.world-stick {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 7.5rem;
+  height: 7.5rem;
+  margin: -3.75rem 0 0 -3.75rem;
+  border: 2px solid rgba(255, 246, 224, 0.6);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(16, 43, 68, 0.12) 0 50%, rgba(16, 43, 68, 0.34) 100%);
+  opacity: 0;
+  scale: 0.8;
+  pointer-events: none;
+  transition:
+    opacity 160ms var(--ease-out),
+    scale 160ms var(--ease-out);
+}
+
+.world-stick.is-on {
+  opacity: 1;
+  scale: 1;
+}
+
+.world-stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3.3rem;
+  height: 3.3rem;
+  margin: -1.65rem 0 0 -1.65rem;
+  border-radius: 50%;
+  background: var(--cream);
+  box-shadow:
+    inset 0 -4px 0 rgba(16, 43, 68, 0.22),
+    0 4px 14px rgba(16, 43, 68, 0.35);
+}
+
+.world-stick-knob::after {
+  content: "";
+  position: absolute;
+  inset: 0.95rem;
+  border-radius: 50%;
+  background: var(--yellow);
 }
 
 /* Boot: Rigel twinkles on the dark while the floor loads, then launches and lands as the robot */

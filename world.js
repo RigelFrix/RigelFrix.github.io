@@ -1850,6 +1850,63 @@ async function start() {
     markerAge = 0;
   };
 
+  /* Route: dots along the path Niko is about to walk. They draw out from his feet and he eats them as he goes. */
+  const ROUTE_GAP = 0.62;
+  const ROUTE_MAX = 220;
+  const routeTexture = (() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "rgba(16, 43, 68, 0.45)";
+    ctx.beginPath();
+    ctx.arc(32, 32, 31, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = PAL.cream;
+    ctx.beginPath();
+    ctx.arc(32, 32, 21, 0, Math.PI * 2);
+    ctx.fill();
+    const texture = new THREE.CanvasTexture(c);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  })();
+  const routeDots = new THREE.InstancedMesh(
+    new THREE.PlaneGeometry(0.3, 0.3).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: routeTexture, transparent: true, depthWrite: false, toneMapped: false }),
+    ROUTE_MAX
+  );
+  routeDots.count = 0;
+  routeDots.renderOrder = 3;
+  routeDots.frustumCulled = false;
+  scene.add(routeDots);
+  const route = { dots: [], length: 0, age: 0, fade: 0 };
+  const routeMatrix = new THREE.Matrix4();
+  const routeQuat = new THREE.Quaternion();
+  const routeSpot = new THREE.Vector3();
+  const routeSize = new THREE.Vector3();
+
+  const showRoute = (from, path) => {
+    route.dots.length = 0;
+    let prev = from;
+    let along = 0;
+    let next = ROUTE_GAP * 0.9;
+    for (const point of path) {
+      const seg = Math.hypot(point.x - prev.x, point.z - prev.z);
+      while (seg > 0 && next <= along + seg && route.dots.length < ROUTE_MAX) {
+        const t = (next - along) / seg;
+        const x = prev.x + (point.x - prev.x) * t;
+        const z = prev.z + (point.z - prev.z) * t;
+        route.dots.push({ x, y: island.groundAt(x, z) + 0.08, z, along: next });
+        next += ROUTE_GAP;
+      }
+      along += seg;
+      prev = point;
+    }
+    while (route.dots.length && route.dots[route.dots.length - 1].along > along - 0.45) route.dots.pop();
+    route.length = along;
+    route.age = 0;
+    routeDots.count = route.dots.length;
+  };
+
   /* Intro pieces: Rigel, the star that falls onto the spawn ring, and what its impact throws up.
      Everything is built and drawn (invisibly) up front so nothing compiles mid-impact. */
 
@@ -1998,6 +2055,7 @@ async function start() {
     blinkAt: 2,
     still: 0,
     faceUp: 0,
+    pace: 1,
   };
   const AXIS_Z = new THREE.Vector3(0, 0, 1);
   const RAISED_ARM = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -0.35, 1.25));
@@ -2043,6 +2101,33 @@ async function start() {
     state.pending = obj;
     state.stuck = 0;
     showMarker(path[path.length - 1]);
+    showRoute(robot.position, path);
+  };
+
+  const updateRoute = (dt) => {
+    if (!routeDots.count) return;
+    route.age += dt;
+    let left = 0;
+    let prev = robot.position;
+    for (const point of state.path) {
+      left += Math.hypot(point.x - prev.x, point.z - prev.z);
+      prev = point;
+    }
+    const done = route.length - left;
+    route.fade = THREE.MathUtils.damp(route.fade, state.path.length ? 1 : 0, state.path.length ? 14 : 8, dt);
+    if (!state.path.length && route.fade < 0.02) {
+      routeDots.count = 0;
+      return;
+    }
+    routeDots.material.opacity = 0.92 * route.fade;
+    route.dots.forEach((dot, i) => {
+      const grow = calm ? 1 : THREE.MathUtils.clamp((route.age * 30 - dot.along) / 1.2, 0, 1);
+      const eaten = THREE.MathUtils.clamp((dot.along - done) / 0.6, 0, 1);
+      const pulse = calm ? 1 : 1 + Math.max(0, Math.sin(clock * 5 - dot.along * 0.9)) * 0.22;
+      routeSize.setScalar(grow * eaten * pulse);
+      routeDots.setMatrixAt(i, routeMatrix.compose(routeSpot.set(dot.x, dot.y, dot.z), routeQuat, routeSize));
+    });
+    routeDots.instanceMatrix.needsUpdate = true;
   };
 
   function goToObject(obj) {
@@ -2143,14 +2228,86 @@ async function start() {
 
   let press = null;
 
+  /* Floating stick: a touch that drags turns into a joystick under the thumb; a quick tap still walks there.
+     Past the rim the base trails the thumb, so turning around never needs a long drag back. */
+  const STICK = 46;
+  const stick = { on: false, x: 0, y: 0, base: { x: 0, y: 0 } };
+  const stickEl = document.createElement("div");
+  stickEl.className = "world-stick";
+  stickEl.setAttribute("aria-hidden", "true");
+  const knobEl = document.createElement("span");
+  knobEl.className = "world-stick-knob";
+  stickEl.append(knobEl);
+  host.append(stickEl);
+
+  const placeStick = () => {
+    const rect = host.getBoundingClientRect();
+    stickEl.style.translate = `${(stick.base.x - rect.left).toFixed(1)}px ${(stick.base.y - rect.top).toFixed(1)}px`;
+    knobEl.style.translate = `${(stick.x * STICK).toFixed(1)}px ${(stick.y * STICK).toFixed(1)}px`;
+  };
+
+  const releaseStick = () => {
+    stick.on = false;
+    stick.x = stick.y = 0;
+    stickEl.classList.remove("is-on");
+  };
+
   canvas.addEventListener("pointerdown", (event) => {
-    press = document.hasFocus() ? { x: event.clientX, y: event.clientY } : null;
+    if (press) return;
+    press = document.hasFocus() ? { id: event.pointerId, x: event.clientX, y: event.clientY, touch: event.pointerType !== "mouse" } : null;
+    if (press?.touch) canvas.setPointerCapture?.(event.pointerId);
   });
 
+  canvas.addEventListener("pointermove", (event) => {
+    if (!press?.touch || event.pointerId !== press.id || introLive || overlayOpen()) return;
+    let dx = event.clientX - press.x;
+    let dy = event.clientY - press.y;
+    let len = Math.hypot(dx, dy);
+
+    if (!stick.on) {
+      if (len < 12) return;
+      stick.on = true;
+      stick.base.x = press.x;
+      stick.base.y = press.y;
+      stickEl.classList.add("is-on");
+    }
+
+    if (len > STICK) {
+      press.x += dx * (1 - STICK / len);
+      press.y += dy * (1 - STICK / len);
+      dx = event.clientX - press.x;
+      dy = event.clientY - press.y;
+      len = STICK;
+    }
+    stick.base.x = press.x;
+    stick.base.y = press.y;
+    stick.x = dx / STICK;
+    stick.y = dy / STICK;
+    placeStick();
+  });
+
+  const dropPress = (event) => {
+    if (press && event.pointerId !== press.id) return;
+    press = null;
+    releaseStick();
+  };
+  canvas.addEventListener("pointercancel", dropPress);
+  canvas.addEventListener("lostpointercapture", dropPress);
+
   canvas.addEventListener("pointerup", (event) => {
+    if (press && event.pointerId !== press.id) {
+      return;
+    }
+
     if (introLive) {
       press = null;
       speedUp();
+      return;
+    }
+
+    if (stick.on) {
+      press = null;
+      releaseStick();
       return;
     }
 
@@ -2246,6 +2403,7 @@ async function start() {
   window.addEventListener("blur", () => {
     state.keys.clear();
     press = null;
+    releaseStick();
   });
 
   const interactNear = () => {
@@ -2313,6 +2471,14 @@ async function start() {
     if (pad) {
       x += pad.x;
       y += pad.y;
+    }
+
+    /* A light push walks slower; the run clip slows with it so the feet don't skate */
+    const push = Math.hypot(stick.x, stick.y);
+    if (stick.on && push > 0.2) {
+      const pace = 0.4 + 0.6 * Math.min(1, (push - 0.2) / 0.55);
+      x += (stick.x / push) * pace;
+      y += (stick.y / push) * pace;
     }
 
     steer.set(0, 0, 0).addScaledVector(screenRight, x).addScaledVector(screenUp, -y);
@@ -2451,8 +2617,10 @@ async function start() {
       resolveCollisions(robot.position);
       stepTo(before, robot.position);
       state.yaw = Math.atan2(input.x, input.z);
+      state.pace = THREE.MathUtils.damp(state.pace, input.length(), 10, dt);
       moving = true;
     } else if (state.path.length) {
+      state.pace = THREE.MathUtils.damp(state.pace, 1, 10, dt);
       const target = state.path[0];
       const dx = target.x - robot.position.x;
       const dz = target.z - robot.position.z;
@@ -2499,7 +2667,7 @@ async function start() {
     /* Robot animation */
 
     state.walk = THREE.MathUtils.damp(state.walk, moving ? 1 : 0, 10, dt);
-    state.phase += dt * 10 * state.walk;
+    state.phase += dt * 10 * state.walk * state.pace;
     const step = Math.sin(state.phase);
     const swing = step * 0.7 * state.walk;
     const bob = Math.abs(Math.cos(state.phase)) * state.walk;
@@ -2530,7 +2698,7 @@ async function start() {
       const { actions, bones } = bot;
       actions.idle.setEffectiveWeight(1 - state.walk);
       actions.run.setEffectiveWeight(state.walk);
-      actions.run.setEffectiveTimeScale(1.2);
+      actions.run.setEffectiveTimeScale(1.2 * state.pace);
       bot.mixer.update(calm ? 0 : dt);
       const spread = 0.2 + pose.crouch * 0.45;
       bones.LeftArm.quaternion.premultiply(overlayQ.setFromAxisAngle(AXIS_Z, spread));
@@ -2677,6 +2845,7 @@ async function start() {
       obj.group.scale.setScalar(scale);
     });
 
+    updateRoute(dt);
     if (marker.visible) {
       markerAge += dt / 0.55;
       marker.scale.setScalar(0.6 + markerAge * 0.9);
@@ -2791,6 +2960,7 @@ async function start() {
   const settle = () => {
     state.keys.clear();
     press = null;
+    releaseStick();
     started = false;
     last = performance.now();
 
