@@ -40,8 +40,8 @@
     /* Ruins path: the career stones line the path up to the shrine */
     { id: "career", label: "Career", kind: "milestones", u: 3.8, v: -8.4, faceTo: [2.4, -5.6], action: { type: "section", section: "career" } },
 
-    /* Beach and dock: the mailbox at the end of the pier, turned toward the walkway */
-    { id: "contact", label: "Contact", kind: "mailbox", u: -14.6, v: 18.5, faceTo: [-11.2, 16.4], action: { type: "section", section: "contact" } },
+    /* Beach and dock: the mailbox stands at one end of the dock's T-head, turned toward the junction */
+    { id: "contact", label: "Contact", kind: "mailbox", u: -18.4, v: 19.6, faceTo: [-19.6, 17.8], action: { type: "section", section: "contact" } },
 
     /* Star Shrine: the resume rests on a lectern that faces the dais */
     {

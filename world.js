@@ -6,8 +6,8 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import nikoGlb from "./assets/niko.glb";
 import nikoEyesUrl from "./assets/niko-eyes.png";
-import { atmos, buildIsland, ISLE, occlude, seeThrough } from "./world-island.js";
-import { toXZ } from "./world-map.js";
+import { atmos, buildIsland, ISLE, makeRamp, occlude, seeThrough } from "./world-island.js";
+import { lay, toXZ } from "./world-map.js";
 
 const root = document.documentElement;
 const host = document.getElementById("world");
@@ -48,9 +48,9 @@ async function start() {
   const gsap = window.gsap;
   const projects = window.PROJECT_ALBUMS || [];
   const defs = (window.WORLD_OBJECTS || []).map((def) => {
-    const [x, z] = def.u == null ? [def.x, def.z] : toXZ(def.u, def.v);
+    const [x, z] = def.u == null ? [def.x, def.z] : toXZ(...lay(def.u, def.v));
     if (!def.faceTo) return { ...def, x, z };
-    const [tx, tz] = toXZ(...def.faceTo);
+    const [tx, tz] = toXZ(...lay(...def.faceTo));
     return { ...def, x, z, facing: THREE.MathUtils.radToDeg(Math.atan2(tx - x, tz - z)) };
   });
   const ROBOT_R = 0.45;
@@ -188,18 +188,18 @@ async function start() {
 
   /* Daylight: a warm, high sun from the upper left of the screen so shadows fall toward the viewer, a cool sky
      ambient that tints the shade blue, a cool bounce on the side away from the sun and a warm kiss from behind */
-  const hemi = new THREE.HemisphereLight("#cfe4ff", "#9a8a68", 1.05);
+  const hemi = new THREE.HemisphereLight("#cfe4ff", "#9a8a68", 0.85);
   scene.add(hemi);
 
-  const sun = new THREE.DirectionalLight("#ffe7c2", 3.1);
+  const sun = new THREE.DirectionalLight("#ffe7c2", 3.35);
   sun.position.set(-25, 30, 11);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(coarse ? 2048 : 3072, coarse ? 2048 : 3072);
-  Object.assign(sun.shadow.camera, { left: -34, right: 34, top: 34, bottom: -34, near: 1, far: 110 });
+  sun.shadow.mapSize.set(coarse ? 2048 : 4096, coarse ? 2048 : 4096);
+  Object.assign(sun.shadow.camera, { left: -44, right: 44, top: 44, bottom: -44, near: 1, far: 140 });
   sun.shadow.camera.updateProjectionMatrix();
   sun.shadow.bias = -0.0006;
   sun.shadow.normalBias = 0.02;
-  sun.shadow.radius = 4;
+  sun.shadow.radius = 1.5;
   /* The sun and the props never move, so their shadow map is drawn once (bakeShadows) instead of every frame. Moving
      things (Niko, gems, debris) cast no map shadow; Niko has his own contact shadow decal. */
   sun.shadow.autoUpdate = false;
@@ -244,12 +244,8 @@ async function start() {
     return material;
   };
 
-  /* Island props use a softer ramp than Niko, so daylight shadows on them stay light, like the terrain's */
-  const softRamp = new THREE.DataTexture(new Uint8Array([74, 92, 186, 236, 255]), 5, 1, THREE.RedFormat);
-  softRamp.minFilter = THREE.LinearFilter;
-  softRamp.magFilter = THREE.LinearFilter;
-  softRamp.generateMipmaps = false;
-  softRamp.needsUpdate = true;
+  /* Island props share the terrain's crisp banded ramp */
+  const softRamp = makeRamp();
 
   const toonCache = new Map();
   const flatToon = new Map();
@@ -264,13 +260,13 @@ async function start() {
   const softCache = new Map();
   const soft = (color) => {
     if (!softCache.has(color)) {
-      const material = atmos(occlude(withRim(new THREE.MeshToonMaterial({ color, gradientMap: softRamp }), 0.16)));
+      const material = atmos(occlude(withRim(new THREE.MeshToonMaterial({ color, gradientMap: softRamp }), 0.06)));
       softCache.set(color, material);
       flatToon.set(material, "soft");
     }
     return softCache.get(color);
   };
-  const softMapped = (map) => atmos(withRim(new THREE.MeshToonMaterial({ map, gradientMap: softRamp }), 0.16));
+  const softMapped = (map) => atmos(withRim(new THREE.MeshToonMaterial({ map, gradientMap: softRamp }), 0.06));
   const glow = (color) => {
     const material = new THREE.MeshBasicMaterial({ color, toneMapped: false });
     material.userData.flatGlow = true;
@@ -299,7 +295,7 @@ async function start() {
      keeps its own mesh so it can still move. */
   const painted = {
     toon: withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: ramp })),
-    soft: atmos(occlude(withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: softRamp }), 0.16))),
+    soft: atmos(occlude(withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: softRamp }), 0.06))),
     glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
   };
   const mergeStatic = (group) => {
@@ -2431,7 +2427,7 @@ async function start() {
 
     /* Camera follows Niko over the island */
 
-    lookTarget.set(THREE.MathUtils.clamp(robot.position.x, -22, 22), robot.position.y, THREE.MathUtils.clamp(robot.position.z, -22, 22));
+    lookTarget.set(THREE.MathUtils.clamp(robot.position.x, -28, 28), robot.position.y, THREE.MathUtils.clamp(robot.position.z, -28, 28));
     keepInFrame(lookTarget);
     if (calm || !started) {
       camLook.copy(lookTarget);
@@ -2947,9 +2943,9 @@ async function start() {
         setRatio(ratio);
       },
       faceImages: () => [bot.faceOpen.image.toDataURL()],
-      /* Island review: put Niko at a map spot (u, v from world-map.js), zoom, skip the intro */
+      /* Island review: put Niko at a map spot (authored u, v as in world-map.js, before the K spread), zoom, skip the intro */
       placeUV: (u, v) => {
-        const p = island.fromUV(u, v);
+        const p = island.fromUV(...lay(u, v));
         robot.position.copy(p);
         state.path = [];
         started = false;

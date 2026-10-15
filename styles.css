@@ -2283,8 +2283,8 @@ html.world main > section:not(.is-open) {
 .world-vignette::before {
   mix-blend-mode: soft-light;
   background:
-    radial-gradient(75% 65% at 6% 0%, rgba(255, 210, 140, 0.8), rgba(255, 210, 140, 0) 72%),
-    linear-gradient(180deg, rgba(50, 120, 175, 0) 50%, rgba(50, 120, 175, 0.38) 100%);
+    radial-gradient(70% 60% at 6% 0%, rgba(255, 210, 140, 0.45), rgba(255, 210, 140, 0) 70%),
+    linear-gradient(180deg, rgba(50, 120, 175, 0) 60%, rgba(50, 120, 175, 0.2) 100%);
 }
 
 .world-vignette::after {
