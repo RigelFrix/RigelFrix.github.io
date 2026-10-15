@@ -2,7 +2,7 @@
 
 Public portfolio site for Francis Dave Tomy M. Yambao.
 
-Live site: [rigelfrix.github.io](https://rigelfrix.github.io/)
+Live site: [rigelfrix.vercel.app](https://rigelfrix.vercel.app/)
 
 ## About
 
