@@ -175,8 +175,15 @@ async function start() {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, coarse ? 1.5 : 2));
   renderer.setClearColor(0x000000, 0);
+  renderer.info.autoReset = false;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
+  /* three's PCF spins its five shadow taps by a per-pixel noise, which leaves grainy, broken-looking shadow edges;
+     a fixed spin gives smooth soft edges instead */
+  THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fragment.replace(
+    "float phi = interleavedGradientNoise( gl_FragCoord.xy ) * PI2;",
+    "float phi = 0.6;"
+  );
 
   const scene = new THREE.Scene();
 
@@ -185,6 +192,156 @@ async function start() {
   const camOffset = new THREE.Vector3(40, 58, 40);
   const camLook = new THREE.Vector3(0, 0, 0);
   let viewHeight = 16;
+
+  /* Final image, after t3ssel8r's pixel-art scenes and three.js' RenderPixelatedPass: the scene renders into a target,
+     then one pass inks a thin outline wherever depth jumps (a silhouette over what lies behind it) and lifts convex
+     creases (rock and cliff edges, steps) with a light edge. With `pixel` > 1 the target is that many times smaller and
+     scaled up unfiltered, and the camera snaps to whole texels (the remainder slides the image) so nothing shimmers.
+     Off by default (the painted look keeps edges soft); ?fx=1 turns it on, ?pixel=3 pixelates. Grass writes alpha 0.99
+     so its blades get no crease highlight. */
+  const post = (() => {
+    const params = new URLSearchParams(location.search);
+    const pixel = Math.max(1, Math.round(+params.get("pixel") || 1));
+    const state = { on: params.get("fx") === "1" || pixel > 1, pixel };
+    const size = new THREE.Vector2();
+    let target = null;
+    const makeTarget = () => {
+      target?.dispose();
+      const depth = new THREE.DepthTexture(1, 1);
+      depth.format = THREE.DepthStencilFormat;
+      depth.type = THREE.UnsignedInt248Type;
+      target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: state.pixel > 1 ? 0 : 4, stencilBuffer: true });
+      target.depthTexture = depth;
+      const filter = state.pixel > 1 ? THREE.NearestFilter : THREE.LinearFilter;
+      target.texture.minFilter = target.texture.magFilter = filter;
+      size.set(0, 0);
+    };
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        tColor: { value: null },
+        tDepth: { value: null },
+        res: { value: new THREE.Vector4() },
+        span: { value: new THREE.Vector2(1, 1) },
+        range: { value: new THREE.Vector2(1, 260) },
+        shift: { value: new THREE.Vector2() },
+        ink: { value: 1 },
+        lift: { value: 1 },
+        reach: { value: 1 },
+      },
+      depthTest: false,
+      depthWrite: false,
+      blending: THREE.NoBlending,
+      vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+      fragmentShader: [
+        "uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec4 res; uniform vec2 span; uniform vec2 range;",
+        "uniform vec2 shift; uniform float ink; uniform float lift; uniform float reach; varying vec2 vUv;",
+        "float depthAt(vec2 uv){ return range.x + texture2D(tDepth, uv).r * (range.y - range.x); }",
+        "void main(){",
+        "  vec2 uv = vUv + shift;",
+        "  vec4 colour = texture2D(tColor, uv);",
+        "  float d = depthAt(uv);",
+        "  vec2 o = res.zw * reach;",
+        "  float l = depthAt(uv - vec2(o.x, 0.0));",
+        "  float r = depthAt(uv + vec2(o.x, 0.0));",
+        "  float b = depthAt(uv - vec2(0.0, o.y));",
+        "  float t = depthAt(uv + vec2(0.0, o.y));",
+        /* Silhouette: a neighbour lies well behind this pixel (ortho depth is linear, so this is in world units) */
+        "  float jump = max(max(l, r), max(b, t)) - d;",
+        "  float outline = step(0.9, jump);",
+        /* Convex crease: the pixel sits nearer than its neighbours' average while all of them are on the same surface */
+        "  float texel = span.y * res.w * reach;",
+        "  float near = max(max(abs(l - d), abs(r - d)), max(abs(b - d), abs(t - d)));",
+        "  float crease = (l + r + b + t) * 0.25 - d;",
+        "  float grass = step(abs(colour.a - 0.99), 0.004);",
+        "  float edge = smoothstep(texel * 0.3, texel * 0.6, crease) * step(near, 0.9) * (1.0 - grass) * (1.0 - outline);",
+        "  colour.rgb *= 1.0 + edge * 0.35 * lift;",
+        "  colour.rgb = mix(colour.rgb, colour.rgb * vec3(0.3, 0.32, 0.5), outline * 0.9 * ink);",
+        "  if (grass > 0.5) colour.a = 1.0;",
+        "  if (ink > 5.0) colour = vec4(fract(d * 0.1), outline, edge, 1.0);",
+        "  gl_FragColor = colour;",
+        "  #include <colorspace_fragment>",
+        "}",
+      ].join("\n"),
+    });
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+    quad.frustumCulled = false;
+    const quadScene = new THREE.Scene();
+    quadScene.add(quad);
+    const quadCamera = new THREE.Camera();
+    const drawing = new THREE.Vector2();
+    const right = new THREE.Vector3();
+    const up = new THREE.Vector3();
+    const texelSize = () => (camera.top - camera.bottom) / camera.zoom / Math.max(1, size.y);
+    return {
+      state,
+      /* Pixel mode: move the camera onto the texel grid along its own right/up axes; the image shifts back by the rest */
+      snap() {
+        material.uniforms.shift.value.set(0, 0);
+        if (!state.on || state.pixel < 2 || !size.y) return;
+        const step = texelSize();
+        right.setFromMatrixColumn(camera.matrixWorld, 0);
+        up.setFromMatrixColumn(camera.matrixWorld, 1);
+        const x = camera.position.dot(right);
+        const y = camera.position.dot(up);
+        const dx = Math.round(x / step) * step - x;
+        const dy = Math.round(y / step) * step - y;
+        camera.position.addScaledVector(right, dx).addScaledVector(up, dy);
+        camera.updateMatrixWorld();
+        const w = (camera.right - camera.left) / camera.zoom;
+        const h = (camera.top - camera.bottom) / camera.zoom;
+        material.uniforms.shift.value.set(-dx / w, -dy / h);
+      },
+      /* Shaders compile per output target, so warm-up has to aim at the same target the frames will use */
+      bind() {
+        if (!state.on) return;
+        if (!target) makeTarget();
+        this.fit();
+        renderer.setRenderTarget(target);
+      },
+      fit() {
+        renderer.getDrawingBufferSize(drawing);
+        const w = Math.max(1, Math.floor(drawing.x / state.pixel));
+        const h = Math.max(1, Math.floor(drawing.y / state.pixel));
+        if (w !== size.x || h !== size.y) {
+          size.set(w, h);
+          target.setSize(w, h);
+        }
+      },
+      render() {
+        if (!state.on) {
+          renderer.render(scene, camera);
+          return;
+        }
+        if (!target) makeTarget();
+        this.fit();
+        const w = size.x;
+        const h = size.y;
+        const u = material.uniforms;
+        u.res.value.set(w, h, 1 / w, 1 / h);
+        /* Lines about 2 CSS px wide at full resolution, one texel when pixelated */
+        u.reach.value = state.pixel > 1 ? 1 : Math.max(1, 1.6 * Math.min(renderer.getPixelRatio(), 1.5));
+        u.span.value.set((camera.right - camera.left) / camera.zoom, (camera.top - camera.bottom) / camera.zoom);
+        u.range.value.set(camera.near, camera.far);
+        u.tColor.value = target.texture;
+        u.tDepth.value = target.depthTexture;
+        renderer.setRenderTarget(target);
+        renderer.render(scene, camera);
+        renderer.setRenderTarget(null);
+        renderer.render(quadScene, quadCamera);
+      },
+      set(options = {}) {
+        const pixel = options.pixel == null ? state.pixel : Math.max(1, Math.round(options.pixel));
+        if (options.on != null) state.on = options.on;
+        if (options.ink != null) material.uniforms.ink.value = options.ink;
+        if (options.lift != null) material.uniforms.lift.value = options.lift;
+        if (pixel !== state.pixel) {
+          state.pixel = pixel;
+          makeTarget();
+        }
+        return { ...state, ink: material.uniforms.ink.value, lift: material.uniforms.lift.value };
+      },
+    };
+  })();
 
   /* Daylight: a warm, high sun from the upper left of the screen so shadows fall toward the viewer, a cool sky
      ambient that tints the shade blue, a cool bounce on the side away from the sun and a warm kiss from behind */
@@ -272,7 +429,7 @@ async function start() {
     material.userData.flatGlow = true;
     return material;
   };
-  const box = (w, h, d, r = 0) => (r ? new RoundedBoxGeometry(w, h, d, 3, r) : new THREE.BoxGeometry(w, h, d));
+  const box = (w, h, d, r = Math.min(0.05, Math.min(w, h, d) * 0.3)) => new RoundedBoxGeometry(w, h, d, 2, r);
 
   const part = (parent, geometry, material, x = 0, y = 0, z = 0) => {
     const mesh = new THREE.Mesh(geometry, material);
@@ -2427,7 +2584,7 @@ async function start() {
 
     /* Camera follows Niko over the island */
 
-    lookTarget.set(THREE.MathUtils.clamp(robot.position.x, -28, 28), robot.position.y, THREE.MathUtils.clamp(robot.position.z, -28, 28));
+    lookTarget.set(THREE.MathUtils.clamp(robot.position.x, -38, 38), robot.position.y, THREE.MathUtils.clamp(robot.position.z, -38, 38));
     keepInFrame(lookTarget);
     if (calm || !started) {
       camLook.copy(lookTarget);
@@ -2439,6 +2596,7 @@ async function start() {
     camera.position.copy(camLook).add(camOffset);
     camera.lookAt(camLook);
     camera.updateMatrixWorld();
+    post.snap();
     if (robot.visible) seeThrough.playerView.value.set(robot.position.x, robot.position.y + 0.95, robot.position.z).applyMatrix4(camera.matrixWorldInverse);
     else seeThrough.playerView.value.set(0, 0, -9999);
 
@@ -2489,7 +2647,8 @@ async function start() {
     const covered = boot && root.classList.contains("world-intro") && boot.style.visibility !== "hidden" && (boot.style.opacity === "" || boot.style.opacity === "1");
     if (covered && frames > 3) return;
 
-    renderer.render(scene, camera);
+    renderer.info.reset();
+    post.render();
     placeLabels();
     const t2 = performance.now();
     timing.update += (t1 - t0 - timing.update) * 0.05;
@@ -2554,6 +2713,7 @@ async function start() {
         shown.push(node);
       }
     });
+    post.bind();
     try {
       await renderer.compileAsync(scene, camera);
     } catch (error) {
@@ -2565,7 +2725,9 @@ async function start() {
       });
     });
     bakeShadows();
+    post.bind();
     renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
     shown.forEach((node) => (node.visible = false));
   };
 
@@ -2928,6 +3090,8 @@ async function start() {
       /* Hold Niko at an angle (radians) relative to the camera; null releases him */
       holdYaw: (angle) => void (state.holdYaw = angle),
       bot: () => bot,
+      /* Final pass: { on, pixel, ink, lift } */
+      post: (options) => post.set(options),
       stats: () => ({
         ms: Object.fromEntries(Object.entries(timing).map(([k, v]) => [k, +v.toFixed(2)])),
         calls: renderer.info.render.calls,

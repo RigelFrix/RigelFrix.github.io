@@ -5,6 +5,7 @@
 
 import * as THREE from "three";
 import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import * as MAP from "./world-map.js";
 
 /* Palette from the concept board: sky and water blues, nature greens, sand, rock greys, ruin tan, star gold */
@@ -54,6 +55,53 @@ export const ISLE = {
 };
 
 const S = Math.SQRT1_2;
+
+/* One wind for the whole island: broad gust bands, stretched across the wind and broken up by a second noise, roll
+   along WIND_DIR (world xz). Grass and tree crowns both lean with windGust, so a gust visibly crosses the meadow and
+   then the trees beyond it. */
+export const windTime = { value: 0 };
+const WIND_GLSL = [
+  "float windHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
+  "float windNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
+  "  return mix(mix(windHash(i), windHash(i + vec2(1.0, 0.0)), f.x), mix(windHash(i + vec2(0.0, 1.0)), windHash(i + vec2(1.0, 1.0)), f.x), f.y); }",
+  "const vec2 WIND_DIR = vec2(0.8211, -0.5708);",
+  "float windGust(vec2 p, float t){",
+  "  float along = dot(p, WIND_DIR);",
+  "  float across = dot(p, vec2(-WIND_DIR.y, WIND_DIR.x));",
+  "  float band = windNoise(vec2(along * 0.14 - t * 0.5, across * 0.05));",
+  "  float breakup = windNoise(p * 0.09 + WIND_DIR * t * 0.2 + 31.0);",
+  "  return smoothstep(0.42, 0.85, band * (0.55 + breakup * 0.9));",
+  "}",
+].join("\n");
+
+/* Tree and bush crowns bend downwind: aSway = (weight, base x, base z), baked per vertex by makeBake.put, so the
+   whole crown follows the gust at its trunk and only the tips flutter */
+const windSway = (material) => {
+  const previous = material.onBeforeCompile;
+  const key = material.customProgramCacheKey?.() || "";
+  material.onBeforeCompile = (shader, renderer) => {
+    previous?.(shader, renderer);
+    shader.uniforms.windTime = windTime;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", `#include <common>\nuniform float windTime;\nattribute vec3 aSway;\n${WIND_GLSL}`)
+      .replace(
+        "#include <begin_vertex>",
+        [
+          "#include <begin_vertex>",
+          "if (aSway.x > 0.0) {",
+          "  float gust = windGust(aSway.yz, windTime);",
+          "  float flutter = windNoise(transformed.xz * 0.8 + WIND_DIR * windTime * 1.4) - 0.5;",
+          "  float push = (0.18 + gust * 0.8 + sin(windTime * 1.6 + aSway.y * 0.37 + aSway.z * 0.23) * 0.06) * aSway.x + flutter * aSway.x * 0.35;",
+          "  transformed.xz += WIND_DIR * push;",
+          "  transformed.y -= push * push * 0.2;",
+          "}",
+        ].join("\n")
+      );
+  };
+  material.customProgramCacheKey = () => `${key}-sway`;
+  return material;
+};
+
 const hash3 = (x, y, z) => {
   const h = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
   return h - Math.floor(h);
@@ -215,15 +263,31 @@ const makeBake = ({ dry = false } = {}) => {
   const list = [];
   return {
     add(geometry, color, matrix, shade = 0, grade = null) {
+      if (geometry.userData.sized) [geometry, matrix] = sizedPiece(geometry, matrix);
       const g = paint(geometry, color, shade);
       if (grade) gradeY(g, ...grade);
       g.applyMatrix4(matrix);
       if (WEATHER[color]) weather(g, WEATHER[color], list.length, dry);
       list.push(g);
     },
-    /* A pre-coloured model; `vary` nudges its whole colour so copies are not identical */
-    put(geometry, matrix, vary = 0, seed = list.length) {
+    /* A pre-coloured model; `vary` nudges its whole colour so copies are not identical; `sway` lets its upper part
+       bend in the wind (world units of lean at the very top in a full gust, before the per-copy scale) */
+    put(geometry, matrix, vary = 0, seed = list.length, sway = 0) {
       const g = geometry.clone();
+      if (sway) {
+        if (!geometry.userData.swayBox) g.computeBoundingBox();
+        const { min: lo, max: hi } = geometry.userData.swayBox || g.boundingBox;
+        const tall = hi.y - lo.y;
+        const scale = new THREE.Vector3().setFromMatrixScale(matrix).y;
+        const base = new THREE.Vector3().setFromMatrixPosition(matrix);
+        const p = g.attributes.position;
+        const weights = new Float32Array(p.count * 3);
+        for (let i = 0; i < p.count; i += 1) {
+          const t = THREE.MathUtils.clamp((p.getY(i) - lo.y - tall * 0.3) / (tall * 0.7), 0, 1);
+          weights.set([sway * scale * t * t, base.x, base.z], i * 3);
+        }
+        g.setAttribute("aSway", new THREE.BufferAttribute(weights, 3));
+      }
       g.applyMatrix4(matrix);
       if (vary) {
         const c = g.attributes.color;
@@ -235,34 +299,13 @@ const makeBake = ({ dry = false } = {}) => {
     },
     build(material) {
       if (!list.length) return null;
+      if (list.some((g) => g.attributes.aSway)) list.forEach((g) => g.attributes.aSway || g.setAttribute("aSway", new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 3), 3)));
       const merged = mergeGeometries(list);
       list.forEach((g) => g.dispose());
       list.length = 0;
       return new THREE.Mesh(merged, material);
     },
   };
-};
-
-const G = {
-  box: facet(new THREE.BoxGeometry(1, 1, 1)),
-  hex: facet(new THREE.CylinderGeometry(1, 1, 1, 6)),
-  oct: facet(new THREE.CylinderGeometry(1, 1, 1, 8)),
-  cone: facet(new THREE.ConeGeometry(1, 1, 7)),
-  ico: facet(new THREE.IcosahedronGeometry(1, 0), 0.3),
-  blob: [0, 1, 2].map((seed) => facet(new THREE.IcosahedronGeometry(1, 1), 0.22, seed)),
-  rock: [0, 1, 2].map((seed) => facet(new THREE.DodecahedronGeometry(1, 0), 0.5, seed)),
-  column: [0, 1, 2, 3].map((seed) => facet(new THREE.CylinderGeometry(1, 1.12, 1, 6, 3), 0.34, seed, 0.06)),
-  slab: [0, 1, 2].map((seed) => facet(new THREE.BoxGeometry(1, 1, 1, 1, 3, 1), 0.16, seed)),
-  /* Square frustums (top radius / bottom radius), edges along the local axes */
-  taper: facet(new THREE.CylinderGeometry(0.72, 1, 1, 4, 1).rotateY(Math.PI / 4)),
-  flare: facet(new THREE.CylinderGeometry(1, 0.62, 1, 4, 1).rotateY(Math.PI / 4)),
-  peak: facet(new THREE.CylinderGeometry(0.05, 1, 1, 4, 1).rotateY(Math.PI / 4)),
-};
-
-const combine = (parts) => {
-  const merged = mergeGeometries(parts);
-  parts.forEach((g) => g.dispose());
-  return merged;
 };
 
 /* Tree and plant models, each one coloured geometry. Foliage and bark are smooth shaded (shared vertices) so the
@@ -281,6 +324,146 @@ const smoothGeo = (geometry, warp) => {
   g.computeVertexNormals();
   return g.toNonIndexed();
 };
+/* Keeps a built-in geometry's own smooth normals, in the same attribute layout as everything else in the bakes */
+const plain = (geometry, warp) => {
+  const g = geometry.index ? geometry.toNonIndexed() : geometry;
+  Object.keys(g.attributes).forEach((name) => name !== "position" && name !== "normal" && g.deleteAttribute(name));
+  if (warp) {
+    const p = g.attributes.position;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < p.count; i += 1) {
+      warp(v.fromBufferAttribute(p, i));
+      p.setXYZ(i, v.x, v.y, v.z);
+    }
+  }
+  return g;
+};
+/* A weathered boulder: a smooth sphere pressed into a few broad lumps, flatter underneath */
+const boulder = (seed, lumps = 0.3) =>
+  smoothGeo(new THREE.IcosahedronGeometry(1, 1), (v) => {
+    const n = v.clone().normalize();
+    const wave = Math.sin(n.x * 2.3 + seed) * Math.sin(n.y * 1.9 + seed * 1.3) * Math.sin(n.z * 2.1 + seed * 0.7);
+    v.multiplyScalar(1 + wave * lumps + (hash3(n.x, n.y, n.z + seed) - 0.5) * lumps * 0.5);
+    if (v.y < 0) v.y *= 0.7;
+  });
+const combine = (parts) => {
+  const merged = mergeGeometries(parts);
+  parts.forEach((g) => g.dispose());
+  return merged;
+};
+/* Soft minimum of plane distances: flat cut faces where one plane is nearest, rounded bevels where two meet */
+const softMin = (values, bevel) => {
+  const low = Math.min(...values);
+  let sum = 0;
+  values.forEach((d) => (sum += Math.exp(-(d - low) / bevel)));
+  return low - bevel * Math.log(sum);
+};
+/* Chiselled stone after sampleModels/stylized_low-poly_stone.glb: a fine sphere pulled in onto a few random cut
+   planes, so it reads as big flat faces joined by soft bevels instead of triangles. Flatter underneath. */
+const chisel = (seed, faces = 9, detail = 3, bevel = 0.05) => {
+  const planes = [];
+  for (let k = 0; k < faces; k += 1) {
+    const y = 1 - (2 * (k + 0.5)) / faces;
+    const r = Math.sqrt(1 - y * y);
+    const a = k * 2.39996 + seed * 1.7;
+    const n = new THREE.Vector3(
+      Math.cos(a) * r + (hash3(k, seed, 1) - 0.5) * 0.45,
+      y * 1.1 + (hash3(k, seed, 2) - 0.5) * 0.35,
+      Math.sin(a) * r + (hash3(k, seed, 3) - 0.5) * 0.45
+    ).normalize();
+    planes.push([n, 0.84 + hash3(seed, k, 4) * 0.24]);
+  }
+  planes.push([new THREE.Vector3(0, -1, 0), 0.62]);
+  return smoothGeo(new THREE.IcosahedronGeometry(1, detail), (v) => {
+    const d = v.clone().normalize();
+    const hits = planes.map(([n, dist]) => {
+      const c = d.dot(n);
+      return c > 0.03 ? dist / c : 40;
+    });
+    v.copy(d).multiplyScalar(Math.min(1.5, softMin(hits, bevel)));
+  });
+};
+/* A stone cluster like the reference: one tall block leaning on a smaller one */
+const stoneCluster = (seed) => {
+  const big = chisel(seed, 9).applyMatrix4(at(0, 0, 0, { sx: 0.8, sy: 1, sz: 0.7 }));
+  const small = chisel(seed + 7, 8).applyMatrix4(at(0.72, -0.35, 0.18, { ry: seed, s: 0.5 }));
+  return combine([big, small]);
+};
+/* Pieces built at their real size, so bevels stay even instead of stretching with the piece's scale. `sized(x, y, z)`
+   builds one; sizedPiece swaps a scaled unit piece for the real-size one with the scale taken out of its matrix. */
+const sizedCache = new Map();
+const _mp = new THREE.Vector3();
+const _mq = new THREE.Quaternion();
+const _ms = new THREE.Vector3();
+const sizedPiece = (geometry, matrix) => {
+  matrix.decompose(_mp, _mq, _ms);
+  const [x, y, z] = [_ms.x, _ms.y, _ms.z].map((v) => Math.max(0.01, Math.round(Math.abs(v) * 50) / 50));
+  const key = `${geometry.uuid}:${x},${y},${z}`;
+  if (!sizedCache.has(key)) sizedCache.set(key, geometry.userData.sized(x, y, z));
+  return [sizedCache.get(key), new THREE.Matrix4().compose(_mp, _mq, _ms.set(1, 1, 1))];
+};
+const sized = (geometry, build) => {
+  geometry.userData.sized = build;
+  return geometry;
+};
+/* Basalt column: a few flat sides with soft corners and a rounded top rim, sized to the real column */
+const basalt = (seed) => {
+  const sides = [];
+  const count = 5 + (seed % 2);
+  for (let k = 0; k < count; k += 1) sides.push([((k + (hash3(k, seed, 5) - 0.5) * 0.45) / count) * Math.PI * 2, 0.9 + hash3(seed, k, 6) * 0.14]);
+  const tilt = [(hash3(seed, 1, 7) - 0.5) * 0.2, (hash3(seed, 2, 7) - 0.5) * 0.2];
+  return sized(new THREE.BoxGeometry(), (rx, h, rz) => {
+    const b = Math.min(0.22, rx * 0.22, h * 0.2);
+    const top = h / 2;
+    const profile = [
+      [0, -top],
+      [1, -top],
+      [1, top - b * 1.6],
+      [1 - (b * 0.35) / rx, top - b * 0.55],
+      [1 - b / rx, top],
+      [0, top],
+    ].map(([r, y]) => new THREE.Vector2(r, y));
+    return smoothGeo(new THREE.LatheGeometry(profile, 24), (v) => {
+      const ang = Math.atan2(v.z, v.x);
+      const m = softMin(
+        sides.map(([a, d]) => {
+          const c = Math.cos(ang - a);
+          return c > 0.03 ? d / c : 40;
+        }),
+        0.045
+      );
+      v.x *= m * rx;
+      v.z *= m * rz;
+      if (v.y > top - b * 2) v.y += (v.x * tilt[0] + v.z * tilt[1]) * Math.min(1, rx);
+    });
+  });
+};
+/* Soft-edged shapes everywhere, so stone, wood and ruins read as rounded painted forms instead of hard boxes */
+const G = {
+  box: sized(new THREE.BoxGeometry(), (x, y, z) => plain(new RoundedBoxGeometry(x, y, z, 1, Math.min(0.06, Math.min(x, y, z) * 0.22)))),
+  hex: plain(new THREE.CylinderGeometry(1, 1, 1, 9)),
+  oct: plain(new THREE.CylinderGeometry(1, 1, 1, 14)),
+  cone: facet(new THREE.ConeGeometry(1, 1, 7)),
+  ico: facet(new THREE.IcosahedronGeometry(1, 0), 0.3),
+  blob: [0, 1, 2].map((seed) => boulder(seed * 3.1, 0.14)),
+  rock: [0, 1, 2].map((seed) => chisel(seed * 3 + 1)),
+  stones: [0, 1].map((seed) => stoneCluster(seed * 5 + 2)),
+  column: [0, 1, 2, 3].map((seed) => basalt(seed)),
+  slab: [0, 1, 2].map((seed) =>
+    sized(new THREE.BoxGeometry(), (x, y, z) => {
+      const jitter = Math.min(x, y, z) * 0.06;
+      return plain(new RoundedBoxGeometry(x, y, z, 2, Math.min(0.12, Math.min(x, y, z) * 0.2)), (v) => {
+        v.x += (hash3(Math.round(v.y * 4), seed, 1) - 0.5) * jitter;
+        v.z += (hash3(Math.round(v.y * 4), seed, 2) - 0.5) * jitter;
+      });
+    })
+  ),
+  /* Square frustums (top radius / bottom radius), edges along the local axes */
+  taper: facet(new THREE.CylinderGeometry(0.72, 1, 1, 4, 1).rotateY(Math.PI / 4)),
+  flare: facet(new THREE.CylinderGeometry(1, 0.62, 1, 4, 1).rotateY(Math.PI / 4)),
+  peak: facet(new THREE.CylinderGeometry(0.05, 1, 1, 4, 1).rotateY(Math.PI / 4)),
+};
+
 /* Vertex colours from a ramp of stops, picked per vertex by `pick(position, normal)` in 0..1 */
 const rampPaint = (g, stops, pick) => {
   const p = g.attributes.position;
@@ -299,20 +482,168 @@ const rampPaint = (g, stops, pick) => {
   g.setAttribute("color", new THREE.BufferAttribute(c, 3));
   return g;
 };
-const LEAF = ["#2c5e36", "#477f3c", "#6a9f45", "#93c25a", "#c2db74"];
-const NEEDLE = ["#24553a", "#357544", "#539552", "#80b863"];
-const BARK = ["#5a3b2a", "#7d5236", "#a07250"];
-/* One lumpy leaf clump: a smooth sphere pushed in and out by a few waves, lit from above in its colours */
-const clump = (r, seed, detail = 2) =>
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+
+/* Foliage, after sampleModels/stylized_bush.glb: every bush and tree is a dark core shape wrapped in a shell of
+   leaf cards. One atlas, two tiles: a cluster of small rounded leaves (bushes, round trees) and a needle spray
+   (pines). Cards take the core's normal, so each mass shades as one soft ball; leaves are sized from Niko (2.5 units
+   tall): a bush leaf is about a twentieth of his height, a tree leaf a little bigger. */
+const LEAF_TILE = 0;
+const NEEDLE_TILE = 1;
+const foliageTexture = () => {
+  const W = 64;
+  const data = new Uint8Array(W * 2 * W * 4);
+  /* Leaves fan up from the card's bottom centre: [angle from vertical, length, half width] */
+  const leaves = [
+    [-1.05, 0.4, 0.13],
+    [1.0, 0.42, 0.13],
+    [-0.62, 0.52, 0.14],
+    [0.58, 0.5, 0.14],
+    [-0.22, 0.6, 0.15],
+    [0.26, 0.58, 0.15],
+    [0.02, 0.7, 0.16],
+  ];
+  const needles = [];
+  for (let k = 0; k < 22; k += 1) {
+    const s = 0.06 + (k / 21) * 0.84;
+    needles.push([s, k % 2 ? 1 : -1, 0.42 * (1 - s * 0.6)]);
+  }
+  /* Which leaf covers (fx, fy) on top, and where on it: returns [shade] or null */
+  const leafAt = (fx, fy) => {
+    for (let i = leaves.length - 1; i >= 0; i -= 1) {
+      const [a, len, half] = leaves[i];
+      const dx = fx - 0.5;
+      const dy = fy - 0.04;
+      const s = (dx * Math.sin(a) + dy * Math.cos(a)) / len;
+      const w = (dx * Math.cos(a) - dy * Math.sin(a)) / half;
+      if (s <= 0 || s >= 1) continue;
+      const edge = Math.pow(Math.sin(Math.PI * Math.pow(s, 0.85)), 0.55);
+      if (Math.abs(w) >= edge) continue;
+      const rim = Math.abs(w) / edge > 0.82 ? 0.84 : 1;
+      const rib = Math.abs(w) < 0.08 && s < 0.8 ? 0.9 : 1;
+      return (0.74 + s * 0.26 + (i % 3) * 0.03) * rim * rib;
+    }
+    return null;
+  };
+  const needleAt = (fx, fy) => {
+    const dx = fx - 0.5;
+    if (Math.abs(dx) < 0.03 && fy < 0.95) return 0.72;
+    for (const [s, side, len] of needles) {
+      const t = (dx * side) / len;
+      if (t <= -0.02 || t >= 1) continue;
+      const along = fy - (s + t * len * 0.6);
+      if (Math.abs(along) < 0.05 * (1 - t * 0.55)) return 0.8 + t * 0.2;
+    }
+    return null;
+  };
+  for (let py = 0; py < W; py += 1) {
+    for (let px = 0; px < W * 2; px += 1) {
+      const tile = px >= W ? NEEDLE_TILE : LEAF_TILE;
+      const at = tile === LEAF_TILE ? leafAt : needleAt;
+      let cover = 0;
+      for (let s = 0; s < 4; s += 1) if (at(((px % W) + (s % 2) * 0.5 + 0.25) / W, (py + (s >> 1) * 0.5 + 0.25) / W) != null) cover += 0.25;
+      const shade = at(((px % W) + 0.5) / W, (py + 0.5) / W) ?? 0.8;
+      data.set([255 * shade, 255 * shade, 255 * shade, cover * 255], (py * W * 2 + px) * 4);
+    }
+  }
+  const texture = new THREE.DataTexture(data, W * 2, W, THREE.RGBAFormat);
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+  return texture;
+};
+
+/* Collects leaf cards into one geometry: position, the core's normal, colour, atlas uv */
+const cardShell = () => {
+  const pos = [];
+  const nrm = [];
+  const col = [];
+  const uv = [];
+  const out = new THREE.Color();
+  const side = new THREE.Vector3();
+  return {
+    /* A card standing on `centre`, its leaves pointing along `tip`, facing `normal` */
+    card(centre, normal, tip, size, colour, tile) {
+      side.crossVectors(tip, normal).normalize().multiplyScalar(size / 2);
+      const base = centre.clone().addScaledVector(tip, -size * 0.3);
+      const end = base.clone().addScaledVector(tip, size);
+      const corners = [base.clone().sub(side), base.clone().add(side), end.clone().add(side), end.clone().sub(side)];
+      const u0 = tile * 0.5;
+      const uvs = [[u0, 0], [u0 + 0.5, 0], [u0 + 0.5, 1], [u0, 1]];
+      out.copy(colour);
+      [0, 1, 2, 0, 2, 3].forEach((i) => {
+        pos.push(corners[i].x, corners[i].y, corners[i].z);
+        nrm.push(normal.x, normal.y, normal.z);
+        col.push(out.r, out.g, out.b);
+        uv.push(...uvs[i]);
+      });
+    },
+    build() {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
+      g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+      g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+      return g;
+    },
+  };
+};
+const pickColour = (stops, t, out = new THREE.Color()) => {
+  const k = THREE.MathUtils.clamp(t, 0, 0.9999) * (stops.length - 1);
+  return out.set(stops[Math.floor(k)]).lerp(new THREE.Color(stops[Math.floor(k) + 1]), k - Math.floor(k));
+};
+const UP = V(0, 1, 0);
+/* Leaves pointing down the surface and a little out, like shingles; a random roll breaks the pattern */
+const shingle = (normal, roll) => {
+  const down = UP.clone().addScaledVector(normal, -normal.y);
+  if (down.lengthSq() < 0.02) down.set(Math.cos(roll), 0, Math.sin(roll));
+  down.normalize().negate();
+  down.applyAxisAngle(normal, (roll % 1) - 0.5);
+  return down.multiplyScalar(0.85).addScaledVector(normal, 0.35).normalize();
+};
+/* Cover an ellipsoid (centre c, radii r) with leaf cards, `size` across, lighter toward its top */
+const leafBall = (shell, c, r, size, stops, seed, tile = LEAF_TILE, from = -0.55) => {
+  const area = 4 * Math.PI * Math.pow((r.x * r.y + r.y * r.z + r.x * r.z) / 3, 1) * (1 - from) * 0.5;
+  const count = Math.max(8, Math.round((area * 1.1) / (size * size * 0.5)));
+  const colour = new THREE.Color();
+  for (let k = 0; k < count; k += 1) {
+    const y = 1 - (k + 0.5) / count * (1 - from);
+    const ring = Math.sqrt(Math.max(0, 1 - y * y));
+    const a = k * 2.39996 + seed * 1.7;
+    const d = V(Math.cos(a) * ring, y, Math.sin(a) * ring);
+    const centre = V(c.x + d.x * r.x, c.y + d.y * r.y, c.z + d.z * r.z);
+    const normal = V(d.x / r.x, d.y / r.y, d.z / r.z).normalize();
+    const jitter = hash3(k, seed, 3);
+    const lift = Math.pow(THREE.MathUtils.clamp((y - from) / (1 - from), 0, 1), 0.9);
+    pickColour(stops, 0.1 + lift * 0.82 + (jitter - 0.5) * 0.16, colour);
+    shell.card(centre, normal, shingle(normal, jitter * 6.283 + seed), size * (0.85 + hash3(seed, k, 5) * 0.3), colour, tile);
+  }
+};
+/* A dark core under the leaves, so gaps between cards read as depth instead of holes */
+const coreBall = (c, r, stops, seed) =>
   rampPaint(
-    smoothGeo(new THREE.IcosahedronGeometry(1, detail), (v) => {
-      const bump = Math.sin(v.x * 3.1 + seed) * Math.sin(v.y * 2.7 + seed * 1.7) * Math.sin(v.z * 3.3 + seed * 0.6);
-      v.multiplyScalar(r * (1 + bump * 0.16 + (hash3(v.x, v.y, v.z + seed) - 0.5) * 0.08));
-      v.y *= 0.86;
+    smoothGeo(new THREE.IcosahedronGeometry(1, 1), (v) => {
+      const bump = 1 + (hash3(v.x, v.y, v.z + seed) - 0.5) * 0.12;
+      v.set(c.x + v.x * r.x * 0.9 * bump, c.y + Math.max(v.y, -0.6) * r.y * 0.9 * bump, c.z + v.z * r.z * 0.9 * bump);
     }),
-    LEAF,
-    (v, n) => 0.42 + n.y * 0.42 + v.y / r * 0.12 + (hash3(Math.round(v.x * 3), Math.round(v.y * 3), Math.round(v.z * 3) + seed) - 0.5) * 0.14
+    stops,
+    (v) => (v.y - c.y + r.y) / (r.y * 2)
   );
+/* Shared bounding box for a model's core and leaves, so both sway together in the wind */
+const swayPair = (core, leaves) => {
+  core.computeBoundingBox();
+  leaves.userData.swayBox = core.userData.swayBox = core.boundingBox.clone().union((leaves.computeBoundingBox(), leaves.boundingBox));
+  return { core, leaves };
+};
+
+const LEAF = ["#2b5a30", "#3f7b38", "#5f9f40", "#86c34b", "#b4df68"];
+const LEAF_CORE = ["#163a22", "#1f4a2a", "#2b5c31"];
+const NEEDLE = ["#285c3c", "#367849", "#4f9551", "#76b65e", "#a2d277"];
+const NEEDLE_CORE = ["#1a4430", "#225236", "#2d6340"];
+const BARK = ["#5a3b2a", "#7d5236", "#a07250"];
+const BUSH_LEAF = ["#2b5c2f", "#40803a", "#66a843", "#90cc4e", "#b9e36c"];
+
 /* A tapered limb from a to b, smooth shaded, darker toward the ground */
 const limb = (a, b, r0, r1, flare = 0) => {
   const dir = new THREE.Vector3().subVectors(b, a);
@@ -327,7 +658,8 @@ const limb = (a, b, r0, r1, flare = 0) => {
   g.applyMatrix4(new THREE.Matrix4().compose(a, new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()), new THREE.Vector3(1, 1, 1)));
   return rampPaint(g, BARK, (v) => 0.15 + v.y * 0.35);
 };
-const V = (x, y, z) => new THREE.Vector3(x, y, z);
+
+/* Round tree after sampleModels/low_poly_tree.glb: a flared forked trunk under a crown of leafy balls */
 const roundTreeGeo = (seed) => {
   const a = seed * 2.4;
   const fork = V(Math.cos(a) * 0.08, 1.15, Math.sin(a) * 0.08);
@@ -341,17 +673,21 @@ const roundTreeGeo = (seed) => {
     [Math.cos(a + 1.2) * 0.3, 2.75, Math.sin(a + 1.2) * 0.3, 0.6],
     [Math.cos(a + 3.6) * 0.75, 1.72, Math.sin(a + 3.6) * 0.75, 0.5],
   ];
-  return gradeY(
+  const shell = cardShell();
+  crown.forEach(([x, y, z, r], k) => leafBall(shell, V(x, y, z), V(r, r * 0.86, r), 0.42, LEAF, seed * 7 + k));
+  const core = gradeY(
     combine([
       limb(V(0, -0.1, 0), fork, 0.2, 0.13, 0.9),
       ...tips.map((t) => limb(fork, t, 0.11, 0.05)),
-      ...crown.map(([x, y, z, r], k) => clump(r, seed * 7 + k).applyMatrix4(at(x, y, z, { ry: k + seed }))),
+      ...crown.map(([x, y, z, r], k) => coreBall(V(x, y, z), V(r, r * 0.86, r), LEAF_CORE, seed * 7 + k)),
     ]),
     0.6,
     1.08
   );
+  return swayPair(core, shell.build());
 };
-/* A pine: a bare trunk and four smooth tiers whose rims droop into ragged branch tips */
+
+/* A pine: a bare trunk and four drooping tiers of needle sprays over dark cones */
 const pineGeo = (seed) => {
   const tiers = [
     [0.95, 1.05, 1.0],
@@ -359,38 +695,53 @@ const pineGeo = (seed) => {
     [2.25, 0.62, 0.82],
     [2.82, 0.4, 0.78],
   ];
-  return gradeY(
+  const shell = cardShell();
+  const colour = new THREE.Color();
+  tiers.forEach(([y, r, h], k) => {
+    const rows = 3;
+    for (let row = 0; row < rows; row += 1) {
+      const t = 0.4 + (row / (rows - 1)) * 0.62;
+      const around = Math.max(6, Math.round(t * r * 17));
+      for (let i = 0; i < around; i += 1) {
+        const ang = ((i + row * 0.5) / around) * Math.PI * 2 + seed + k;
+        const centre = V(Math.cos(ang) * r * t, y + h / 2 - h * t, Math.sin(ang) * r * t);
+        const normal = V(Math.cos(ang) * h, r, Math.sin(ang) * h).normalize();
+        const slope = V(Math.cos(ang) * r, -h, Math.sin(ang) * r).normalize();
+        const tip = slope.multiplyScalar(0.85).addScaledVector(normal, 0.3).normalize();
+        pickColour(NEEDLE, 0.12 + (1 - t) * 0.5 + k * 0.1 + (hash3(i, k, seed) - 0.5) * 0.14, colour);
+        shell.card(centre, normal, tip, 0.6 * (0.85 + hash3(seed, i, row) * 0.3), colour, NEEDLE_TILE);
+      }
+    }
+  });
+  const core = gradeY(
     combine([
       limb(V(0, -0.1, 0), V(0, 1.2, 0), 0.15, 0.09, 0.5),
-      ...tiers.map(([y, r, h], k) =>
+      ...tiers.map(([y, r, h]) =>
         rampPaint(
           smoothGeo(new THREE.ConeGeometry(1, 1, 10, 2), (v) => {
-            const ang = Math.atan2(v.z, v.x);
-            const rim = THREE.MathUtils.smoothstep(-v.y, 0, 0.5);
-            const tooth = Math.cos(ang * 5 + seed + k) * 0.5 + 0.5;
-            v.x *= r * (1 + tooth * rim * 0.2);
-            v.z *= r * (1 + tooth * rim * 0.2);
-            v.y = y + v.y * h - tooth * rim * 0.2 * h;
+            v.x *= r * 0.92;
+            v.z *= r * 0.92;
+            v.y = y + v.y * h;
           }),
-          NEEDLE,
-          (v, n) => 0.25 + (v.y - y + h * 0.5) / h * 0.45 + n.y * 0.2 + k * 0.04
+          NEEDLE_CORE,
+          (v) => (v.y - y + h * 0.5) / h
         )
       ),
     ]),
     0.62,
     1.08
   );
+  return swayPair(core, shell.build());
 };
-const bushGeo = (seed) =>
-  gradeY(
-    combine([
-      clump(0.55, seed * 3, 2).applyMatrix4(at(0, 0.4, 0)),
-      clump(0.4, seed * 3 + 1).applyMatrix4(at(0.42, 0.3, 0.14)),
-      clump(0.38, seed * 3 + 2).applyMatrix4(at(-0.36, 0.28, 0.2)),
-    ]),
-    0.7,
-    1.06
-  );
+
+/* Bush: a dark dome under small rounded leaves, knee to hip high on Niko */
+const bushParts = (seed) => {
+  const c = V(0, 0.26, 0);
+  const r = V(0.62, 0.48, 0.62);
+  const shell = cardShell();
+  leafBall(shell, c, r, 0.3, BUSH_LEAF, seed * 5 + 1, LEAF_TILE, -0.35);
+  return swayPair(coreBall(c, r, LEAF_CORE, seed), shell.build());
+};
 
 /* See-through: scenery between the camera and Niko is dithered away in a small circle around him, so trees, stones
    and cliffs never hide him. playerView is Niko's chest in view space, set every frame. */
@@ -425,7 +776,7 @@ export const occlude = (material) => {
   return material;
 };
 
-/* Crisp toon light for the scenery: flat shadow / half-lit / lit bands with only a thin blend at each edge
+/* Crisp toon light for the scenery and Niko: flat shadow / half-lit / lit bands with only a thin blend at each edge
    (u = N·L * 0.5 + 0.5, so the first edge sits on the terminator) */
 export const makeRamp = (levels = [100, 176, 255], edges = [0.5, 0.63], blend = 0.02) => {
   const size = 64;
@@ -502,6 +853,15 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
 
   const bake = makeBake();
   const glowBake = makeBake();
+  const leafBake = makeBake();
+  const leafTex = foliageTexture();
+  const leafMaterial = atmos(occlude(windSway(new THREE.MeshToonMaterial({ vertexColors: true, map: leafTex, alphaTest: 0.5, side: THREE.DoubleSide, gradientMap: ramp }))));
+  const leafDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: leafTex, alphaTest: 0.5, side: THREE.DoubleSide });
+  /* A tree or bush: its core into the props, its leaf cards into the leaf mesh, swaying together */
+  const plant = (model, matrix, vary, seed, sway) => {
+    bake.put(model.core, matrix, vary, seed, sway);
+    leafBake.put(model.leaves, matrix, vary, seed, sway);
+  };
   const blockers = [];
   const block = (x, z, r) => blockers.push({ x, z, r });
   const uvToXZ = (u, v) => MAP.toXZ(u, v);
@@ -625,7 +985,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
 
   /* Ground paint: groundColour baked into a texture (about 5 texels a unit) so patches, paths and tide lines keep
      crisp edges instead of blending across the mesh; the same pass records where grass grows */
-  const TEX = coarse ? 384 : 480;
+  const TEX = coarse ? 448 : 640;
   const texel = span / TEX;
   const hBil = (x, z) => {
     const fx = (x - min) / cell - 0.5;
@@ -788,31 +1148,32 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     const [x, z] = uvToXZ(...MAP.lay(u, v));
     const floor = MAP.heightAt(x, z);
     atWaterline(x, z, floor + s * 0.9, s * 1.6, s * 1.2);
-    bake.add(G.rock[k % 3], k % 2 ? ISLE.rock : ISLE.rockLight, at(x, floor + s * 0.9, z, { ry: k * 1.7, sx: s * 1.3, sy: s * 1.6, sz: s * 1.1 }), 0, [0.6, 1.1]);
+    bake.add(G.stones[k % 2], k % 2 ? ISLE.rock : ISLE.rockLight, at(x, floor + s * 0.9, z, { ry: k * 1.7, sx: s * 1.6, sy: s * 1.6, sz: s * 1.5 }), 0, [0.6, 1.1]);
     bake.add(G.rock[(k + 2) % 3], ISLE.rockDeep, at(x + s * 0.9, floor + s * 0.4, z + s * 0.5, { ry: k, s: s * 0.6 }), 0, [0.6, 1.1]);
   });
 
-  /* Stairs: stone steps on the ramps, curbs along both sides, and arches over two of them */
+  /* Stairs: thick stone treads on the ramps, each flanked by a cheek block that steps up with it (one stepped stone
+     wall per side, no long sloping beams), and arches over two of them */
   const worldDir = (dir) => [(dir[0] + dir[1]) * S, (dir[1] - dir[0]) * S];
   MAP.stairs.forEach((s, index) => {
     const n = Math.max(4, Math.round((s.to - s.from) / 0.3));
     const [dx, dz] = worldDir(s.dir);
     const ry = Math.atan2(dx, dz);
     const run = s.len / n;
+    const rise = (s.to - s.from) / n;
+    const along = (t, off = 0) => uvToXZ(s.a[0] + s.dir[0] * s.len * t + s.dir[1] * off, s.a[1] + s.dir[1] * s.len * t - s.dir[0] * off);
     for (let k = 0; k < n; k += 1) {
       const t = (k + 0.5) / n;
-      const [x, z] = uvToXZ(s.a[0] + s.dir[0] * s.len * t, s.a[1] + s.dir[1] * s.len * t);
-      const top = s.from + (s.to - s.from) * t;
-      const bottom = s.from - 0.5;
-      bake.add(G.box, k % 2 ? ISLE.ruin : ISLE.ruinDeep, at(x, (top + bottom) / 2, z, { ry: ry + (rand(k, index) - 0.5) * 0.04, sx: s.w * 2 - 0.15, sy: top - bottom, sz: run * 1.04 }), (rand(index, k) - 0.5) * 0.05);
+      const top = s.from + rise * (k + 0.5);
+      const deep = rise + 0.75;
+      const [x, z] = along(t);
+      bake.add(G.slab[k % 3], k % 2 ? ISLE.ruin : ISLE.ruinDeep, at(x, top - deep / 2, z, { ry: ry + (rand(k, index) - 0.5) * 0.03, sx: s.w * 2 - 0.1, sy: deep, sz: run * 1.08 }), (rand(index, k) - 0.5) * 0.05);
+      [-1, 1].forEach((side) => {
+        const [cx, cz] = along(t, (s.w + 0.14) * side);
+        const tall = deep + 0.32 + rand(k, side + index) * 0.06;
+        bake.add(G.slab[(k + 1) % 3], ISLE.ruinDeep, at(cx, top + 0.32 - tall / 2, cz, { ry, sx: 0.36, sy: tall, sz: run * 1.02 }));
+      });
     }
-    const slope = Math.atan2(s.to - s.from, s.len);
-    const hyp = Math.hypot(s.to - s.from, s.len);
-    [-1, 1].forEach((side) => {
-      const off = s.w + 0.05;
-      const [x, z] = uvToXZ(s.a[0] + s.dir[0] * s.len * 0.5 + s.dir[1] * off * side, s.a[1] + s.dir[1] * s.len * 0.5 - s.dir[0] * off * side);
-      bake.add(G.box, ISLE.ruinDeep, at(x, (s.from + s.to) / 2 + 0.2, z, { ry, rx: -slope, sx: 0.34, sy: 0.55, sz: hyp + 0.3 }));
-    });
     if (s.arch) {
       const base = s.from;
       const broken = index === 2;
@@ -1264,7 +1625,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   ];
   const pines = [pineGeo(0), pineGeo(1)];
   const rounds = [roundTreeGeo(0), roundTreeGeo(1), roundTreeGeo(2)];
-  const bushes = [bushGeo(0), bushGeo(1)];
+  const bushes = [bushParts(0), bushParts(1), bushParts(2)];
   const trees = [];
   const scatter = (count, spacing, accept, place, avoid = true) => {
     const taken = [];
@@ -1297,7 +1658,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     (x, h, z, k, u, v) => {
       const s = 1.3 + rand(k, 9) * 0.6;
       const round = t2(u, v);
-      bake.put(round ? rounds[k % 3] : pines[k % 2], at(x, h - 0.05, z, { ry: rand(k, 3) * 6, s }), 0.18, k);
+      plant(round ? rounds[k % 3] : pines[k % 2], at(x, h - 0.05, z, { ry: rand(k, 3) * 6, s }), 0.18, k, 0.22);
       trees.push([x, z]);
       block(x, z, 0.75);
     }
@@ -1315,14 +1676,14 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       let up = 0;
       for (let q = -4; q <= 4; q += 1) for (let p = -4; p <= 4; p += 1) up = Math.max(up, hAt(i + p, j + q) - h);
       if (up < 1.8 || rand(k, 13) > 0.6) return;
-      bake.put(k % 3 ? pines[k % 2] : rounds[k % 3], at(x, h - 0.05, z, { ry: rand(k, 3) * 6, s: 1.2 + rand(k, 9) * 0.5 }), 0.18, k);
+      plant(k % 3 ? pines[k % 2] : rounds[k % 3], at(x, h - 0.05, z, { ry: rand(k, 3) * 6, s: 1.2 + rand(k, 9) * 0.5 }), 0.18, k, 0.22);
       block(x, z, 0.75);
     }
   );
   /* A pine on each sea stack, and a round tree on the islet */
   [[15.5, 9.5], [20, -2.5], [-24.4, -4.2], [10.4, 20.6]].forEach(([u, v], k) => {
     const p = groundUV(...MAP.lay(u, v));
-    bake.put(k === 3 ? rounds[0] : pines[k % 2], at(p.x, p.h - 0.05, p.z, { ry: k, s: k === 3 ? 1.35 : 1.15 }), 0.2, k + 50);
+    plant(k === 3 ? rounds[0] : pines[k % 2], at(p.x, p.h - 0.05, p.z, { ry: k, s: k === 3 ? 1.35 : 1.15 }), 0.2, k + 50, 0.22);
   });
   scatter(
     1200,
@@ -1337,10 +1698,13 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     (x, h, z, k) => {
       if (k % 3 === 0) {
         const s = 0.35 + rand(k, 1) * 0.4;
-        bake.add(G.rock[k % 3], k % 2 ? ISLE.rock : ISLE.rockLight, at(x, h + s * 0.2, z, { ry: k, sx: s * 1.3, sy: s * 0.75, sz: s }));
+        if (s > 0.6) bake.add(G.stones[k % 2], k % 2 ? ISLE.rock : ISLE.rockLight, at(x, h + s * 0.45, z, { ry: k, s: s * 0.9 }));
+        else bake.add(G.rock[k % 3], k % 2 ? ISLE.rock : ISLE.rockLight, at(x, h + s * 0.2, z, { ry: k, sx: s * 1.3, sy: s * 0.75, sz: s }));
         block(x, z, s * 0.9);
       } else if (h > 2) {
-        bake.put(bushes[k % 2], at(x, h, z, { ry: k, s: 1 + rand(k, 4) * 0.6 }), 0.24, k);
+        const bush = bushes[k % 3];
+        const where = at(x, h, z, { ry: k, s: 0.95 + rand(k, 4) * 0.4 });
+        plant(bush, where, 0.2, k, 0.08);
         block(x, z, 0.65);
       }
     }
@@ -1364,7 +1728,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
      meadow reads as one surface that ruffles at its edges. Wind rolls each card in its plane from two scrolling noises;
      Niko tips the cards away from him. Sized from Niko (2.5 units tall): a tuft is about a fifth of his height. */
   const player = new THREE.Vector3(999, 0, 999);
-  const swayUniforms = { time: { value: 0 }, player: { value: player } };
+  const swayUniforms = { time: windTime, player: { value: player } };
   {
     const blocked = new Uint8Array(size * size);
     blockers.forEach(({ x, z, r }) => {
@@ -1399,7 +1763,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       }
     }
 
-    /* Leaf masks drawn as tapered, curving blades (white on clear, like grassleaf.png / accentleaf.png) */
+    /* Leaf masks drawn as curving blades with soft rounded tips, the same leaf shape as the bushes and trees */
     const leafMask = (blades) => {
       const W = 64;
       const data = new Uint8Array(W * W * 4);
@@ -1413,7 +1777,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
               const t = fy / top;
               if (t > 1) return false;
               const cx = x0 + (x1 - x0) * Math.pow(t, 1.7);
-              return Math.abs(fx - cx) < w * Math.pow(1 - t, 0.75);
+              return Math.abs(fx - cx) < w * Math.sqrt(Math.max(0, 1 - Math.pow(t, 4))) * (1 - t * 0.3);
             });
             if (hit) cover += 0.25;
           }
@@ -1467,6 +1831,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
             "float grassNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
             "  return mix(mix(grassHash(i), grassHash(i + vec2(1.0, 0.0)), f.x), mix(grassHash(i + vec2(0.0, 1.0)), grassHash(i + vec2(1.0, 1.0)), f.x), f.y); }",
             "vec2 grassRotate(vec2 p, float a){ float c = cos(a); float s = sin(a); return vec2(p.x * c - p.y * s, p.x * s + p.y * c); }",
+            WIND_GLSL,
           ].join("\n")
         )
         .replace("#include <beginnormal_vertex>", "vec3 objectNormal = vec3(0.0, 1.0, 0.0);")
@@ -1493,12 +1858,8 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
             /* Wind blows one way across the island: broad gust bands, stretched across the wind and broken up by a
                second noise, roll downwind over the meadow, with a small per-blade flutter on top. Every card leans
                downwind a little; a passing gust pushes it over and lightens its tip. */
-            "vec2 wind = normalize(vec2(0.82, -0.57));",
-            "float along = dot(origin.xz, wind);",
-            "float across = dot(origin.xz, vec2(-wind.y, wind.x));",
-            "float band = grassNoise(vec2(along * 0.14 - time * 0.5, across * 0.05));",
-            "float breakup = grassNoise(origin.xz * 0.09 + wind * time * 0.2 + 31.0);",
-            "float gust = smoothstep(0.42, 0.85, band * (0.55 + breakup * 0.9));",
+            "vec2 wind = WIND_DIR;",
+            "float gust = windGust(origin.xz, time);",
             "float flutter = grassNoise(origin.xz * 0.7 + wind * time * 1.6) - 0.5;",
             "float sway = 0.16 + gust * 0.85 + flutter * (0.18 + gust * 0.2) + sin(time * 2.4 + aGrass.x * 6.283) * 0.04;",
             "vec3 wind3 = vec3(wind.x, 0.0, wind.y);",
@@ -1527,10 +1888,12 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
             "  float leaf = vGrass.w > 0.5 ? texture2D(accentTex, leafUv).a : texture2D(leafTex, leafUv).a;",
             "  if (leaf < 0.5) discard;",
             "  float tip = smoothstep(0.15, 0.95, vGrass.y);",
-            "  diffuseColor.rgb *= mix(0.94, 1.1, tip) + vGust * tip * 0.12;",
+            "  diffuseColor.rgb *= mix(0.8, 1.14, tip) + vGust * tip * 0.12;",
             "}",
           ].join("\n")
-        );
+        )
+        /* Alpha 0.99 marks grass for the edge pass (world.js post), which skips crease highlights on blades */
+        .replace("#include <dithering_fragment>", "#include <dithering_fragment>\ngl_FragColor.a = 0.99;");
     };
     material.customProgramCacheKey = () => "grass-cards";
     atmos(material);
@@ -1554,8 +1917,14 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     piece.add(G.rock[k % 3], ISLE.rock, at(0, -0.6, 0, { sx: 1.2, sy: 1.4, sz: 1.1 }));
     piece.add(G.cone, ISLE.rockDeep, at(0, -1.6, 0, { rx: Math.PI, sx: 0.9, sy: 1.6, sz: 0.85 }));
     piece.add(G.oct, ISLE.grass, at(0, 0.05, 0, { sx: 1.05, sy: 0.3, sz: 0.95 }));
-    if (k % 2 === 0) piece.put(pines[k % 2], at(0.1, 0.15, 0, { s: 0.5 }));
+    const leafPiece = makeBake({ dry: true });
+    if (k % 2 === 0) {
+      piece.put(pines[k % 2].core, at(0.1, 0.15, 0, { s: 0.5 }));
+      leafPiece.put(pines[k % 2].leaves, at(0.1, 0.15, 0, { s: 0.5 }));
+    }
     const mesh = piece.build(painted);
+    const leaves = leafPiece.build(leafMaterial);
+    if (leaves) mesh.add(leaves);
     mesh.position.set(x, y, z);
     mesh.scale.setScalar(s);
     mesh.rotation.y = k;
@@ -1601,7 +1970,8 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     new THREE.PlaneGeometry(170, 170).rotateX(-Math.PI / 2),
     new THREE.ShaderMaterial({
       transparent: true,
-      depthWrite: false,
+      /* Writes depth so the edge pass (world.js post) sees the sea surface, not the seabed's edges through it */
+      depthWrite: true,
       uniforms: waterUniforms,
       vertexShader: "varying vec3 wp; void main(){ vec4 w = modelMatrix * vec4(position, 1.0); wp = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }",
       fragmentShader: [
@@ -1772,13 +2142,23 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   });
 
   /* Bake it all */
-  const props = bake.build(paintedProps);
+  const props = bake.build(windSway(paintedProps));
   props.castShadow = true;
   props.receiveShadow = true;
   props.name = "props";
   root.add(props);
   const glows = glowBake.build(glowing);
   if (glows) root.add(glows);
+  {
+    const leaves = leafBake.build(leafMaterial);
+    if (leaves) {
+      leaves.castShadow = true;
+      leaves.receiveShadow = true;
+      leaves.customDepthMaterial = leafDepth;
+      leaves.name = "leaves";
+      root.add(leaves);
+    }
+  }
 
   /* Walk grid: a cell is walkable when it is dry (or decked), not the stream, not next to a drop or a cliff foot
      (stairs cut between cliffs, so they skip that test), and not under a blocker. Paths are A* over it, then pulled straight where the line of sight is clear. */
