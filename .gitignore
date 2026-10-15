@@ -8,3 +8,5 @@ skills-lock.json
 .impeccable/
 PRODUCT.md
 DESIGN.md
+.vercel
+.env*
