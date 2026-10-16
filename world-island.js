@@ -60,6 +60,9 @@ const S = Math.SQRT1_2;
    along WIND_DIR (world xz). Grass and tree crowns both lean with windGust, so a gust visibly crosses the meadow and
    then the trees beyond it. */
 export const windTime = { value: 0 };
+export const windMul = { value: 1 };
+/* Rain intensity 0–1: tip/leaf flutter when drops are landing (set from climate). */
+export const rainAmt = { value: 0 };
 const WIND_GLSL = [
   "float windHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
   "float windNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
@@ -85,30 +88,41 @@ const windSway = (material, leaves = false) => {
   material.onBeforeCompile = (shader, renderer) => {
     previous?.(shader, renderer);
     shader.uniforms.windTime = windTime;
+    shader.uniforms.windMul = windMul;
+    shader.uniforms.rainAmt = rainAmt;
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", `#include <common>\nuniform float windTime;\nattribute vec3 aSway;\nattribute vec2 aLeaf;\n${WIND_GLSL}`)
+      .replace("#include <common>", `#include <common>\nuniform float windTime;\nuniform float windMul;\nuniform float rainAmt;\nattribute vec3 aSway;\nattribute vec2 aLeaf;\n${WIND_GLSL}`)
       .replace(
         "#include <begin_vertex>",
         [
           "#include <begin_vertex>",
           "if (aSway.x > 0.0) {",
-          /* Trees answer a gust slowly (sampled at half speed), so it swells and settles instead of shoving them */
-          "  float gust = windGust(aSway.yz, windTime * 0.5);",
-          "  float lean = (0.25 + gust * 0.45 + sin(windTime * 0.8 + aSway.y * 0.37 + aSway.z * 0.23) * 0.12) * aSway.x;",
-          "  float wave = windTime * 0.9 - dot(transformed.xz, WIND_DIR) * 0.55 - transformed.y * 0.35;",
-          "  vec3 roll = vec3(sin(wave), sin(wave * 1.21 + 1.3) * 0.4, cos(wave * 0.87 + 0.4)) * aSway.x * 0.1;",
+          /* Storm leans hard but floors keep crowns from folding through the trunk / into the ground. */
+          "  float w = 1.0 + (min(windMul, 3.5) - 1.0) * 0.72;",
+          "  float gust = windGust(aSway.yz, windTime * (0.42 + w * 0.28)) * w;",
+          "  float breathe = sin(windTime * (0.7 + w * 0.35) + aSway.y * 0.37 + aSway.z * 0.23) * 0.12 * w;",
+          "  float lean = (0.2 * w + gust * 0.52 + breathe) * aSway.x;",
+          "  lean = min(lean, aSway.x * 1.05);",
+          "  float wave = windTime * (0.85 + w * 0.35) - dot(transformed.xz, WIND_DIR) * 0.55 - transformed.y * 0.35;",
+          "  vec3 roll = vec3(sin(wave), sin(wave * 1.21 + 1.3) * 0.4, cos(wave * 0.87 + 0.4)) * aSway.x * (0.07 + w * 0.04);",
+          "  float baseY = transformed.y;",
           "  transformed.xz += WIND_DIR * lean;",
-          "  transformed.y -= lean * lean * 0.2;",
+          "  transformed.y -= lean * lean * 0.12;",
           "  transformed += roll;",
+          /* Never drop a vertex more than ~28% of its sway weight — stops the “melted tree” look. */
+          "  transformed.y = max(transformed.y, baseY - aSway.x * 0.28);",
           "  #ifdef LEAF_FLUTTER",
-          "  float flap = sin(windTime * (1.8 + aLeaf.y * 1.2) + aLeaf.y * 40.0) * (0.06 + gust * 0.08);",
+          "  float flap = sin(windTime * (2.1 + aLeaf.y * 1.6 + w * 0.8) + aLeaf.y * 40.0) * (0.045 + gust * 0.09) * w;",
+          /* Rain patter: fast tiny shakes on the tips, clamped so cards don't flicker like a bug. */
+          "  flap += sin(windTime * 18.0 + aLeaf.y * 55.0) * rainAmt * 0.035 * aLeaf.x;",
+          "  flap = clamp(flap, -0.24, 0.24);",
           "  transformed += objectNormal * flap * aLeaf.x;",
           "  #endif",
           "}",
         ].join("\n")
       );
   };
-  material.customProgramCacheKey = () => `${key}-sway${leaves ? "-leaf" : ""}`;
+  material.customProgramCacheKey = () => `${key}-sway${leaves ? "-leaf" : ""}v2`;
   return material;
 };
 
@@ -1809,9 +1823,8 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   const player = new THREE.Vector3(999, 0, 999);
   const swayUniforms = { time: windTime, player: { value: player } };
 
-  /* Trampled grass: Niko's feet stamp a trail map over the whole island (rg = push direction × amount, b = amount).
-     Blades fold over away from his feet and the way he walks, stay down while he stands on them and spring back
-     over a couple of seconds once he leaves. One small render-target pass per frame, skipped once it has faded. */
+  /* Trampled grass: Niko's feet stamp a trail map (rg = lean direction × amount, b = amount). Standing crushes
+     flat (no radial part); walking lays tips along the step. Soft foot pad, ~3 s spring-back. One RT pass/frame. */
   const trail = (() => {
     const res = coarse ? 192 : 256;
     const span = size * cell;
@@ -1827,10 +1840,15 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       prev: { value: null },
       foot: { value: new THREE.Vector2(9999, 9999) },
       move: { value: new THREE.Vector2() },
-      radius: { value: 1 },
+      radius: { value: 0.58 },
       decay: { value: 1 },
       lo: { value: min },
       span: { value: span },
+      /* Up to 4 rain-hit stamps (xz + strength); keeps grass twitching where drops land. */
+      rain0: { value: new THREE.Vector3(9999, 9999, 0) },
+      rain1: { value: new THREE.Vector3(9999, 9999, 0) },
+      rain2: { value: new THREE.Vector3(9999, 9999, 0) },
+      rain3: { value: new THREE.Vector3(9999, 9999, 0) },
     };
     const material = new THREE.ShaderMaterial({
       uniforms,
@@ -1840,14 +1858,34 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       fragmentShader: [
         "uniform sampler2D prev; uniform vec2 foot; uniform vec2 move; uniform float radius; uniform float decay;",
         "uniform float lo; uniform float span; varying vec2 vUv;",
+        "uniform vec3 rain0; uniform vec3 rain1; uniform vec3 rain2; uniform vec3 rain3;",
+        "void stampRain(inout vec4 p, vec3 r, vec2 world){",
+        "  if (r.z < 0.01) return;",
+        "  float hit = smoothstep(0.32, 0.02, length(world - r.xy)) * r.z;",
+        "  hit = hit * hit * (3.0 - 2.0 * hit);",
+        "  if (hit > p.b * 0.55) {",
+        /* Soft flatten only — rain shouldn't carve walk-trail lean into the meadow. */
+        "    p = vec4(0.0, 0.0, max(p.b, hit * 0.55), 1.0);",
+        "  }",
+        "}",
         "void main(){",
         "  vec4 p = texture2D(prev, vUv) * decay;",
-        "  vec2 d = lo + vUv * span - foot;",
-        "  float hit = smoothstep(radius, radius * 0.3, length(d));",
+        "  vec2 world = lo + vUv * span;",
+        "  vec2 d = world - foot;",
+        /* Soft foot pad: crush under the sole, wide soft rim (no hard crater ring) */
+        "  float hit = smoothstep(radius, radius * 0.08, length(d));",
+        "  hit = hit * hit * (3.0 - 2.0 * hit);",
         "  if (hit > p.b) {",
-        "    vec2 dir = normalize(normalize(d + vec2(1e-4, 0.0)) * 0.7 + move);",
+        /* Standing = flatten only (zero dir). Walking = lean along the step, slight radial fill */
+        "    float moving = step(0.06, length(move));",
+        "    vec2 radial = normalize(d + vec2(1e-4, 0.0));",
+        "    vec2 dir = moving > 0.5 ? normalize(radial * 0.3 + move) : vec2(0.0);",
         "    p = vec4(dir * hit, hit, 1.0);",
         "  }",
+        "  stampRain(p, rain0, world);",
+        "  stampRain(p, rain1, world);",
+        "  stampRain(p, rain2, world);",
+        "  stampRain(p, rain3, world);",
         "  gl_FragColor = p;",
         "}",
       ].join("\n"),
@@ -1860,15 +1898,17 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     const last = new THREE.Vector3();
     let idle = 99;
     const map = { value: read.texture };
+    const rainU = [uniforms.rain0, uniforms.rain1, uniforms.rain2, uniforms.rain3];
     return {
       map,
       lo: { value: min },
       span: { value: span },
-      step(renderer, dt, foot) {
+      step(renderer, dt, foot, rainHits) {
         const on = Boolean(foot) && Math.abs(foot.y - MAP.groundAt(foot.x, foot.z)) < 0.35;
-        idle = on ? 0 : idle + dt;
+        const raining = Array.isArray(rainHits) && rainHits.length >= 2;
+        idle = on || raining ? 0 : idle + dt;
         if (!renderer || idle > 8) return;
-        uniforms.decay.value = Math.exp(-dt * 0.9);
+        uniforms.decay.value = Math.exp(-dt * (raining ? 0.85 : 0.7));
         if (on) {
           const mx = foot.x - last.x;
           const mz = foot.z - last.z;
@@ -1878,6 +1918,11 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
           uniforms.move.value.set(mx * along, mz * along);
           last.copy(foot);
         } else uniforms.foot.value.set(9999, 9999);
+        for (let i = 0; i < 4; i += 1) {
+          const k = i * 2;
+          if (raining && k + 1 < rainHits.length) rainU[i].value.set(rainHits[k], rainHits[k + 1], 0.65 + Math.random() * 0.25);
+          else rainU[i].value.set(9999, 9999, 0);
+        }
         uniforms.prev.value = read.texture;
         const before = renderer.getRenderTarget();
         renderer.setRenderTarget(write);
@@ -1974,6 +2019,8 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     material.onBeforeCompile = (shader) => {
       shader.uniforms.time = swayUniforms.time;
       shader.uniforms.player = swayUniforms.player;
+      shader.uniforms.windMul = windMul;
+      shader.uniforms.rainAmt = rainAmt;
       shader.uniforms.trailMap = trail.map;
       shader.uniforms.trailLo = trail.lo;
       shader.uniforms.trailSpan = trail.span;
@@ -1985,6 +2032,8 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
           [
             "#include <common>",
             "uniform float time;",
+            "uniform float windMul;",
+            "uniform float rainAmt;",
             "uniform vec3 player;",
             "uniform sampler2D trailMap;",
             "uniform float trailLo;",
@@ -2013,34 +2062,49 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
             "vec3 camFwd = -vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);",
             "vec2 fwd = normalize(camFwd.xz + 1e-5);",
             "vec2 perp = vec2(fwd.y, -fwd.x);",
-            /* Trampled: the trail folds the card over along its push (a roll where that points across the screen, a
-               squash where it points into it) and the blade quivers as it springs back */
+            /* Trampled: height flattens; tips lean along the walk, or toward the camera when standing
+               (so crush reads as laid-down blades, not a dark stub patch / radial crater). */
             "vec4 trail = texture2D(trailMap, (origin.xz - trailLo) / trailSpan);",
             "float press = clamp(trail.b, 0.0, 1.0);",
-            "vec2 dirG = press > 0.01 ? trail.rg / trail.b : vec2(0.0);",
-            "float pushX = clamp(dot(perp, dirG), -1.0, 1.0) * press;",
-            "float pushY = abs(dot(fwd, dirG)) * press;",
-            "float quiver = sin(time * 11.0 + aGrass.x * 6.283) * press * (1.0 - press) * 0.5;",
-            "card = grassRotate(card, (pushX + quiver * 0.3) * radians(80.0));",
-            "card.y *= 1.0 - press * 0.45 - pushY * 0.35;",
+            "vec2 dirG = press > 0.01 ? trail.rg / max(trail.b, 1e-3) : vec2(0.0);",
+            "float dirLen = length(dirG);",
+            "float hasDir = step(0.08, dirLen);",
+            "vec2 scatter = vec2(sin(aGrass.x * 6.283), cos(aGrass.x * 4.1));",
+            "dirG = hasDir > 0.5 ? dirG / dirLen : normalize(-fwd + scatter * 0.55);",
+            "float pushX = clamp(dot(perp, dirG), -1.0, 1.0) * mix(0.35, 1.0, hasDir);",
+            "float quiver = sin(time * 7.0 + aGrass.x * 6.283) * press * (1.0 - press) * 0.18;",
+            "card = grassRotate(card, (pushX * press * 0.4 + quiver) * radians(30.0));",
+            "card.y *= 1.0 - press * 0.55;",
+            "float tipLean = max(card.y, 0.0) * press * mix(0.55, 0.9, hasDir);",
+            "vec3 tipPush = vec3(dirG.x, -press * 0.02, dirG.y) * tipLean;",
             "vPress = press;",
             /* Wind blows one way across the island: broad gust bands, stretched across the wind and broken up by a
                second noise, roll downwind over the meadow, with a small per-blade flutter on top. Every card leans
                downwind a little; a passing gust pushes it over and lightens its tip. */
             "vec2 wind = WIND_DIR;",
-            "float gust = windGust(origin.xz, time);",
-            "float flutter = grassNoise(origin.xz * 0.7 + wind * time * 1.6) - 0.5;",
-            "float sway = 0.16 + gust * 0.85 + flutter * (0.18 + gust * 0.2) + sin(time * 2.4 + aGrass.x * 6.283) * 0.04;",
+            /* Storm: stronger lean + faster gust bands. Caps + y-floors stop cards burying into the ground. */
+            "float grassWind = 1.0 + (min(windMul, 3.5) - 1.0) * 0.78;",
+            "float gust = windGust(origin.xz, time * (0.85 + grassWind * 0.4)) * grassWind;",
+            "float flutter = grassNoise(origin.xz * 0.7 + wind * time * (1.4 + grassWind * 0.5)) - 0.5;",
+            "float sway = 0.12 + gust * 0.62 + flutter * (0.12 + gust * 0.16) + sin(time * (2.2 + grassWind * 0.6) + aGrass.x * 6.283) * (0.03 + grassWind * 0.02);",
+            "sway = min(sway, 1.12);",
+            "sway *= 1.0 - press * 0.92;",
+            /* Rain hits: tip patter without changing the lean direction (keeps storm readable, not jittery). */
+            "float patter = sin(time * 19.0 + aGrass.x * 48.0) * rainAmt * 0.07;",
+            "patter = clamp(patter, -0.1, 0.1);",
             "vec3 wind3 = vec3(wind.x, 0.0, wind.y);",
             "float onScreen = dot(wind3, camRight);",
             "float intoScreen = dot(wind, fwd);",
-            "float bend = sway * radians(40.0);",
-            "card = grassRotate(card, -bend * onScreen);",
-            "card.y *= 1.0 - (1.0 - cos(bend)) * abs(intoScreen);",
-            "vec3 worldPos = origin + camRight * card.x + camUp * card.y;",
+            "float bend = sway * radians(22.0 + grassWind * 8.0);",
+            "bend = min(bend, radians(40.0));",
+            "card = grassRotate(card, -bend * onScreen + patter);",
+            "card.y *= 1.0 - (1.0 - cos(bend)) * abs(intoScreen) * 0.75;",
+            "card.y = max(card.y, 0.08 * size);",
+            "vec3 worldPos = origin + camRight * card.x + camUp * card.y + tipPush;",
+            "worldPos.y = max(worldPos.y, origin.y + 0.035);",
             "vec4 mvPosition = viewMatrix * vec4(worldPos, 1.0);",
             "gl_Position = projectionMatrix * mvPosition;",
-            "vGrass = vec4(position.x + 0.5, position.y, sway * 0.3 * intoScreen, aGrass.y);",
+            "vGrass = vec4(position.x + 0.5, position.y, sway * 0.25 * intoScreen, aGrass.y);",
             "vGust = gust;",
             /* Light, shadow and cloud are all taken at the base, so the tuft matches the ground it grows from */
             "transformed = vec3(0.0);",
@@ -2057,14 +2121,14 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
             "  float leaf = vGrass.w > 0.5 ? texture2D(accentTex, leafUv).a : texture2D(leafTex, leafUv).a;",
             "  if (leaf < 0.5) discard;",
             "  float tip = smoothstep(0.15, 0.95, vGrass.y);",
-            "  diffuseColor.rgb *= (mix(0.8, 1.14, tip) + vGust * tip * 0.12) * (1.0 - vPress * 0.14);",
+            "  diffuseColor.rgb *= (mix(0.8, 1.14, tip) + vGust * tip * 0.12) * (1.0 - vPress * 0.06);",
             "}",
           ].join("\n")
         )
         /* Alpha 0.99 marks grass for the edge pass (world.js post), which skips crease highlights on blades */
         .replace("#include <dithering_fragment>", "#include <dithering_fragment>\ngl_FragColor.a = 0.99;");
     };
-    material.customProgramCacheKey = () => "grass-cards";
+    material.customProgramCacheKey = () => "grass-cards-storm";
     atmos(material);
 
     const tufts = new THREE.InstancedMesh(geometry, material, cards.length);
@@ -2546,10 +2610,10 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     halos.add(inlay);
   }
 
-  /* Everything that moves on its own */
-  const update = (dt, time, robot, renderer) => {
+  /* Everything that moves on its own. rainHits = flat [x,z,x,z,…] from world-rain. */
+  const update = (dt, time, robot, renderer, rainHits) => {
     if (halos.visible) fireHalos.forEach((s, k) => s.scale.setScalar(3 * (1 + Math.sin(time * 11 + k) * 0.06 + Math.sin(time * 6.3) * 0.05)));
-    trail.step(renderer, dt, robot);
+    trail.step(renderer, dt, robot, rainHits);
     lampSpots.forEach(([, , , r], k) => {
       const fire = k >= lanterns.length ? Math.sin(time * 17 + k) * 0.035 + Math.sin(time * 9.3) * 0.03 : 0;
       lampLights.value[k].w = r * (1 + Math.sin(time * 7.1 + k * 1.7) * 0.02 + Math.sin(time * 12.3 + k) * 0.012 + fire);

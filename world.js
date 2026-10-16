@@ -6,9 +6,11 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import nikoGlb from "./assets/niko.glb";
 import nikoEyesUrl from "./assets/niko-eyes.png";
-import { atmos, buildIsland, ISLE, lamped, makeRamp, occlude, seeThrough } from "./world-island.js";
+import { atmos, buildIsland, ISLE, lamped, makeRamp, occlude, seeThrough, rainAmt, windMul } from "./world-island.js";
 import { lay, toXZ } from "./world-map.js";
 import { windLines } from "./world-wind.js";
+import { createClimate } from "./world-climate.js";
+import { makeRain } from "./world-rain.js";
 
 const root = document.documentElement;
 const host = document.getElementById("world");
@@ -788,6 +790,7 @@ async function start() {
   });
   const wind = calm ? null : windLines({ scene, groundAt: island.groundAt, count: coarse ? 4 : 6 });
   const windPixels = new THREE.Vector2();
+  const rain = calm || lite ? null : makeRain({ scene, lite: coarse });
 
   /* World objects */
 
@@ -1937,6 +1940,20 @@ async function start() {
   const sky = { dawn: playsIntro ? 0 : 1 };
   const setDawn = () => host.style.setProperty("--dawn", sky.dawn.toFixed(3));
   setDawn();
+  const climate = createClimate({
+    host,
+    lights,
+    lightsOn,
+    lite,
+    params: new URLSearchParams(location.search),
+  });
+  let climateSample = climate.sample();
+  if (!playsIntro) {
+    climate.unlock();
+    climateSample = climate.update(0);
+    windMul.value = climateSample.windMul;
+    rainAmt.value = climateSample.rain;
+  }
 
   /* Same Rigel as the loading screen: white-hot core, blue glow, faint halo ring and thin diffraction spikes */
   const flareTexture = (() => {
@@ -2939,12 +2956,13 @@ async function start() {
       }
     }
 
-    island.halos.visible = !post.state.bloom;
-    island.update(dt, calm ? 0 : time, robot.visible ? robot.position : null, renderer);
-    if (shrineStar.visible) {
-      shrineStar.position.y = island.shrine.y + 4.6 + (calm ? 0 : Math.sin(time * 1.4) * 0.18);
-      shrineStar.material.rotation = calm ? 0 : Math.sin(time * 0.5) * 0.15;
+    climateSample = climate.update(calm ? 0 : dt);
+    windMul.value = climateSample.windMul;
+    rainAmt.value = climateSample.rain;
+    if (island.beamMat && climate.state.unlocked) {
+      island.beamMat.uniforms.strength.value = 0.85 + climateSample.night * 0.35 + climateSample.storm * 0.2;
     }
+    island.halos.visible = !post.state.bloom;
 
     /* Camera follows Niko over the island */
 
@@ -2961,9 +2979,35 @@ async function start() {
     camera.lookAt(camLook);
     camera.updateMatrixWorld();
     post.snap();
+    if (rain) {
+      rain.update(dt, {
+        center: camLook,
+        camera,
+        groundAt: island.groundAt,
+        intensity: climateSample.rain,
+        storm: climateSample.storm,
+        windMul: climateSample.windMul,
+      });
+    }
+    island.update(dt, calm ? 0 : time, robot.visible ? robot.position : null, renderer, rain?.hits);
+    if (shrineStar.visible) {
+      shrineStar.position.y = island.shrine.y + 4.6 + (calm ? 0 : Math.sin(time * 1.4) * 0.18);
+      shrineStar.material.rotation = calm ? 0 : Math.sin(time * 0.5) * 0.15;
+      if (climate.state.unlocked) {
+        shrineStar.material.opacity = 0.95 + climateSample.night * 0.2 + climateSample.storm * 0.1;
+      }
+    }
     if (wind) {
       renderer.getDrawingBufferSize(windPixels);
-      wind.update(dt, { camera, level: camLook.y, pixels: windPixels, ratio: renderer.getPixelRatio(), on: started && !introLive });
+      /* Breeze ribbons = fair / windy air only. Hide them in rain so streaks don't fight the storm. */
+      wind.update(dt, {
+        camera,
+        level: camLook.y,
+        pixels: windPixels,
+        ratio: renderer.getPixelRatio(),
+        on: started && !introLive && climateSample.rain < 0.05 && climateSample.windMul > 0.55,
+        rate: climateSample.windMul,
+      });
     }
     if (robot.visible) seeThrough.playerView.value.set(robot.position.x, robot.position.y + 0.95, robot.position.z).applyMatrix4(camera.matrixWorldInverse);
     else seeThrough.playerView.value.set(0, 0, -9999);
@@ -3195,9 +3239,11 @@ async function start() {
     introLive = false;
     intro = null;
     root.classList.remove("world-intro");
-    Object.entries(lights).forEach(([key, light]) => (light.intensity = lightsOn[key]));
-    sky.dawn = 1;
-    setDawn();
+    climate.unlock();
+    climateSample = climate.update(0);
+    windMul.value = climateSample.windMul;
+    rainAmt.value = climateSample.rain;
+    sky.dawn = climateSample.day;
     robot.visible = true;
     shrineStar.visible = true;
     shrineStar.material.opacity = 0.95;
@@ -3535,6 +3581,7 @@ async function start() {
         camera.updateProjectionMatrix();
       },
       finishIntro: () => void finishIntro(),
+      climate: (opts) => (opts == null ? climate.sample() : climate.set(opts)),
       wind: () => wind?.peek(),
       walkable: (x, z) => island.nav.walkable(x, z),
       position: () => robot.position.toArray(),

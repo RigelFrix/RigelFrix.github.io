@@ -30,3 +30,5 @@ sampleModels/
 /world-island.js
 /world-map.js
 /world-wind.js
+/world-climate.js
+/world-rain.js

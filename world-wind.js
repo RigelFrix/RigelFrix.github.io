@@ -153,13 +153,15 @@ export function windLines({ scene, groundAt, count = 6 }) {
         at: Array.from(line.mesh.geometry.attributes.position.array.slice(0, 3), (n) => +n.toFixed(2)),
       })),
     /* level: ground height around what the camera looks at; pixels: drawing buffer size */
-    update(dt, { camera, level, pixels, ratio, on = true }) {
+    update(dt, { camera, level, pixels, ratio, on = true, rate = 1 }) {
       res.value.copy(pixels);
-      wait = Math.min(wait - dt, 1.5);
-      if (on && wait <= 0) {
+      const spawnRate = Math.max(0.12, rate);
+      wait = Math.min(wait - dt * spawnRate, 1.5);
+      if (on && wait <= 0 && rate > 0.25) {
         const free = lines.find((line) => !line.live);
         if (free) spawn(free, camera, level);
-        wait = 0.5 + Math.random() * 0.8;
+        /* Storms throw more streaks; calm weather spaces them out. */
+        wait = (0.55 + Math.random() * 0.85) / Math.max(0.35, spawnRate * 0.85);
       }
       lines.forEach((line) => {
         if (!line.live) return;

@@ -2227,7 +2227,7 @@ html.world main > section:not(.is-open) {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Daylight over the island. --dawn runs 0 to 1 during the intro, lifting the night layer. */
+/* Daylight over the island. --dawn / --day lift night; --storm / --heat / --gold grade the weather. */
 .world-sky {
   position: absolute;
   inset: 0;
@@ -2237,8 +2237,96 @@ html.world main > section:not(.is-open) {
     radial-gradient(38% 16% at 14% 22%, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0) 70%),
     radial-gradient(30% 12% at 82% 14%, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0) 70%),
     radial-gradient(44% 14% at 70% 92%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 70%),
-    radial-gradient(60% 40% at 88% 4%, rgba(255, 236, 190, 0.5), rgba(255, 236, 190, 0) 70%),
-    linear-gradient(180deg, #6fb6ea 0%, #9fd3f5 48%, #d8eefa 100%);
+    radial-gradient(60% 40% at 88% 4%, rgba(255, 236, 190, calc(0.5 + var(--gold, 0) * 0.35)), rgba(255, 236, 190, 0) 70%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #6fb6ea 100%, #1a2438 calc(var(--storm, 0) * 70%)) 0%,
+      color-mix(in srgb, #9fd3f5 100%, #c4a882 calc(var(--heat, 0) * 45%)) 48%,
+      color-mix(in srgb, #d8eefa 100%, #f0d9a8 calc(var(--heat, 0) * 40%)) 100%
+    );
+}
+
+.world-weather {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Flat CSS rain retired — rain is world-space instanced streaks in world-rain.js.
+   Keep a faint wet veil so storms still grade the sky without reading as a HUD overlay. */
+.world-weather-rain {
+  opacity: calc(var(--rain, 0) * 0.22);
+  background: linear-gradient(180deg, rgba(140, 170, 210, 0.18), transparent 55%);
+  mix-blend-mode: multiply;
+  animation: none;
+}
+
+.world-weather-drops {
+  display: none;
+}
+
+.world-weather-heat {
+  opacity: calc(var(--heat, 0) * 0.55);
+  background:
+    radial-gradient(120% 40% at 50% 100%, rgba(255, 200, 120, 0.28), transparent 70%),
+    radial-gradient(80% 30% at 70% 20%, rgba(255, 240, 200, 0.18), transparent 65%);
+  mix-blend-mode: soft-light;
+}
+
+.world-weather-flash {
+  opacity: 0;
+  background: rgba(220, 235, 255, 0.55);
+  transition: opacity 0.05s linear;
+}
+
+html.world-climate-flash .world-weather-flash {
+  opacity: 1;
+}
+
+@keyframes world-rain {
+  from { background-position: 0 0; }
+  to { background-position: -18px 42px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .world-weather-rain {
+    animation: none;
+  }
+}
+
+.world-climate {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 8;
+  display: grid;
+  gap: 0.45rem;
+  min-width: 14rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--cream) 25%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--ink) 78%, transparent);
+  color: var(--cream);
+  font: 500 0.72rem/1.3 Rubik, system-ui, sans-serif;
+  pointer-events: auto;
+}
+
+.world-climate label {
+  display: grid;
+  grid-template-columns: 4.2rem 1fr 2.2rem;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.world-climate input[type="range"] {
+  width: 100%;
+  accent-color: var(--cobalt);
+}
+
+.world-climate [data-name] {
+  opacity: 0.7;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .world-sky::before,
@@ -2270,7 +2358,19 @@ html.world main > section:not(.is-open) {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(130% 105% at 50% 46%, rgba(20, 50, 90, 0) 62%, rgba(20, 50, 90, 0.22) 100%);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(12, 18, 36, calc(var(--storm, 0) * 0.42)) 0%,
+      rgba(12, 18, 36, calc(var(--storm, 0) * 0.22)) 55%,
+      rgba(12, 18, 36, calc(var(--storm, 0) * 0.35)) 100%
+    ),
+    radial-gradient(
+      120% 80% at 50% 100%,
+      rgba(255, 170, 80, calc(var(--heat, 0) * 0.2)),
+      transparent 60%
+    ),
+    radial-gradient(130% 105% at 50% 46%, rgba(20, 50, 90, 0) 62%, rgba(20, 50, 90, 0.22) 100%);
 }
 
 /* Light grade over the island: warm sun from the upper left, a few soft shafts, cool haze toward the bottom */

@@ -152,7 +152,11 @@
     </header>
 
     <div class="world-view" id="world">
-      <div class="world-sky" aria-hidden="true"></div>
+      <div class="world-sky" aria-hidden="true">
+        <span class="world-weather world-weather-rain"></span>
+        <span class="world-weather world-weather-heat"></span>
+        <span class="world-weather world-weather-flash"></span>
+      </div>
       <canvas class="world-canvas" id="world-canvas" role="img" aria-label="Arcade floor. Use the name buttons to walk the robot to each stop."></canvas>
       <div class="world-vignette" aria-hidden="true"></div>
       <div class="world-labels" id="world-labels"></div>
@@ -620,7 +624,7 @@
     <script src="./script.js"></script>
     <script src="./motion.js"></script>
     <script
-      src="./world.bundle.js?v=15a7e1db"
+      src="./world.bundle.js?v=23db0cf9"
       onerror="document.documentElement.classList.remove('world', 'world-ready', 'world-intro')"
     ></script>
   </body>
