@@ -2294,39 +2294,137 @@ html.world-climate-flash .world-weather-flash {
   }
 }
 
+/* Weather tester: shows on localhost or with ?climate=1 */
 .world-climate {
   position: absolute;
   right: 1rem;
-  bottom: 1rem;
-  z-index: 8;
+  top: 5.5rem;
+  z-index: 30;
   display: grid;
-  gap: 0.45rem;
-  min-width: 14rem;
+  gap: 0.5rem;
+  width: min(19rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 7rem);
+  overflow: auto;
   padding: 0.7rem 0.85rem;
   border: 1px solid color-mix(in srgb, var(--cream) 25%, transparent);
   border-radius: 0.55rem;
-  background: color-mix(in srgb, var(--ink) 78%, transparent);
+  background: color-mix(in srgb, var(--ink) 82%, transparent);
   color: var(--cream);
   font: 500 0.72rem/1.3 Rubik, system-ui, sans-serif;
   pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.world-climate-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.world-climate-body {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.world-climate.is-folded .world-climate-body {
+  display: none;
+}
+
+.world-climate button {
+  padding: 0.3rem 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--cream) 30%, transparent);
+  border-radius: 0.35rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.world-climate button:hover,
+.world-climate button:focus-visible {
+  border-color: var(--cream);
+}
+
+.world-climate button.is-on {
+  border-color: var(--cobalt);
+  background: var(--cobalt);
+}
+
+.world-climate-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.3rem;
 }
 
 .world-climate label {
   display: grid;
-  grid-template-columns: 4.2rem 1fr 2.2rem;
+  grid-template-columns: 3.4rem 1fr 2.4rem;
   gap: 0.4rem;
   align-items: center;
 }
 
+.world-climate label small {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  opacity: 0.55;
+  font-size: 0.62rem;
+}
+
 .world-climate input[type="range"] {
+  grid-row: 1;
+  grid-column: 2;
   width: 100%;
   accent-color: var(--cobalt);
 }
 
-.world-climate [data-name] {
-  opacity: 0.7;
-  letter-spacing: 0.04em;
+.world-climate label b {
+  grid-row: 1;
+  grid-column: 3;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.world-climate label button {
+  grid-row: 1;
+  grid-column: 3;
+  padding: 0.1rem 0.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.world-climate-sub {
+  margin: 0.2rem 0 0;
+  padding-top: 0.45rem;
+  border-top: 1px solid color-mix(in srgb, var(--cream) 18%, transparent);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.world-climate-sub small {
+  display: block;
+  opacity: 0.55;
+  font-size: 0.62rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.world-climate-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.8rem;
+}
+
+.world-climate-flags label {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.world-climate-read {
+  margin: 0;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
 }
 
 .world-sky::before,
@@ -2358,12 +2456,12 @@ html.world-climate-flash .world-weather-flash {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* Storm gloom sits on the edges only: the 3D lights already darken the scene, and a full wash dimmed Niko too */
   background:
-    linear-gradient(
-      180deg,
-      rgba(12, 18, 36, calc(var(--storm, 0) * 0.42)) 0%,
-      rgba(12, 18, 36, calc(var(--storm, 0) * 0.22)) 55%,
-      rgba(12, 18, 36, calc(var(--storm, 0) * 0.35)) 100%
+    radial-gradient(
+      90% 80% at 50% 50%,
+      rgba(12, 18, 36, 0) 35%,
+      rgba(12, 18, 36, calc(var(--storm, 0) * 0.32)) 100%
     ),
     radial-gradient(
       120% 80% at 50% 100%,
@@ -2373,7 +2471,8 @@ html.world-climate-flash .world-weather-flash {
     radial-gradient(130% 105% at 50% 46%, rgba(20, 50, 90, 0) 62%, rgba(20, 50, 90, 0.22) 100%);
 }
 
-/* Light grade over the island: warm sun from the upper left, a few soft shafts, cool haze toward the bottom */
+/* Light grade over the island: warm sun glow where the sun is (--sun-x, set by the climate as it crosses the sky),
+   a few soft shafts, cool haze toward the bottom */
 .world-vignette::before,
 .world-vignette::after {
   content: "";
@@ -2385,7 +2484,7 @@ html.world-climate-flash .world-weather-flash {
 .world-vignette::before {
   mix-blend-mode: soft-light;
   background:
-    radial-gradient(70% 60% at 6% 0%, rgba(255, 210, 140, 0.45), rgba(255, 210, 140, 0) 70%),
+    radial-gradient(70% 60% at var(--sun-x, 6%) 0%, rgba(255, 210, 140, 0.45), rgba(255, 210, 140, 0) 70%),
     linear-gradient(180deg, rgba(50, 120, 175, 0) 60%, rgba(50, 120, 175, 0.2) 100%);
 }
 
@@ -2404,8 +2503,8 @@ html.world-climate-flash .world-weather-flash {
     rgba(255, 238, 200, 0.05) 71%,
     rgba(255, 238, 200, 0) 76%
   );
-  -webkit-mask-image: radial-gradient(70% 70% at 0% 0%, #000 0%, transparent 85%);
-  mask-image: radial-gradient(70% 70% at 0% 0%, #000 0%, transparent 85%);
+  -webkit-mask-image: radial-gradient(70% 70% at var(--sun-x, 0%) 0%, #000 0%, transparent 85%);
+  mask-image: radial-gradient(70% 70% at var(--sun-x, 0%) 0%, #000 0%, transparent 85%);
 }
 
 .world-canvas {

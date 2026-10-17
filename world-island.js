@@ -58,11 +58,16 @@ const S = Math.SQRT1_2;
 
 /* One wind for the whole island: broad gust bands, stretched across the wind and broken up by a second noise, roll
    along WIND_DIR (world xz). Grass and tree crowns both lean with windGust, so a gust visibly crosses the meadow and
-   then the trees beyond it. */
+   then the trees beyond it. windTime is the wind phase from world-climate.js, integrated from the wind strength, so
+   the sway speeds up and calms down smoothly as the weather changes instead of jumping. */
 export const windTime = { value: 0 };
 export const windMul = { value: 1 };
-/* Rain intensity 0–1: tip/leaf flutter when drops are landing (set from climate). */
+/* Rain intensity 0–1: tip/leaf patter when drops are landing (set from climate). */
 export const rainAmt = { value: 0 };
+/* Weather on every lit surface: wet ground darkens and cools, fog pulls colour toward the sky */
+export const weatherWet = { value: 0 };
+export const weatherFog = { value: 0 };
+export const weatherFogColor = { value: new THREE.Color(0.62, 0.7, 0.8) };
 const WIND_GLSL = [
   "float windHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
   "float windNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
@@ -80,7 +85,8 @@ const WIND_GLSL = [
 /* Tree and bush crowns bend downwind: aSway = (weight, base x, base z), baked per vertex by makeBake.put, so the
    whole crown follows the gust at its trunk and its top moves most. On top of the lean a wave rolls downwind through
    the crown, so it breathes instead of moving as one block, and with `leaves` every leaf card stirs a little on its
-   own (aLeaf from cardShell). Everything stays slow: fast or large motion read as someone hitting the tree. */
+   own (aLeaf from cardShell). Everything stays slow and small: fast or large motion read as someone hitting the tree,
+   and big bends pulled the low poly shapes apart. Storms lean harder; floors keep crowns out of the trunk and ground. */
 const windSway = (material, leaves = false) => {
   const previous = material.onBeforeCompile;
   const key = material.customProgramCacheKey?.() || "";
@@ -97,24 +103,21 @@ const windSway = (material, leaves = false) => {
         [
           "#include <begin_vertex>",
           "if (aSway.x > 0.0) {",
-          /* Storm leans hard but floors keep crowns from folding through the trunk / into the ground. */
           "  float w = 1.0 + (min(windMul, 3.5) - 1.0) * 0.72;",
-          "  float gust = windGust(aSway.yz, windTime * (0.42 + w * 0.28)) * w;",
-          "  float breathe = sin(windTime * (0.7 + w * 0.35) + aSway.y * 0.37 + aSway.z * 0.23) * 0.12 * w;",
+          "  float gust = windGust(aSway.yz, windTime * 0.58) * w;",
+          "  float breathe = sin(windTime * 0.88 + aSway.y * 0.37 + aSway.z * 0.23) * 0.12 * w;",
           "  float lean = (0.2 * w + gust * 0.52 + breathe) * aSway.x;",
           "  lean = min(lean, aSway.x * 1.05);",
-          "  float wave = windTime * (0.85 + w * 0.35) - dot(transformed.xz, WIND_DIR) * 0.55 - transformed.y * 0.35;",
+          "  float wave = windTime - dot(transformed.xz, WIND_DIR) * 0.55 - transformed.y * 0.35;",
           "  vec3 roll = vec3(sin(wave), sin(wave * 1.21 + 1.3) * 0.4, cos(wave * 0.87 + 0.4)) * aSway.x * (0.07 + w * 0.04);",
           "  float baseY = transformed.y;",
           "  transformed.xz += WIND_DIR * lean;",
           "  transformed.y -= lean * lean * 0.12;",
           "  transformed += roll;",
-          /* Never drop a vertex more than ~28% of its sway weight — stops the “melted tree” look. */
           "  transformed.y = max(transformed.y, baseY - aSway.x * 0.28);",
           "  #ifdef LEAF_FLUTTER",
-          "  float flap = sin(windTime * (2.1 + aLeaf.y * 1.6 + w * 0.8) + aLeaf.y * 40.0) * (0.045 + gust * 0.09) * w;",
-          /* Rain patter: fast tiny shakes on the tips, clamped so cards don't flicker like a bug. */
-          "  flap += sin(windTime * 18.0 + aLeaf.y * 55.0) * rainAmt * 0.035 * aLeaf.x;",
+          "  float flap = sin(windTime * (2.4 + aLeaf.y * 1.3) + aLeaf.y * 40.0) * (0.045 + gust * 0.09) * w;",
+          "  flap += sin(windTime * 15.0 + aLeaf.y * 55.0) * rainAmt * 0.035 * aLeaf.x;",
           "  flap = clamp(flap, -0.24, 0.24);",
           "  transformed += objectNormal * flap * aLeaf.x;",
           "  #endif",
@@ -122,7 +125,7 @@ const windSway = (material, leaves = false) => {
         ].join("\n")
       );
   };
-  material.customProgramCacheKey = () => `${key}-sway${leaves ? "-leaf" : ""}v2`;
+  material.customProgramCacheKey = () => `${key}-sway${leaves ? "-leaf" : ""}v6`;
   return material;
 };
 
@@ -848,8 +851,13 @@ export const makeRamp = (levels = [100, 176, 255], edges = [0.5, 0.63], blend = 
    squared falloff. buildIsland fills the list and flickers the radii. */
 const LAMPS = 24;
 export const lampLights = { value: Array.from({ length: LAMPS }, () => new THREE.Vector4(0, -999, 0, 1)) };
+/* Lamp pools read stronger as the day light fades (set from climate) */
+export const lampGain = { value: 1 };
+/* Unlit water (sea, stream, waterfall, splashes) is multiplied by this so it follows the day and night light */
+export const waterLight = { value: new THREE.Color(1, 1, 1) };
 const LAMP_GLSL = [
   `uniform vec4 lampLights[${LAMPS}];`,
+  "uniform float lampGain;",
   "float lampAt(vec3 p){",
   "  float k = 0.0;",
   `  for (int i = 0; i < ${LAMPS}; i++) {`,
@@ -861,7 +869,7 @@ const LAMP_GLSL = [
   "}",
   "const vec3 LAMP_COLOUR = vec3(1.0, 0.62, 0.28);",
 ].join("\n");
-const LAMP_LIGHT = "outgoingLight += (diffuseColor.rgb * 0.75 + 0.025) * LAMP_COLOUR * lampAt(LAMP_POS);";
+const LAMP_LIGHT = "outgoingLight += (diffuseColor.rgb * 0.75 + 0.025) * LAMP_COLOUR * lampAt(LAMP_POS) * lampGain;";
 
 /* Lamp light for materials that skip atmos (Niko) */
 export const lamped = (material) => {
@@ -870,6 +878,7 @@ export const lamped = (material) => {
   material.onBeforeCompile = (shader, renderer) => {
     previous?.(shader, renderer);
     shader.uniforms.lampLights = lampLights;
+    shader.uniforms.lampGain = lampGain;
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vLampPos;")
       .replace("#include <fog_vertex>", "vLampPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\n#include <fog_vertex>");
@@ -881,16 +890,57 @@ export const lamped = (material) => {
   return material;
 };
 
-/* Atmosphere on every lit surface: crisp-edged cloud shadows drift over the island, ground right at the sea takes
+/* Atmosphere on every lit surface: soft-edged cloud shadows drift over the island, ground right at the sea takes
    a light cool haze, so the levels read as height, and the lamps light their surroundings. */
 export const atmosTime = { value: 0 };
+/* Cloud shadows, shared by the ground, props, Niko and the god rays: cloudTime is the climate's drift phase (faster in
+   wind), cloudCover the noise threshold (lower = more sky covered), cloudShade how dark a shadow gets. */
+export const cloudTime = { value: 0 };
+export const cloudCover = { value: 0.6 };
+export const cloudShade = { value: 0.7 };
+/* Sun direction xz / y: the cloud layer sits at CLOUD_HEIGHT and its shadow falls along the sun, so cloud patches on
+   the ground and the beams through the air (world-rays.js) line up, and both slide as the sun crosses the sky */
+export const cloudSun = { value: new THREE.Vector2() };
+export const CLOUD_GLSL = [
+  "uniform float cloudTime; uniform float cloudCover; uniform float cloudShade; uniform vec2 cloudSun;",
+  "float cloudHash(vec2 p){ vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }",
+  "float cloudNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
+  "  return mix(mix(cloudHash(i), cloudHash(i + vec2(1.0, 0.0)), f.x), mix(cloudHash(i + vec2(0.0, 1.0)), cloudHash(i + vec2(1.0, 1.0)), f.x), f.y); }",
+  /* 0 in sun, 1 under a cloud. Patches a few Nikos across, not one big blob: three octaves for frayed edges, and a
+     slow warp that evolves on its own so the shapes break up and re-form as they drift instead of sliding past
+     as rigid silhouettes. Thick cores sit a little darker than the thin fringe. */
+  "float cloudAt(vec2 xz){",
+  "  vec2 p = xz * 0.14 + vec2(cloudTime * 0.045, cloudTime * 0.028);",
+  "  vec2 w = vec2(cloudNoise(p * 0.45 + vec2(3.1, cloudTime * 0.011)), cloudNoise(p * 0.45 + vec2(cloudTime * 0.009, 8.7))) - 0.5;",
+  "  p += w * 1.6;",
+  "  float c = cloudNoise(p) * 0.5 + cloudNoise(p * 2.03 + 5.2) * 0.3 + cloudNoise(p * 4.1 + 9.4) * 0.2;",
+  "  float edge = smoothstep(cloudCover - 0.02, cloudCover + 0.08, c);",
+  "  return edge * (0.72 + 0.28 * smoothstep(cloudCover + 0.08, cloudCover + 0.24, c));",
+  "}",
+  "float cloudAt3(vec3 p){ return cloudAt(p.xz + cloudSun * (18.0 - p.y)); }",
+  "const vec3 CLOUD_TINT = vec3(0.74, 0.8, 0.95);",
+].join("\n");
+/* A cloud blocks the sun, not the sky: take most of the direct light away and cool what is left. Multiplying the
+   final colour did nothing on sunlit sand, which is already brighter than white before the screen clips it. */
+export const CLOUD_SHADE = (pos, amount = "1.0") =>
+  [
+    `{ float cloudK = cloudAt3(${pos}) * cloudShade * ${amount};`,
+    "  outgoingLight -= reflectedLight.directDiffuse * cloudK * 0.78;",
+    "  outgoingLight *= mix(vec3(1.0), CLOUD_TINT, cloudK * 0.35); }",
+  ].join("\n");
+export const cloudUniforms = (shader) => Object.assign(shader.uniforms, { cloudTime, cloudCover, cloudShade, cloudSun });
 export const atmos = (material) => {
   const previous = material.onBeforeCompile;
   const key = material.customProgramCacheKey?.() || "";
   material.onBeforeCompile = (shader, renderer) => {
     previous?.(shader, renderer);
     shader.uniforms.atmosTime = atmosTime;
+    cloudUniforms(shader);
     shader.uniforms.lampLights = lampLights;
+    shader.uniforms.lampGain = lampGain;
+    shader.uniforms.weatherWet = weatherWet;
+    shader.uniforms.weatherFog = weatherFog;
+    shader.uniforms.weatherFogColor = weatherFogColor;
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vAtmos;")
       .replace(
@@ -903,10 +953,11 @@ export const atmos = (material) => {
         [
           "#include <common>",
           "uniform float atmosTime;",
+          "uniform float weatherWet;",
+          "uniform float weatherFog;",
+          "uniform vec3 weatherFogColor;",
           "varying vec3 vAtmos;",
-          "float atmosHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
-          "float atmosNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
-          "  return mix(mix(atmosHash(i), atmosHash(i + vec2(1.0, 0.0)), f.x), mix(atmosHash(i + vec2(0.0, 1.0)), atmosHash(i + vec2(1.0, 1.0)), f.x), f.y); }",
+          CLOUD_GLSL,
           LAMP_GLSL,
         ].join("\n")
       )
@@ -914,19 +965,19 @@ export const atmos = (material) => {
         "#include <opaque_fragment>",
         [
           "{",
-          "  vec2 cp = vAtmos.xz * 0.05 + vec2(atmosTime * 0.016, atmosTime * 0.01);",
-          "  float cloud = atmosNoise(cp) * 0.65 + atmosNoise(cp * 2.3 + 7.3) * 0.35;",
-          "  float shade = smoothstep(0.6, 0.63, cloud);",
-          "  outgoingLight *= mix(vec3(1.0), vec3(0.74, 0.8, 0.95), shade * 0.7);",
+          CLOUD_SHADE("vAtmos"),
           `  ${LAMP_LIGHT.replace("LAMP_POS", "vAtmos")}`,
           "  float low = 1.0 - smoothstep(-1.2, 1.6, vAtmos.y);",
           "  outgoingLight = mix(outgoingLight, outgoingLight * vec3(0.72, 0.84, 0.98) + vec3(0.01, 0.04, 0.07), low * 0.45);",
+          "  outgoingLight *= mix(vec3(1.0), vec3(0.76, 0.8, 0.88), weatherWet * 0.75);",
+          "  float mist = weatherFog * (0.32 + (1.0 - smoothstep(0.0, 9.0, vAtmos.y)) * 0.28);",
+          "  outgoingLight = mix(outgoingLight, weatherFogColor, clamp(mist, 0.0, 0.6));",
           "}",
           "#include <opaque_fragment>",
         ].join("\n")
       );
   };
-  material.customProgramCacheKey = () => `${key}-atmos`;
+  material.customProgramCacheKey = () => `${key}-atmos3`;
   return material;
 };
 
@@ -2042,9 +2093,6 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
             "varying vec4 vGrass;",
             "varying float vGust;",
             "varying float vPress;",
-            "float grassHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
-            "float grassNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
-            "  return mix(mix(grassHash(i), grassHash(i + vec2(1.0, 0.0)), f.x), mix(grassHash(i + vec2(0.0, 1.0)), grassHash(i + vec2(1.0, 1.0)), f.x), f.y); }",
             "vec2 grassRotate(vec2 p, float a){ float c = cos(a); float s = sin(a); return vec2(p.x * c - p.y * s, p.x * s + p.y * c); }",
             WIND_GLSL,
           ].join("\n")
@@ -2078,28 +2126,24 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
             "float tipLean = max(card.y, 0.0) * press * mix(0.55, 0.9, hasDir);",
             "vec3 tipPush = vec3(dirG.x, -press * 0.02, dirG.y) * tipLean;",
             "vPress = press;",
-            /* Wind blows one way across the island: broad gust bands, stretched across the wind and broken up by a
-               second noise, roll downwind over the meadow, with a small per-blade flutter on top. Every card leans
-               downwind a little; a passing gust pushes it over and lightens its tip. */
+            /* Wind blows one way across the island: broad gust bands roll downwind over the meadow (the same windGust
+               as the tree crowns), with a small per-blade flutter on top. Every card leans downwind a little; a
+               passing gust pushes it further and lightens its tip. time is the climate's wind phase. */
             "vec2 wind = WIND_DIR;",
-            /* Storm: stronger lean + faster gust bands. Caps + y-floors stop cards burying into the ground. */
-            "float grassWind = 1.0 + (min(windMul, 3.5) - 1.0) * 0.78;",
-            "float gust = windGust(origin.xz, time * (0.85 + grassWind * 0.4)) * grassWind;",
-            "float flutter = grassNoise(origin.xz * 0.7 + wind * time * (1.4 + grassWind * 0.5)) - 0.5;",
-            "float sway = 0.12 + gust * 0.62 + flutter * (0.12 + gust * 0.16) + sin(time * (2.2 + grassWind * 0.6) + aGrass.x * 6.283) * (0.03 + grassWind * 0.02);",
-            "sway = min(sway, 1.12);",
+            "float grassWind = 1.0 + (min(windMul, 3.5) - 1.0) * 0.62;",
+            "float gust = windGust(origin.xz, time * 1.04) * grassWind;",
+            "float flutter = windNoise(origin.xz * 0.7 + wind * time * 1.6) - 0.5;",
+            "float sway = 0.12 + gust * 0.62 + flutter * (0.12 + gust * 0.16) + sin(time * 2.3 + aGrass.x * 6.283) * (0.03 + grassWind * 0.02);",
+            "sway = min(sway, 1.05);",
             "sway *= 1.0 - press * 0.92;",
-            /* Rain hits: tip patter without changing the lean direction (keeps storm readable, not jittery). */
-            "float patter = sin(time * 19.0 + aGrass.x * 48.0) * rainAmt * 0.07;",
-            "patter = clamp(patter, -0.1, 0.1);",
+            "float patter = clamp(sin(time * 16.0 + aGrass.x * 48.0) * rainAmt * 0.07, -0.1, 0.1);",
             "vec3 wind3 = vec3(wind.x, 0.0, wind.y);",
             "float onScreen = dot(wind3, camRight);",
             "float intoScreen = dot(wind, fwd);",
-            "float bend = sway * radians(22.0 + grassWind * 8.0);",
-            "bend = min(bend, radians(40.0));",
+            "float bend = min(sway * radians(22.0 + grassWind * 6.0), radians(38.0));",
             "card = grassRotate(card, -bend * onScreen + patter);",
             "card.y *= 1.0 - (1.0 - cos(bend)) * abs(intoScreen) * 0.75;",
-            "card.y = max(card.y, 0.08 * size);",
+            "card.y = max(card.y, 0.1 * size);",
             "vec3 worldPos = origin + camRight * card.x + camUp * card.y + tipPush;",
             "worldPos.y = max(worldPos.y, origin.y + 0.035);",
             "vec4 mvPosition = viewMatrix * vec4(worldPos, 1.0);",
@@ -2128,7 +2172,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
         /* Alpha 0.99 marks grass for the edge pass (world.js post), which skips crease highlights on blades */
         .replace("#include <dithering_fragment>", "#include <dithering_fragment>\ngl_FragColor.a = 0.99;");
     };
-    material.customProgramCacheKey = () => "grass-cards-storm";
+    material.customProgramCacheKey = () => "grass-cards-phase";
     atmos(material);
 
     const tufts = new THREE.InstancedMesh(geometry, material, cards.length);
@@ -2198,6 +2242,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     shallow: { value: new THREE.Color(ISLE.shallow) },
     mid: { value: new THREE.Color(ISLE.water) },
     deep: { value: new THREE.Color(ISLE.waterDeep) },
+    waterLight,
   };
   const water = new THREE.Mesh(
     new THREE.PlaneGeometry(170, 170).rotateX(-Math.PI / 2),
@@ -2209,7 +2254,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       vertexShader: "varying vec3 wp; void main(){ vec4 w = modelMatrix * vec4(position, 1.0); wp = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }",
       fragmentShader: [
         "uniform float time; uniform sampler2D depthMap; uniform float mapMin; uniform float mapSpan;",
-        "uniform vec3 shallow; uniform vec3 mid; uniform vec3 deep; varying vec3 wp;",
+        "uniform vec3 shallow; uniform vec3 mid; uniform vec3 deep; uniform vec3 waterLight; varying vec3 wp;",
         glslNoise,
         "void main(){",
         "  vec2 uv = (wp.xz - mapMin) / mapSpan;",
@@ -2229,7 +2274,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
         "  float alpha = mix(0.62, 0.94, smoothstep(0.0, 1.4, depth));",
         "  alpha = max(alpha, foam);",
         "  alpha *= 1.0 - smoothstep(34.0, 52.0, length(wp.xz));",
-        "  gl_FragColor = vec4(col, alpha);",
+        "  gl_FragColor = vec4(col * waterLight, alpha);",
         "}",
       ].join("\n"),
     })
@@ -2239,7 +2284,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   root.add(water);
 
   /* The stream: flat runs of flowing water on each level, and a falling sheet wherever the ground drops */
-  const flowUniforms = { time: { value: 0 } };
+  const flowUniforms = { time: { value: 0 }, waterLight };
   const splashes = [];
   {
     const pts = MAP.river.points;
@@ -2341,7 +2386,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
         uniforms: flowUniforms,
         vertexShader: "attribute float fall; varying vec2 vUv; varying float vFall; void main(){ vUv = uv; vFall = fall; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
         fragmentShader: [
-          "uniform float time; varying vec2 vUv; varying float vFall;",
+          "uniform float time; uniform vec3 waterLight; varying vec2 vUv; varying float vFall;",
           glslNoise,
           "void main(){",
           "  float speed = mix(1.1, 3.2, vFall);",
@@ -2351,7 +2396,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
           "  vec3 base = mix(vec3(0.36, 0.7, 0.92), vec3(0.62, 0.86, 0.98), vFall);",
           "  vec3 col = mix(base, vec3(1.0), clamp(streak * mix(0.5, 0.9, vFall) + edge * 0.7, 0.0, 1.0));",
           "  float alpha = mix(0.9, 0.86, vFall) * (1.0 - smoothstep(0.9, 1.0, abs(vUv.x * 2.0 - 1.0)) * 0.6);",
-          "  gl_FragColor = vec4(col, alpha);",
+          "  gl_FragColor = vec4(col * waterLight, alpha);",
           "}",
         ].join("\n"),
       })
@@ -2610,8 +2655,11 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     halos.add(inlay);
   }
 
-  /* Everything that moves on its own. rainHits = flat [x,z,x,z,…] from world-rain. */
-  const update = (dt, time, robot, renderer, rainHits) => {
+  /* Everything that moves on its own. rainHits = flat [x,z,x,z,…] from world-rain. Wind sway is not driven here:
+     world.js copies the climate's wind phase into windTime. `pinned` freezes clouds and water for review shots. */
+  const motion = { pinned: null };
+  const update = (dt, clock, robot, renderer, rainHits) => {
+    const time = motion.pinned ?? clock;
     if (halos.visible) fireHalos.forEach((s, k) => s.scale.setScalar(3 * (1 + Math.sin(time * 11 + k) * 0.06 + Math.sin(time * 6.3) * 0.05)));
     trail.step(renderer, dt, robot, rainHits);
     lampSpots.forEach(([, , , r], k) => {
@@ -2620,7 +2668,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     });
     waterUniforms.time.value = time;
     flowUniforms.time.value = time;
-    swayUniforms.time.value = time;
+    splashMat.color.copy(waterLight.value);
     beamMat.uniforms.time.value = time;
     atmosTime.value = time;
     if (robot) player.copy(robot);
@@ -2658,5 +2706,6 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       return new THREE.Vector3(x, MAP.groundAt(x, z), z);
     },
     update,
+    motion,
   };
 }

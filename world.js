@@ -6,11 +6,12 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import nikoGlb from "./assets/niko.glb";
 import nikoEyesUrl from "./assets/niko-eyes.png";
-import { atmos, buildIsland, ISLE, lamped, makeRamp, occlude, seeThrough, rainAmt, windMul } from "./world-island.js";
+import { atmos, buildIsland, CLOUD_GLSL, CLOUD_SHADE, cloudCover, cloudShade, cloudSun, cloudTime, cloudUniforms, ISLE, lampGain, lamped, makeRamp, waterLight, occlude, seeThrough, rainAmt, windMul, windTime, weatherFog, weatherFogColor, weatherWet } from "./world-island.js";
 import { lay, toXZ } from "./world-map.js";
 import { windLines } from "./world-wind.js";
 import { createClimate } from "./world-climate.js";
 import { makeRain } from "./world-rain.js";
+import { makeRays } from "./world-rays.js";
 
 const root = document.documentElement;
 const host = document.getElementById("world");
@@ -187,11 +188,22 @@ async function start() {
   renderer.info.autoReset = false;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
-  /* three's PCF spins its five shadow taps by a per-pixel noise, which leaves grainy, broken-looking shadow edges;
-     a fixed spin gives smooth soft edges instead */
+  /* three's PCF takes five noise-spun taps, which leaves grainy or stair-stepped shadow edges. Instead: a 3×3 tent of
+     hardware-filtered taps (each one already blends 2×2 texels), so the edge is a smooth ramp about four texels wide
+     with no pattern in it. shadowRadius scales the tap spacing. */
   THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fragment.replace(
-    "float phi = interleavedGradientNoise( gl_FragCoord.xy ) * PI2;",
-    "float phi = 0.6;"
+    /float phi = interleavedGradientNoise\( gl_FragCoord\.xy \) \* PI2;\s*shadow = \([\s\S]*?\) \* 0\.2;/,
+    [
+      "vec2 tap = texelSize * shadowRadius;",
+      "shadow = 0.0;",
+      "for ( int i = -1; i <= 1; i ++ ) {",
+      "  for ( int j = -1; j <= 1; j ++ ) {",
+      "    float w = ( i == 0 ? 2.0 : 1.0 ) * ( j == 0 ? 2.0 : 1.0 );",
+      "    shadow += w * texture( shadowMap, vec3( shadowCoord.xy + vec2( float( i ), float( j ) ) * tap, shadowCoord.z ) );",
+      "  }",
+      "}",
+      "shadow /= 16.0;",
+    ].join("\n")
   );
 
   const scene = new THREE.Scene();
@@ -217,7 +229,7 @@ async function start() {
     /* Some phone GPUs can't draw into half float; there glows clip at white, so bloom keys off near-white instead */
     const hdr = params.get("hdr") !== "0" && (renderer.extensions.has("EXT_color_buffer_float") || renderer.extensions.has("EXT_color_buffer_half_float"));
     const colorType = hdr ? THREE.HalfFloatType : THREE.UnsignedByteType;
-    const state = { on: params.get("fx") === "1" || pixel > 1, pixel, bloom: params.get("bloom") === "1" || (params.get("bloom") !== "0" && !lite), hdr, msaa: params.get("msaa") === "1" || (params.get("msaa") !== "0" && renderer.getPixelRatio() < 1.5) };
+    const state = { on: params.get("fx") === "1" || pixel > 1, pixel, bloom: params.get("bloom") === "1" || (params.get("bloom") !== "0" && !lite), hdr, msaa: params.get("msaa") === "1" || (params.get("msaa") !== "0" && renderer.getPixelRatio() < 1.5), fxaa: params.get("aa") !== "0" };
     const active = () => state.on || state.bloom;
     const size = new THREE.Vector2();
     let target = null;
@@ -249,6 +261,7 @@ async function start() {
         lift: { value: 1 },
         reach: { value: 1 },
         edges: { value: 0 },
+        aa: { value: 0 },
         tBloom: { value: null },
         bloomStrength: { value: 0 },
       },
@@ -259,11 +272,31 @@ async function start() {
       fragmentShader: [
         "uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec4 res; uniform vec2 span; uniform vec2 range;",
         "uniform vec2 shift; uniform float ink; uniform float lift; uniform float reach; varying vec2 vUv;",
-        "uniform float edges; uniform sampler2D tBloom; uniform float bloomStrength;",
+        "uniform float edges; uniform float aa; uniform sampler2D tBloom; uniform float bloomStrength;",
         "float depthAt(vec2 uv){ return range.x + texture2D(tDepth, uv).r * (range.y - range.x); }",
+        /* FXAA (console variant) for when the target has no MSAA: find the edge direction from the four diagonal lumas
+           and blend along it, so stair-stepped edges and colour seams come out smooth */
+        "float lumaAt(vec2 uv){ return dot(min(texture2D(tColor, uv).rgb, vec3(1.0)), vec3(0.299, 0.587, 0.114)); }",
+        "vec3 fxaa(vec2 uv, vec3 rgbM){",
+        "  vec2 px = res.zw;",
+        "  float lM = dot(min(rgbM, vec3(1.0)), vec3(0.299, 0.587, 0.114));",
+        "  float lNW = lumaAt(uv + vec2(-px.x, -px.y)); float lNE = lumaAt(uv + vec2(px.x, -px.y));",
+        "  float lSW = lumaAt(uv + vec2(-px.x, px.y)); float lSE = lumaAt(uv + vec2(px.x, px.y));",
+        "  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));",
+        "  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));",
+        "  if (lMax - lMin < max(0.04, lMax * 0.125)) return rgbM;",
+        "  vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), (lNW + lSW) - (lNE + lSE));",
+        "  float reduce = max((lNW + lNE + lSW + lSE) * 0.03125, 1.0 / 128.0);",
+        "  dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + reduce), -8.0, 8.0) * px;",
+        "  vec3 a = 0.5 * (texture2D(tColor, uv - dir / 6.0).rgb + texture2D(tColor, uv + dir / 6.0).rgb);",
+        "  vec3 b = a * 0.5 + 0.25 * (texture2D(tColor, uv - dir * 0.5).rgb + texture2D(tColor, uv + dir * 0.5).rgb);",
+        "  float lB = dot(min(b, vec3(1.0)), vec3(0.299, 0.587, 0.114));",
+        "  return (lB < lMin || lB > lMax) ? a : b;",
+        "}",
         "void main(){",
         "  vec2 uv = vUv + shift;",
         "  vec4 colour = texture2D(tColor, uv);",
+        "  if (aa > 0.5) colour.rgb = fxaa(uv, colour.rgb);",
         "  float grass = step(abs(colour.a - 0.99), 0.004);",
         "  if (edges > 0.5) {",
         "  float d = depthAt(uv);",
@@ -452,6 +485,7 @@ async function start() {
         u.tColor.value = target.texture;
         u.tDepth.value = target.depthTexture;
         u.edges.value = state.on ? 1 : 0;
+        u.aa.value = target.samples === 0 && state.pixel === 1 && state.fxaa ? 1 : 0;
         renderer.setRenderTarget(target);
         renderer.render(scene, camera);
         u.tBloom.value = state.bloom ? bloom.run(target.texture, w, h) : null;
@@ -483,18 +517,74 @@ async function start() {
   const sun = new THREE.DirectionalLight("#ffe7c2", 3.35);
   sun.position.set(-25, 30, 11);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(coarse ? 2048 : 4096, coarse ? 2048 : 4096);
-  Object.assign(sun.shadow.camera, { left: -44, right: 44, top: 44, bottom: -44, near: 1, far: 140 });
+  const SHADOW_SIZE = coarse ? 2048 : 4096;
+  sun.shadow.mapSize.set(SHADOW_SIZE, SHADOW_SIZE);
+  /* Deep enough for low evening light; the sides are fitted to the view in fitShadow */
+  Object.assign(sun.shadow.camera, { left: -50, right: 50, top: 50, bottom: -50, near: 1, far: 200 });
   sun.shadow.camera.updateProjectionMatrix();
   sun.shadow.bias = -0.0006;
-  sun.shadow.normalBias = 0.02;
-  sun.shadow.radius = 1.5;
-  /* The sun and the props never move, so their shadow map is drawn once (bakeShadows) instead of every frame. Moving
-     things (Niko, gems, debris) cast no map shadow; Niko has his own contact shadow decal. */
+  /* Faceted rocks catch their own shadow at grazing light without a little push along the normal */
+  sun.shadow.normalBias = 0.035;
+  sun.shadow.radius = 1;
+  /* The props never move, so the shadow map is only redrawn (bakeShadows) when the sun or moon has travelled a little,
+     a few times a second while the day runs, or when the view needs a new fit. Moving things (Niko, gems, debris)
+     cast no map shadow; Niko has his own contact shadow decal. */
   sun.shadow.autoUpdate = false;
   sun.shadow.needsUpdate = true;
   const bakeShadows = () => (sun.shadow.needsUpdate = true);
+  const SUN_DISTANCE = 80;
+  const sunAim = new THREE.Vector3(-25, 30, 11).normalize();
+  /* The map covers only what the camera sees plus a margin (finer texels = clean edges, not stair steps), centred on a
+     whole-texel grid so a re-fit never makes the edges crawl. It is re-fitted when the view drifts past the margin,
+     the zoom changes the size it needs, or the sun moves. */
+  const shadowFit = { center: new THREE.Vector3(), half: 0, reach: 40, dirty: true };
+  const fitPoint = new THREE.Vector3();
+  const fitDir = new THREE.Vector3();
+  const lightRight = new THREE.Vector3();
+  const lightUp = new THREE.Vector3();
+  const fitShadow = () => {
+    camera.getWorldDirection(fitDir);
+    let reach = 0;
+    for (const [x, y] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      /* Up to the top of the sun-volume slices (world-rays.js), so the air there finds its shadows too */
+      for (const h of [-1, 15]) {
+        fitPoint.set(x, y, -1).unproject(camera);
+        fitPoint.addScaledVector(fitDir, (h - fitPoint.y) / fitDir.y);
+        reach = Math.max(reach, fitPoint.distanceTo(camLook));
+      }
+    }
+    shadowFit.reach = reach + 2;
+    const drift = Math.hypot(camLook.x - shadowFit.center.x, camLook.z - shadowFit.center.z);
+    const want = Math.min(64, Math.ceil((reach * 1.12 + 4) / 4) * 4);
+    if (!shadowFit.dirty && reach + drift < shadowFit.half && want > shadowFit.half * 0.7) return;
+    shadowFit.dirty = false;
+    shadowFit.half = want;
+    lightRight.crossVectors(THREE.Object3D.DEFAULT_UP, sunAim).normalize();
+    lightUp.crossVectors(sunAim, lightRight);
+    const texel = (want * 2) / SHADOW_SIZE;
+    const a = camLook.dot(lightRight);
+    const b = camLook.dot(lightUp);
+    shadowFit.center.copy(camLook)
+      .addScaledVector(lightRight, Math.round(a / texel) * texel - a)
+      .addScaledVector(lightUp, Math.round(b / texel) * texel - b);
+    sun.target.position.copy(shadowFit.center);
+    sun.position.copy(shadowFit.center).addScaledVector(sunAim, SUN_DISTANCE);
+    sun.target.updateMatrixWorld();
+    sun.updateMatrixWorld();
+    Object.assign(sun.shadow.camera, { left: -want, right: want, top: want, bottom: -want });
+    sun.shadow.camera.updateProjectionMatrix();
+    bakeShadows();
+  };
+  const placeSun = (dir) => {
+    const next = new THREE.Vector3(dir[0], dir[1], dir[2]);
+    /* ~0.12°: small enough that each redraw slides the shadows smoothly */
+    if (next.dot(sunAim) > 0.999998 && !shadowFit.dirty && shadowFit.half > 0) return;
+    sunAim.copy(next);
+    shadowFit.dirty = true;
+    fitShadow();
+  };
   scene.add(sun);
+  scene.add(sun.target);
 
   const fill = new THREE.DirectionalLight("#8fbcff", 0.4);
   fill.position.set(14, 6, -4);
@@ -530,6 +620,57 @@ async function start() {
         );
     };
     material.customProgramCacheKey = () => `rim-${strength}`;
+    return material;
+  };
+
+  /* Niko's light floor: his shading never drops below albedo × (amb + key on the side facing a soft light from the
+     camera's upper left). It is a max(), so in daylight the scene light wins and nothing changes; at night, in storms
+     and under tree shadow he stays clear instead of sinking with the scene. `face` lifts the face further, `eye`
+     dims the unlit eye decals a touch at night so they don't glow. */
+  const charLight = {
+    amb: { value: new THREE.Color(0.34, 0.34, 0.36) },
+    key: { value: new THREE.Color(0.34, 0.33, 0.31) },
+    dir: { value: new THREE.Vector3(-0.42, 0.55, 0.72).normalize() },
+    face: { value: 0.16 },
+    eye: { value: 1 },
+  };
+  const withCharLight = (material, face = false) => {
+    const previous = material.onBeforeCompile;
+    const key = material.customProgramCacheKey?.() || "";
+    material.onBeforeCompile = (shader, renderer) => {
+      previous?.(shader, renderer);
+      shader.uniforms.charAmb = charLight.amb;
+      shader.uniforms.charKey = charLight.key;
+      shader.uniforms.charDir = charLight.dir;
+      shader.uniforms.charFace = charLight.face;
+      cloudUniforms(shader);
+      Object.assign(shader.uniforms, { weatherWet, weatherFog, weatherFogColor });
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec3 vCharPos;")
+        .replace("#include <fog_vertex>", "vCharPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\n#include <fog_vertex>");
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          `#include <common>\nuniform vec3 charAmb;\nuniform vec3 charKey;\nuniform vec3 charDir;\nuniform float charFace;\nuniform float weatherWet;\nuniform float weatherFog;\nuniform vec3 weatherFogColor;\nvarying vec3 vCharPos;\n${CLOUD_GLSL}`
+        )
+        .replace(
+          "#include <opaque_fragment>",
+          [
+            /* The same weather as the island, a little lighter so he stays the clearest thing on screen: cloud shadow
+               passing over him, wet cloth in rain, storm mist */
+            CLOUD_SHADE("vCharPos", "0.8"),
+            "{",
+            "  float charK = smoothstep(0.0, 0.3, dot(normal, charDir));",
+            `  vec3 charFloor = diffuseColor.rgb * (charAmb + charKey * charK${face ? " + charFace" : ""});`,
+            "  outgoingLight = max(outgoingLight, charFloor);",
+            "  outgoingLight *= mix(vec3(1.0), vec3(0.8, 0.84, 0.92), weatherWet * 0.45);",
+            "  outgoingLight = mix(outgoingLight, weatherFogColor, clamp(weatherFog * 0.4, 0.0, 0.32));",
+            "}",
+            "#include <opaque_fragment>",
+          ].join("\n")
+        );
+    };
+    material.customProgramCacheKey = () => `${key}-char2${face ? "-face" : ""}`;
     return material;
   };
 
@@ -791,6 +932,10 @@ async function start() {
   const wind = calm ? null : windLines({ scene, groundAt: island.groundAt, count: coarse ? 4 : 6 });
   const windPixels = new THREE.Vector2();
   const rain = calm || lite ? null : makeRain({ scene, lite: coarse });
+  const rays = calm ? null : makeRays({ scene, groundAt: island.groundAt, sun, shadowSize: SHADOW_SIZE, lite: lite || coarse });
+  const rayTint = new THREE.Color();
+  const VOLUME_BASE = 0.3;
+  const VOLUME_RAYS = 0.9;
 
   /* World objects */
 
@@ -1693,21 +1838,48 @@ async function start() {
   /* Niko's eyes, Genshin style: layers cut straight from the reference (niko-eyes.py) into one atlas, 5 tiles per eye
      (sclera, iris, lash, brow, shut lash; row 0 = his left eye). The eye pass stacks sclera, the iris (clipped to the
      sclera, offset by eyeGaze so he can look around) and the lash, or the shut lash on blinks. Brows are their own pass. */
-  const eyeMaterial = (atlas, row, layer, { lift = 0, opacity = 1 } = {}) => {
-    const uniforms = { eyeRow: { value: row }, eyeShut: { value: 0 }, eyeGaze: { value: new THREE.Vector2() } };
-    const mat = new THREE.MeshBasicMaterial({ map: atlas, color: "#f4eeee", transparent: true, depthWrite: false, opacity });
+  /* Each atlas tile becomes its own texture with its own mip chain. Mips of a shared atlas blend neighbouring tiles
+     together once the eye is a few pixels wide on screen, which is what made the far-camera eyes muddy. Alpha is
+     premultiplied before the mips are built, so transparent edges don't average in black. */
+  const EYE_LAYERS = ["scl", "iris", "lash", "brow", "shut"];
+  const eyeTextures = (image) => {
+    const size = image.width / 5;
+    const anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    return [0, 1].map((row) =>
+      Object.fromEntries(
+        EYE_LAYERS.map((layer, col) => {
+          const canvas = document.createElement("canvas");
+          canvas.width = canvas.height = size;
+          canvas.getContext("2d").drawImage(image, col * size, row * size, size, size, 0, 0, size, size);
+          const texture = new THREE.CanvasTexture(canvas);
+          Object.assign(texture, { colorSpace: THREE.SRGBColorSpace, flipY: false, premultiplyAlpha: true, anisotropy });
+          texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+          return [layer, texture];
+        })
+      )
+    );
+  };
+  const eyeMaterial = (tiles, layer, { lift = 0, opacity = 1 } = {}) => {
+    const uniforms = {
+      eyeShut: { value: 0 },
+      eyeGaze: { value: new THREE.Vector2() },
+      charEye: charLight.eye,
+      ...Object.fromEntries(EYE_LAYERS.map((name) => [`t_${name}`, { value: tiles[name] }])),
+    };
+    const mat = new THREE.MeshBasicMaterial({ map: layer === "brow" ? tiles.brow : tiles.scl, color: "#f4eeee", transparent: true, depthWrite: false, opacity });
     if (lift) {
       Object.assign(mat, { stencilWrite: true, stencilRef: 1, stencilFunc: THREE.EqualStencilFunc, stencilFail: THREE.KeepStencilOp, stencilZFail: THREE.KeepStencilOp, stencilZPass: THREE.KeepStencilOp });
     }
-    const tile = (col, uv) => `texture2D(map, (vec2(${col.toFixed(1)}, eyeRow) + clamp(${uv}, 0.004, 0.996)) * vec2(0.2, 0.5))`;
+    /* A slight negative LOD bias keeps the tiny on-screen eye crisp instead of one mip too soft */
+    const tile = (name, uv) => `eyeTap(t_${name}, ${uv})`;
     const fragment =
       layer === "brow"
-        ? `diffuseColor *= ${tile(3, "vMapUv")};`
+        ? `diffuseColor *= ${tile("brow", "vMapUv")};`
         : [
-            `vec4 scl = ${tile(0, "vMapUv")};`,
-            `vec4 iris = ${tile(1, "vMapUv - eyeGaze")};`,
-            `vec4 lash = ${tile(2, "vMapUv")};`,
-            `vec4 shut = ${tile(4, "vMapUv")};`,
+            `vec4 scl = ${tile("scl", "vMapUv")};`,
+            `vec4 iris = ${tile("iris", "vMapUv - eyeGaze")};`,
+            `vec4 lash = ${tile("lash", "vMapUv")};`,
+            `vec4 shut = ${tile("shut", "vMapUv")};`,
             "vec3 eyeCol = mix(scl.rgb, iris.rgb, iris.a * scl.a);",
             "eyeCol = mix(eyeCol, lash.rgb, lash.a);",
             "vec4 eye = mix(vec4(eyeCol, max(scl.a, lash.a)), shut, eyeShut);",
@@ -1716,8 +1888,18 @@ async function start() {
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
       shader.fragmentShader = shader.fragmentShader
-        .replace("#include <common>", "#include <common>\nuniform float eyeRow;\nuniform float eyeShut;\nuniform vec2 eyeGaze;")
-        .replace("#include <map_fragment>", fragment);
+        .replace(
+          "#include <common>",
+          [
+            "#include <common>",
+            "uniform float eyeShut;",
+            "uniform vec2 eyeGaze;",
+            "uniform float charEye;",
+            ...EYE_LAYERS.map((name) => `uniform sampler2D t_${name};`),
+            "vec4 eyeTap(sampler2D t, vec2 uv){ vec4 c = texture2D(t, clamp(uv, 0.0, 1.0), -0.6); return vec4(c.rgb / max(c.a, 1e-4), c.a); }",
+          ].join("\n")
+        )
+        .replace("#include <map_fragment>", `${fragment}\ndiffuseColor.rgb *= charEye;`);
       if (lift) {
         shader.vertexShader = shader.vertexShader.replace(
           "#include <project_vertex>",
@@ -1750,20 +1932,24 @@ async function start() {
       flipY: false,
     });
     /* The face is drawn first (renderOrder -1) and marks its pixels in the stencil buffer, even where hair later covers them */
-    const faceMat = withRim(new THREE.MeshToonMaterial({ map: faceOpen, emissive: "#000000", emissiveMap: faceOpen, gradientMap: ramp }));
+    const faceMat = withCharLight(withRim(new THREE.MeshToonMaterial({ map: faceOpen, emissive: "#000000", emissiveMap: faceOpen, gradientMap: ramp })), true);
     Object.assign(faceMat, { stencilWrite: true, stencilRef: 1, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp });
     /* Eye decals draw over the bang strands, anime style, but only inside the face's stencil mask, so at side and back
        angles they never float over hair or cheeks. The depth pull only applies where the decal faces the camera; the
        camera is orthographic, so it changes occlusion, never screen position. Brows draw twice: solid where nothing
        covers them, and faintly through the bangs. */
-    const eyeAtlas = await new THREE.TextureLoader().loadAsync(nikoEyesUrl);
-    Object.assign(eyeAtlas, { colorSpace: THREE.SRGBColorSpace, flipY: false, anisotropy: 4 });
+    const eyeTiles = eyeTextures(await new THREE.ImageLoader().loadAsync(nikoEyesUrl));
     const eyeDecals = [["eyeL", 0], ["eyeR", 1]].map(([name, row]) => ({
       name,
-      eye: eyeMaterial(eyeAtlas, row, "eye", { lift: 0.08 }),
-      brows: [eyeMaterial(eyeAtlas, row, "brow"), eyeMaterial(eyeAtlas, row, "brow", { lift: 0.08, opacity: 0.4 })],
+      eye: eyeMaterial(eyeTiles[row], "eye", { lift: 0.08 }),
+      brows: [eyeMaterial(eyeTiles[row], "brow"), eyeMaterial(eyeTiles[row], "brow", { lift: 0.08, opacity: 0.4 })],
     }));
-    const lining = lamped(withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: ramp })));
+    const nikoCache = new Map();
+    const nikoToon = (color) => {
+      if (!nikoCache.has(color)) nikoCache.set(color, withCharLight(lamped(withRim(new THREE.MeshToonMaterial({ color, gradientMap: ramp })))));
+      return nikoCache.get(color);
+    };
+    const lining = withCharLight(lamped(withRim(new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: ramp }))));
     const ink = inkMaterial(0.0038);
     /* No outline on the bang edges around the eye cut-outs: at game size they framed the eyes like goggles */
     const aroundEyes = (x, y, z) => z > 0.06 && y > 0.26 && y < 0.355 && Math.abs(x) < 0.11;
@@ -1787,7 +1973,7 @@ async function start() {
         mesh.renderOrder = -1;
       } else if (name === "glow") mesh.material = glow("#ffe7a0", 2.4);
       else if (name === "lining") mesh.material = lining;
-      else mesh.material = toon(`#${mesh.material.color.getHexString()}`);
+      else mesh.material = nikoToon(`#${mesh.material.color.getHexString()}`);
       mesh.castShadow = false;
       /* No cast shadows on the face: the bang strands' shadow-map shadows read as dirty smudges around the eyes */
       mesh.receiveShadow = name !== "lining" && name !== "glow" && name !== "face";
@@ -1856,6 +2042,8 @@ async function start() {
       faceOpen,
       faceShut: faceOpen,
       eyeDecals,
+      ink,
+      inkWidth: 0.0038 * NIKO_SCALE,
     });
   };
   const nikoReady = useNikoModel().catch((error) => console.warn("Niko model failed, keeping the built-in mascot", error));
@@ -1936,24 +2124,55 @@ async function start() {
   const playsIntro = Boolean(gsap) && !calm;
   const lights = { hemi, sun, fill, rim };
   const lightsOn = Object.fromEntries(Object.entries(lights).map(([key, light]) => [key, light.intensity]));
-  const lightsNight = { hemi: 0.32, sun: 0, fill: 0.35, rim: 0.25 };
   const sky = { dawn: playsIntro ? 0 : 1 };
-  const setDawn = () => host.style.setProperty("--dawn", sky.dawn.toFixed(3));
-  setDawn();
   const climate = createClimate({
     host,
     lights,
     lightsOn,
     lite,
+    calm,
     params: new URLSearchParams(location.search),
   });
+  /* The intro's night-to-day: the climate fades its own lights, tints and grade in by it */
+  const setDawn = () => {
+    climate.state.dawn = sky.dawn;
+    climate.apply(climate.sample());
+  };
+  setDawn();
+  /* The one place the climate reaches the scene shaders; lights and CSS are set inside the climate itself */
+  const applyEnv = (s) => {
+    windTime.value = s.windPhase;
+    windMul.value = s.wind;
+    rainAmt.value = s.rain;
+    weatherWet.value = s.wet;
+    weatherFog.value = s.fog;
+    const dim = 0.22 + s.day * 0.78;
+    weatherFogColor.value.setRGB(s.sky[0] * dim + 0.12 * s.day, s.sky[1] * dim + 0.1 * s.day, s.sky[2] * dim + 0.08 * s.day);
+    lampGain.value = s.lampGain;
+    cloudTime.value = s.cloudPhase;
+    cloudCover.value = s.cover;
+    cloudShade.value = s.shade;
+    cloudSun.value.set(s.sunDir[0], s.sunDir[2]).divideScalar(Math.max(s.sunDir[1], 0.35));
+    const wl = (1 - s.night) * (1 - s.storm * 0.25);
+    waterLight.value.setRGB(THREE.MathUtils.lerp(0.3, 1, wl), THREE.MathUtils.lerp(0.38, 1, wl), THREE.MathUtils.lerp(0.6, 1, wl));
+    placeSun(s.sunDir);
+    /* Niko's own light: a floor under his shading that rises as the scene darkens, cooler at night so he still sits in
+       the moonlight, and higher on the face so it never drops into mud */
+    const d = s.dark;
+    /* Storms keep him grey-blue and lower than night: the storm light is flat and dim, a bright floor read as a sticker */
+    const st = s.storm * (1 - s.night);
+    const lo = (day, night, storm) => THREE.MathUtils.lerp(THREE.MathUtils.lerp(day, night, s.night), storm, st);
+    charLight.amb.value.setRGB(lo(0.34, 0.33, 0.26), lo(0.34, 0.38, 0.28), lo(0.36, 0.55, 0.34));
+    charLight.key.value.setRGB(lo(0.34, 0.36, 0.22), lo(0.33, 0.38, 0.23), lo(0.31, 0.46, 0.27));
+    charLight.face.value = lo(0.16, 0.22, 0.12);
+    charLight.eye.value = lo(1, 0.88, 0.84);
+  };
   let climateSample = climate.sample();
   if (!playsIntro) {
     climate.unlock();
     climateSample = climate.update(0);
-    windMul.value = climateSample.windMul;
-    rainAmt.value = climateSample.rain;
   }
+  applyEnv(climateSample);
 
   /* Same Rigel as the loading screen: white-hot core, blue glow, faint halo ring and thin diffraction spikes */
   const flareTexture = (() => {
@@ -2072,10 +2291,7 @@ async function start() {
   let intro = null;
   let introLive = playsIntro;
 
-  if (playsIntro) {
-    Object.entries(lights).forEach(([key, light]) => (light.intensity = lightsNight[key]));
-    robot.visible = false;
-  }
+  if (playsIntro) robot.visible = false;
 
   /* Movement */
 
@@ -2956,9 +3172,8 @@ async function start() {
       }
     }
 
-    climateSample = climate.update(calm ? 0 : dt);
-    windMul.value = climateSample.windMul;
-    rainAmt.value = climateSample.rain;
+    climateSample = climate.update(dt);
+    applyEnv(climateSample);
     if (island.beamMat && climate.state.unlocked) {
       island.beamMat.uniforms.strength.value = 0.85 + climateSample.night * 0.35 + climateSample.storm * 0.2;
     }
@@ -2978,7 +3193,11 @@ async function start() {
     camera.position.copy(camLook).add(camOffset);
     camera.lookAt(camLook);
     camera.updateMatrixWorld();
+    fitShadow();
     post.snap();
+    /* Niko's ink hull only reads once it is close to a pixel wide; thinner, it breaks into stray dark pixels wherever
+       his parts overlap, so it only shows when zoomed in */
+    if (bot.ink) bot.ink.visible = bot.inkWidth / ((camera.top - camera.bottom) / camera.zoom / Math.max(1, renderer.domElement.height)) > 0.8;
     if (rain) {
       rain.update(dt, {
         center: camLook,
@@ -2986,7 +3205,19 @@ async function start() {
         groundAt: island.groundAt,
         intensity: climateSample.rain,
         storm: climateSample.storm,
-        windMul: climateSample.windMul,
+        windMul: climateSample.wind,
+        light: climateSample.day * (1 - climateSample.storm * 0.35),
+      });
+    }
+    if (rays) {
+      /* Sunlit air glows a little in any clear daylight (depth and brilliance); the rays layer turns it into shafts */
+      const sunUp = climateSample.moon ? 0 : climateSample.day * (1 - climateSample.storm * 0.8);
+      rays.update(dt, {
+        camera,
+        center: camLook,
+        extent: shadowFit.reach,
+        strength: (VOLUME_BASE * sunUp + climateSample.rays * VOLUME_RAYS) * sky.dawn,
+        tint: rayTint.setRGB(1, 0.9 + climateSample.gold * -0.08 + 0.04, 0.76 - climateSample.gold * 0.16),
       });
     }
     island.update(dt, calm ? 0 : time, robot.visible ? robot.position : null, renderer, rain?.hits);
@@ -3005,8 +3236,9 @@ async function start() {
         level: camLook.y,
         pixels: windPixels,
         ratio: renderer.getPixelRatio(),
-        on: started && !introLive && climateSample.rain < 0.05 && climateSample.windMul > 0.55,
-        rate: climateSample.windMul,
+        on: started && !introLive && climateSample.rain < 0.05 && climateSample.wind > 0.55,
+        rate: climateSample.wind * (1 + climateSample.gust),
+        light: climateSample.day * (1 - climateSample.storm * 0.3),
       });
     }
     if (robot.visible) seeThrough.playerView.value.set(robot.position.x, robot.position.y + 0.95, robot.position.z).applyMatrix4(camera.matrixWorldInverse);
@@ -3241,9 +3473,8 @@ async function start() {
     root.classList.remove("world-intro");
     climate.unlock();
     climateSample = climate.update(0);
-    windMul.value = climateSample.windMul;
-    rainAmt.value = climateSample.rain;
-    sky.dawn = climateSample.day;
+    applyEnv(climateSample);
+    sky.dawn = 1;
     robot.visible = true;
     shrineStar.visible = true;
     shrineStar.material.opacity = 0.95;
@@ -3440,11 +3671,7 @@ async function start() {
       /* The cover lifts onto the island at night, then dusk rolls in over sky and floor */
       .to(boot, { autoAlpha: 0, duration: 1.0, ease: "power1.inOut" }, W + 1.15)
       .fromTo(camera, { zoom: 0.8 }, { zoom: 1, duration: 2.6, ease: "power2.inOut", onUpdate: zoomTo }, W + 1.0)
-      .to(sky, { dawn: 1, duration: 1.8, ease: "sine.inOut", onUpdate: setDawn }, W + 1.3)
-      .to(hemi, { intensity: lightsOn.hemi, duration: 1.8, ease: "sine.inOut" }, W + 1.3)
-      .to(fill, { intensity: lightsOn.fill, duration: 1.6, ease: "sine.inOut" }, W + 1.4)
-      .to(rim, { intensity: lightsOn.rim, duration: 1.6, ease: "sine.inOut" }, W + 1.5)
-      .to(sun, { intensity: lightsOn.sun, duration: 1.6, ease: "sine.inOut" }, W + 1.7)
+      .to(sky, { dawn: 1, duration: 2.0, ease: "sine.inOut", onUpdate: setDawn }, W + 1.3)
 
       /* It falls back in along the same line and hits the spawn ring */
       .call(() => {
@@ -3581,7 +3808,10 @@ async function start() {
         camera.updateProjectionMatrix();
       },
       finishIntro: () => void finishIntro(),
+      /* climate({ hour, weather, instant }) — weather rolls in unless instant; climate() reads the live env */
       climate: (opts) => (opts == null ? climate.sample() : climate.set(opts)),
+      /* Freeze clouds and water at time t (null to release) so screenshots differ only by wind */
+      pinMotion: (t = null) => void (island.motion.pinned = t),
       wind: () => wind?.peek(),
       walkable: (x, z) => island.nav.walkable(x, z),
       position: () => robot.position.toArray(),

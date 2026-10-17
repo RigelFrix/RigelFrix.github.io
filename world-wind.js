@@ -153,7 +153,8 @@ export function windLines({ scene, groundAt, count = 6 }) {
         at: Array.from(line.mesh.geometry.attributes.position.array.slice(0, 3), (n) => +n.toFixed(2)),
       })),
     /* level: ground height around what the camera looks at; pixels: drawing buffer size */
-    update(dt, { camera, level, pixels, ratio, on = true, rate = 1 }) {
+    /* light 0–1: the ribbons are unlit white, so they fade back at night instead of glowing */
+    update(dt, { camera, level, pixels, ratio, on = true, rate = 1, light = 1 }) {
       res.value.copy(pixels);
       const spawnRate = Math.max(0.12, rate);
       wait = Math.min(wait - dt * spawnRate, 1.5);
@@ -172,6 +173,7 @@ export function windLines({ scene, groundAt, count = 6 }) {
         u.tail.value = easeIn(THREE.MathUtils.clamp((t - 0.38) / 0.62, 0, 1));
         u.drift.value.copy(WIND).multiplyScalar(line.age * 0.9);
         u.width.value = 3.4 * ratio;
+        u.opacity.value = 0.85 * (0.25 + light * 0.75);
         if (t >= 1) {
           line.live = false;
           line.mesh.visible = false;
