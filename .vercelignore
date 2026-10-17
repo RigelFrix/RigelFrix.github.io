@@ -14,6 +14,7 @@ cursor_project_scan_and_analysis.md
 # Dev tools and reference material
 .impeccable/
 sampleModels/
+/assets/kit/
 /README.md
 /niko-rig.mjs
 /Running.fbx

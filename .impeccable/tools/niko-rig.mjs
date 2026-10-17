@@ -6,7 +6,8 @@
    - a standard Mixamo skeleton (unprefixed names, fingers and toes) + Hair/Ahoge/Lantern/Cape spring bones,
      and socket nodes (LeftHandSocket, RightHandSocket, HeadSocket, BackSocket) for attaching props
    - every clip in ../anim/clips.json (dumped by niko-anim.mjs), retargeted by bone name
-   Model space: 1 unit tall, feet at y -0.5, facing +z, T-pose with identity rest rotations. Output: assets/niko.glb */
+   Model space: 1 unit tall, feet at y -0.5, facing +z, T-pose with identity rest rotations. Output: assets/niko.glb.
+   Then node niko-parts.mjs writes the wearable pieces assets/niko/{body,hair,coat,clothes,shoes}.glb. */
 import { NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import { weld, prune } from "@gltf-transform/functions";

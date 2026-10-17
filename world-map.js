@@ -2,6 +2,8 @@
    Shapes are authored in screen terms: u runs to the right of the screen, v toward the camera (down the screen).
    World x/z come from toXZ; the iso camera sits at +x +z. Higher ground sits further back so cliffs never hide Niko. */
 
+import { parts as groundParts } from "./world-ground.js";
+
 const S = Math.SQRT1_2;
 export const toUV = (x, z) => [(x - z) * S, (x + z) * S];
 export const toXZ = (u, v) => [(u + v) * S, (v - u) * S];
@@ -34,7 +36,6 @@ const noise = (x, y) => {
 };
 export const fbm = (x, y) => noise(x, y) * 0.57 + noise(x * 2.03 + 5.2, y * 2.03 + 1.3) * 0.29 + noise(x * 4.1 + 9.7, y * 4.1 + 3.1) * 0.14;
 export const rand = hash;
-const smoothstep = (a, b, x) => smooth(Math.min(1, Math.max(0, (x - a) / (b - a))));
 
 const ell = (cu, cv, ru, rv) => {
   [cu, cv, ru, rv] = [cu * K, cv * K, ru * K, rv * K];
@@ -44,18 +45,20 @@ const ell = (cu, cv, ru, rv) => {
 /* Terraces: the highest region a point falls in sets its height. `wobble` roughens the outline. */
 const regions = [
   { name: "meadow", h: LEVEL.low, wobble: 2.2, seed: 1, parts: [ell(3, 1.5, 15, 8.5), ell(-6.5, -3, 8, 6.5), ell(11, -4.5, 7.5, 7.5)], cut: [ell(10.8, 6.4, 4, 4.4)] },
-  /* The beach wraps the front-left of the island: a wide bay by the dock, a strip along the front cliffs and a cove
-     under the plateau */
-  { name: "beach", h: LEVEL.beach, beach: true, wobble: 1.6, seed: 2, parts: [ell(-10, 10.6, 10.8, 7.2), ell(0.4, 14.6, 8.4, 4), ell(-17.2, 2.6, 4.6, 5.6), ell(-15.4, 6.4, 5.4, 4.2)] },
+  /* Lower island: the old beach footprint, kept so the cliff under the meadow does not move, plus the
+     spawn extensions listed in world-ground.js. Flat grass, no sand shelf. */
+  {
+    name: "ground",
+    h: LEVEL.beach,
+    flat: true,
+    wobble: 1.6,
+    seed: 2,
+    parts: [ell(-10, 10.6, 10.8, 7.2), ell(0.4, 14.6, 8.4, 4), ell(-17.2, 2.6, 4.6, 5.6), ell(-15.4, 6.4, 5.4, 4.2), ...groundParts.map((p) => ell(...p))],
+  },
   { name: "plateau", h: LEVEL.mid, wobble: 2, seed: 3, parts: [ell(-11.5, -6, 6.2, 5.4)] },
   { name: "ruins", h: LEVEL.mid, wobble: 1.6, seed: 4, parts: [ell(0.5, -7.6, 7, 3.4)] },
   { name: "cliffside", h: LEVEL.mid, wobble: 1.6, seed: 5, parts: [ell(11.6, -7.4, 7.4, 6.4)] },
   { name: "shrine", h: LEVEL.top, wobble: 1.4, seed: 6, parts: [ell(-1, -14.6, 7.2, 4.6)] },
-  { name: "islet", h: 1.3, wobble: 0.6, seed: 7, parts: [ell(10.4, 20.6, 2.3, 1.7)] },
-  { name: "stack", h: 4.2, wobble: 0.5, seed: 8, stack: true, parts: [ell(15.5, 9.5, 1.7, 1.5)] },
-  { name: "stack", h: 6.4, wobble: 0.5, seed: 9, stack: true, parts: [ell(20, -2.5, 2.1, 1.9)] },
-  { name: "stack", h: 3.2, wobble: 0.4, seed: 10, stack: true, parts: [ell(-24.4, -4.2, 1.5, 1.4)] },
-  { name: "stack", h: 2.2, wobble: 0.4, seed: 11, stack: true, parts: [ell(12.8, 13.2, 1.1, 1)] },
 ];
 
 /* Stairs ramp the height between two levels across a rectangle from a (bottom) to b (top) */
@@ -80,12 +83,8 @@ const inStair = (s, u, v) => {
   return t >= 0 && t <= 1 && side <= s.w ? t : -1;
 };
 
-/* Walkable decks over water or gaps: the long dock with a T-head out in the bay, a short fishing jetty, and the
-   bridge over the stream */
+/* The bridge over the stream. The lower island is solid ground, so it has no dock. */
 export const platforms = [
-  { name: "dock", a: [-13.4, 13.2], b: [-19.6, 17.9], w: 1.05, h: 0.66 },
-  { name: "pier", a: [-21.4, 15.4], b: [-17.8, 20.2], w: 1.2, h: 0.66 },
-  { name: "jetty", a: [-2.4, 16.8], b: [-1, 20.6], w: 0.75, h: 0.6 },
   { name: "bridge", a: [6.2, -6.2], b: [9.4, -6.6], w: 1.05, h: LEVEL.mid + 0.32 },
 ].map((p) => {
   const [a, b] = layAll([p.a, p.b]);
@@ -136,6 +135,7 @@ export const paths = [
   [[0.6, -4.8], [3.4, -5.8], [6.2, -6.2]],
   [[9.4, -6.6], [11.6, -7.2], [13.2, -8]],
   [[-0.9, -10.9], [-1, -14.4]],
+  [[-10.6, 12], [-13.4, 14.4], [-16.2, 16.4]],
 ].map(layAll);
 export const pathDist = (u, v) => {
   let best = Infinity;
@@ -164,25 +164,21 @@ for (const key in spots) spots[key] = lay(...spots[key]);
 export const terrainAtUV = (u, v) => {
   let h = -Infinity;
   let region = null;
-  let dBeach = Infinity;
-  let dRest = Infinity;
   for (const r of regions) {
     let d = Infinity;
     for (const part of r.parts) d = Math.min(d, part(u, v));
     if (r.cut) for (const cut of r.cut) d = Math.max(d, -cut(u, v));
     d += (fbm((u / K) * 0.21 + r.seed * 17.3, (v / K) * 0.21 - r.seed * 9.1) - 0.5) * r.wobble * K;
-    if (r.beach) dBeach = Math.min(dBeach, d);
-    else dRest = Math.min(dRest, d);
     if (d >= 0) continue;
-    const top = r.beach ? -0.45 + (r.h + 0.45) * smoothstep(0, 3, -d) : r.h;
+    const top = r.h;
     if (top > h) {
       h = top;
       region = r;
     }
   }
-  if (region && !region.beach) h += (fbm(u * 0.5 + 40, v * 0.5) - 0.5) * 0.14;
-  /* Off a beach the sea floor shelves gently, so the bay keeps wide turquoise shallows; elsewhere it drops fast */
-  if (!region) h = -0.45 - Math.min(2.8, dBeach * 0.38, dRest * 0.75);
+  if (region && !region.beach && !region.flat) h += (fbm(u * 0.5 + 40, v * 0.5) - 0.5) * 0.14;
+  /* Open air under the island. -8 is below the rock skirt, and the terrain mesh leaves those cells out. */
+  if (!region) h = -8;
   for (const s of stairs) {
     const t = inStair(s, u, v);
     if (t >= 0) return { h: s.from + (s.to - s.from) * t, region, stair: s };

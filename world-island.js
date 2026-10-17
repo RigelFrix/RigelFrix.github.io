@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import * as MAP from "./world-map.js";
+import { places as groundPlaces } from "./world-ground.js";
 
 /* Palette from the concept board: sky and water blues, nature greens, sand, rock greys, ruin tan, star gold */
 export const ISLE = {
@@ -286,21 +287,74 @@ const weather = (g, kind, seed, dry = false) => {
 
 /* Collects coloured pieces and merges them into one mesh. Stone, ruin and wood colours weather on the way in;
    `dry` skips the sea-level wet band for pieces built in their own local space (boats, floating rocks). */
-const makeBake = ({ dry = false } = {}) => {
+const makeBake = ({ dry = false, split = false } = {}) => {
   const list = [];
+  /* split keeps every piece as its own object (the editor export), with the matrix as the object's transform */
+  const nodes = [];
+  let label = "piece";
+  let count = 0;
+  let bucket = null;
+  const adopt = (g, matrix, leaf = false) => {
+    const mesh = new THREE.Mesh(g);
+    mesh.userData.leaf = leaf;
+    matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
+    mesh.name = `${label}-${count++}`;
+    (bucket || nodes).push(mesh);
+    return mesh;
+  };
   return {
+    split,
+    setLabel(name) {
+      label = name;
+      count = 0;
+    },
+    begin() {
+      bucket = [];
+    },
+    /* `recenter` puts the group's pivot on the pieces, so the whole thing moves from where it stands */
+    end(recenter = false) {
+      const group = new THREE.Group();
+      group.name = `${label}-${count++}`;
+      if (recenter && bucket.length) {
+        const box = new THREE.Box3();
+        bucket.forEach((mesh) => box.expandByPoint(mesh.position));
+        const centre = box.getCenter(new THREE.Vector3());
+        bucket.forEach((mesh) => mesh.position.sub(centre));
+        group.position.copy(centre);
+      }
+      bucket.forEach((mesh) => group.add(mesh));
+      nodes.push(group);
+      bucket = null;
+      return group;
+    },
+    discard() {
+      nodes.pop();
+    },
     add(geometry, color, matrix, shade = 0, grade = null) {
       if (geometry.userData.sized) [geometry, matrix] = sizedPiece(geometry, matrix);
       const g = paint(geometry, color, shade);
       if (grade) gradeY(g, ...grade);
       g.applyMatrix4(matrix);
-      if (WEATHER[color]) weather(g, WEATHER[color], list.length, dry);
-      list.push(g);
+      if (WEATHER[color]) weather(g, WEATHER[color], list.length + nodes.length, dry);
+      if (split) {
+        g.applyMatrix4(new THREE.Matrix4().copy(matrix).invert());
+        adopt(g, matrix);
+      } else list.push(g);
     },
     /* A pre-coloured model; `vary` nudges its whole colour so copies are not identical; `sway` lets its upper part
        bend in the wind (world units of lean at the very top in a full gust, before the per-copy scale) */
-    put(geometry, matrix, vary = 0, seed = list.length, sway = 0) {
+    put(geometry, matrix, vary = 0, seed = list.length, sway = 0, leaf = false) {
       const g = geometry.clone();
+      if (split) {
+        if (vary) {
+          const c = g.attributes.color;
+          const k = 1 + (MAP.rand(seed, 3.3) - 0.5) * vary;
+          const warmth = (MAP.rand(seed, 8.1) - 0.5) * vary * 0.8;
+          for (let i = 0; i < c.count; i += 1) c.setXYZ(i, c.getX(i) * k * (1 + warmth), c.getY(i) * k, c.getZ(i) * k * (1 - warmth));
+        }
+        adopt(g, matrix, leaf || geometry.userData.leaf);
+        return;
+      }
       if (sway) {
         if (!geometry.userData.swayBox) g.computeBoundingBox();
         const { min: lo, max: hi } = geometry.userData.swayBox || g.boundingBox;
@@ -325,6 +379,13 @@ const makeBake = ({ dry = false } = {}) => {
       list.push(g);
     },
     build(material) {
+      if (split) {
+        const group = new THREE.Group();
+        group.name = "props";
+        nodes.forEach((node) => group.add(node));
+        nodes.length = 0;
+        return group;
+      }
       if (!list.length) return null;
       [["aSway", 3], ["aLeaf", 2]].forEach(([name, n]) => {
         if (list.some((g) => g.attributes[name])) list.forEach((g) => g.attributes[name] || g.setAttribute(name, new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * n), n)));
@@ -737,7 +798,9 @@ const roundTreeGeo = (seed) => {
     0.6,
     1.08
   );
-  return swayPair(core, shell.build());
+  const pair = swayPair(core, shell.build());
+  pair.core.userData.kit = "tree-round";
+  return pair;
 };
 
 /* A pine: a bare trunk and four drooping tiers of needle sprays over dark cones */
@@ -784,8 +847,147 @@ const pineGeo = (seed) => {
     0.62,
     1.08
   );
-  return swayPair(core, shell.build());
+  const pair = swayPair(core, shell.build());
+  pair.core.userData.kit = "tree-pine";
+  return pair;
 };
+
+/* Pieces for the three.js editor kit (assets/kit): the same shapes the island uses, each standing on y = 0 in its own file */
+export function propKit() {
+  const tex = foliageTexture();
+  const mat = new THREE.MeshBasicMaterial({ vertexColors: true });
+  const baked = (fill) => {
+    const bake = makeBake({ dry: true });
+    fill(bake, (x, y, z, o) => at(x, y, z, o));
+    return bake.build(mat);
+  };
+  const piece = (name, fill) => {
+    const mesh = baked(fill);
+    if (!mesh) return null;
+    mesh.name = name;
+    return mesh;
+  };
+  const tree = (name, model, s) => {
+    const g = new THREE.Group();
+    g.name = name;
+    const M = at(0, 0, 0, { s });
+    const core = new THREE.Mesh(model.core.clone().applyMatrix4(M), mat);
+    core.name = "trunk";
+    const leaves = new THREE.Mesh(model.leaves.clone().applyMatrix4(M), mat);
+    leaves.name = "leaves";
+    leaves.userData.leaf = true;
+    g.add(core, leaves);
+    return g;
+  };
+  const marker = new THREE.Mesh(new THREE.CapsuleGeometry(0.32, 1.7, 4, 8).translate(0, 1.17, 0), new THREE.MeshBasicMaterial({ color: "#6f8cff" }));
+  marker.name = "niko-height";
+  const pieces = [
+    marker,
+    piece("ground-sand", (b, L) => b.add(G.box, ISLE.sand, L(0, -0.3, 0, { sx: 8, sy: 0.6, sz: 8 }))),
+    piece("ground-grass", (b, L) => b.add(G.box, ISLE.grass, L(0, -0.3, 0, { sx: 8, sy: 0.6, sz: 8 }))),
+    piece("ground-grass-wide", (b, L) => b.add(G.box, ISLE.grassTop, L(0, -0.3, 0, { sx: 16, sy: 0.6, sz: 16 }))),
+    piece("path", (b, L) => b.add(G.box, ISLE.dirt, L(0, -0.08, 0, { sx: 1.6, sy: 0.16, sz: 6 }))),
+    piece("cliff", (b, L) => {
+      for (let i = 0; i < 4; i += 1) b.add(G.column[i % 4], i % 2 ? ISLE.rock : ISLE.rockDeep, L((i - 1.5) * 1.15, 1.3, 0, { ry: i, sx: 1.05, sy: 2.6, sz: 0.95 }));
+    }),
+    piece("stair", (b, L) => {
+      for (let k = 0; k < 8; k += 1) b.add(G.slab[k % 3], k % 2 ? ISLE.ruin : ISLE.ruinDeep, L(0, 0.16 + k * 0.325, -1.7 + k * 0.5, { sx: 2.4, sy: 0.32, sz: 0.62 }));
+    }),
+    piece("rock", (b, L) => b.add(G.rock[0], ISLE.rock, L(0, 0.55, 0, { s: 1.3 }))),
+    piece("rock-large", (b, L) => b.add(G.stones[0], ISLE.rockLight, L(0, 1.1, 0, { s: 2.2 }))),
+    piece("rock-small", (b, L) => b.add(G.rock[1], ISLE.rockDeep, L(0, 0.28, 0, { s: 0.7 }))),
+    tree("tree-round", roundTreeGeo(1), 1.6),
+    tree("tree-pine", pineGeo(0), 1.5),
+    tree("bush", bushParts(1), 1.15),
+    piece("lamp", (b, L) => {
+      b.add(G.taper, ISLE.rockDeep, L(0, 0.2, 0, { sx: 0.24, sy: 0.42, sz: 0.24 }));
+      b.add(G.taper, ISLE.wood, L(0, 1.27, 0, { sx: 0.09, sy: 1.7, sz: 0.09 }));
+      b.add(G.peak, ISLE.woodDeep, L(0, 2.16, 0, { sx: 0.066, sy: 0.08, sz: 0.066 }));
+      b.add(G.box, ISLE.iron, L(0, 1.92, 0, { sx: 0.12, sy: 0.06, sz: 0.12 }));
+      b.add(G.box, ISLE.wood, L(0, 1.855, 0.29, { rx: -0.26, sx: 0.08, sy: 0.08, sz: 1.05 }));
+      b.add(G.box, ISLE.wood, L(0, 1.6, 0.23, { rx: -0.98, sx: 0.055, sy: 0.055, sz: 0.68 }));
+      b.add(G.box, ISLE.iron, L(0, 1.86, 0.7, { sx: 0.022, sy: 0.14, sz: 0.022 }));
+      b.add(G.peak, ISLE.iron, L(0, 1.75, 0.7, { sx: 0.13, sy: 0.12, sz: 0.13 }));
+      b.add(G.box, ISLE.iron, L(0, 1.685, 0.7, { sx: 0.15, sy: 0.025, sz: 0.15 }));
+      b.add(G.flare, "#ffd98a", L(0, 1.57, 0.7, { sx: 0.085, sy: 0.2, sz: 0.085 }));
+      b.add(G.box, ISLE.iron, L(0, 1.46, 0.7, { sx: 0.075, sy: 0.03, sz: 0.075 }));
+      b.add(G.peak, ISLE.iron, L(0, 1.42, 0.7, { rx: Math.PI, sx: 0.03, sy: 0.06, sz: 0.03 }));
+    }),
+    piece("barrel", (b, L) => {
+      const s = 1.5;
+      b.add(G.oct, ISLE.wood, L(0, 0.45 * s, 0, { sx: 0.36 * s, sz: 0.36 * s, sy: 0.9 * s }));
+      [0.18, 0.72].forEach((y) => b.add(G.oct, ISLE.woodDeep, L(0, y * s, 0, { sx: 0.385 * s, sz: 0.385 * s, sy: 0.08 * s })));
+    }),
+    piece("crate", (b, L) => {
+      const s = 1.4;
+      b.add(G.box, ISLE.wood, L(0, 0.4 * s, 0, { s: 0.8 * s }));
+      [-0.3, 0.3].forEach((y) => b.add(G.box, ISLE.woodDeep, L(0, (0.4 + y) * s, 0, { sx: 0.84 * s, sy: 0.09 * s, sz: 0.84 * s })));
+    }),
+    piece("fence", (b, L) => {
+      [-1, 1].forEach((x) => b.add(G.box, ISLE.woodDeep, L(x, 0.65, 0, { sx: 0.17, sy: 1.3, sz: 0.17 })));
+      [0.5, 1.02].forEach((y) => b.add(G.box, ISLE.wood, L(0, y, 0, { sx: 2.1, sy: 0.12, sz: 0.09 })));
+    }),
+    piece("shack", (b, L) => {
+      const S = 1.65;
+      const P = (x, y, z, o) => L(x * S, y * S, z * S, { ...o, sx: (o.sx ?? o.s ?? 1) * S, sy: (o.sy ?? o.s ?? 1) * S, sz: (o.sz ?? o.s ?? 1) * S });
+      const gableShape = new THREE.Shape();
+      gableShape.moveTo(-1.08, 0);
+      gableShape.lineTo(1.08, 0);
+      gableShape.lineTo(1.08, 1.6);
+      gableShape.lineTo(0, 2.28);
+      gableShape.lineTo(-1.08, 1.6);
+      gableShape.closePath();
+      const gable = facet(new THREE.ExtrudeGeometry(gableShape, { depth: 0.12, bevelEnabled: false }).translate(0, 0, -0.06));
+      b.add(G.box, ISLE.plank, P(0, 0.1, 0, { sx: 2.7, sy: 0.2, sz: 2.4 }));
+      b.add(G.box, ISLE.wood, P(0, 0.95, -1.02, { sx: 2.4, sy: 1.6, sz: 0.12 }));
+      [-1, 1].forEach((side) => b.add(gable, ISLE.plank, P(side * 1.2, 0.15, 0, { ry: Math.PI / 2, sx: 1, sy: 1, sz: 1 })));
+      b.add(G.box, ISLE.wood, P(-0.72, 0.95, 1.02, { sx: 0.96, sy: 1.6, sz: 0.12 }));
+      b.add(G.box, ISLE.wood, P(0.86, 0.95, 1.02, { sx: 0.68, sy: 1.6, sz: 0.12 }));
+      b.add(G.box, ISLE.wood, P(0.1, 1.6, 1.02, { sx: 0.7, sy: 0.3, sz: 0.12 }));
+      b.add(G.box, ISLE.woodDeep, P(0.1, 0.78, 1.05, { sx: 0.62, sy: 1.18, sz: 0.05 }));
+      [-1, 1].forEach((side) => b.add(G.box, ISLE.roof, P(0, 2.08, side * 0.6, { rx: side * 0.56, sx: 2.85, sy: 0.12, sz: 1.5 })));
+      b.add(G.box, ISLE.woodDeep, P(0, 2.42, 0, { sx: 2.95, sy: 0.12, sz: 0.16 }));
+    }),
+    piece("stall", (b, L) => {
+      const S = 1.5;
+      const P = (x, y, z, o) => L(x * S, y * S, z * S, { ...o, sx: (o.sx ?? 1) * S, sy: (o.sy ?? 1) * S, sz: (o.sz ?? 1) * S });
+      [[-0.9, -0.6], [0.9, -0.6], [-0.9, 0.6], [0.9, 0.6]].forEach(([a, c]) => {
+        const tall = 1.8 + (c < 0 ? 0.3 : 0);
+        P && b.add(G.box, ISLE.woodDeep, P(a, tall / 2, c, { sx: 0.1, sy: tall, sz: 0.1 }));
+      });
+      for (let k = 0; k < 5; k += 1) b.add(G.box, k % 2 ? ISLE.cloth : ISLE.clothRed, P(-0.8 + k * 0.4, 1.95, 0, { rx: -0.25, sx: 0.4, sy: 0.06, sz: 1.5 }));
+      b.add(G.box, ISLE.plank, P(0, 0.75, 0, { sx: 1.9, sy: 0.12, sz: 0.8 }));
+      b.add(G.box, ISLE.wood, P(0, 0.4, 0, { sx: 1.8, sy: 0.7, sz: 0.7 }));
+    }),
+    piece("boat", (b, L) => {
+      const hullShape = new THREE.Shape();
+      hullShape.moveTo(0, -1.9);
+      hullShape.quadraticCurveTo(0.85, -1.1, 0.8, 0.6);
+      hullShape.quadraticCurveTo(0.7, 1.5, 0, 1.7);
+      hullShape.quadraticCurveTo(-0.7, 1.5, -0.8, 0.6);
+      hullShape.quadraticCurveTo(-0.85, -1.1, 0, -1.9);
+      const hull = facet(new THREE.ExtrudeGeometry(hullShape, { depth: 0.7, bevelEnabled: true, bevelSize: 0.08, bevelThickness: 0.08, bevelSegments: 1, curveSegments: 4 }).rotateX(Math.PI / 2));
+      b.add(hull, ISLE.wood, L(0, 0.35, 0, { s: 1.3 }));
+    }),
+    piece("campfire", (b, L) => {
+      for (let k = 0; k < 7; k += 1) {
+        const a = (k / 7) * Math.PI * 2;
+        b.add(G.rock[k % 3], ISLE.rockDeep, L(Math.cos(a) * 0.82, 0.1, Math.sin(a) * 0.82, { s: 0.27 }));
+      }
+      [0, 1.1, 2.2].forEach((a) => b.add(G.hex, ISLE.woodDeep, L(0, 0.17, 0, { ry: a, rz: Math.PI / 2, sx: 0.11, sy: 1.2, sz: 0.11 })));
+      b.add(G.cone, "#ff8a3c", L(0, 0.7, 0, { sx: 0.42, sy: 1.05, sz: 0.42 }));
+    }),
+    piece("pillar", (b, L) => {
+      b.add(G.oct, ISLE.ruinDeep, L(0, 0.12, 0, { sx: 0.6, sz: 0.6, sy: 0.24 }));
+      for (let k = 0; k < 3; k += 1) b.add(G.oct, k % 2 ? ISLE.ruin : ISLE.ruinDeep, L(0, 0.4 + k * 0.78, 0, { ry: k * 0.4, sx: 0.42, sz: 0.42, sy: 0.74 }));
+    }),
+    piece("dock", (b, L) => {
+      for (let k = 0; k < 8; k += 1) b.add(G.box, k % 2 ? ISLE.plank : ISLE.wood, L(0, 0.08, -1.4 + k * 0.4, { sx: 1.6, sy: 0.12, sz: 0.32 }));
+      [-0.7, 0.7].forEach((x) => b.add(G.box, ISLE.woodDeep, L(x, -0.15, 0, { sx: 0.14, sy: 0.3, sz: 3.3 })));
+    }),
+  ].filter(Boolean);
+  return { pieces, leaf: { width: tex.image.width, height: tex.image.height, data: tex.image.data } };
+}
 
 /* Bush: a dark dome under small rounded leaves, knee to hip high on Niko */
 const bushParts = (seed) => {
@@ -793,7 +995,9 @@ const bushParts = (seed) => {
   const r = V(0.62, 0.48, 0.62);
   const shell = cardShell();
   leafBall(shell, c, r, 0.26, BUSH_LEAF, seed * 5 + 1, LEAF_TILE, -0.35);
-  return swayPair(coreBall(c, r, LEAF_CORE, seed), shell.build());
+  const pair = swayPair(coreBall(c, r, LEAF_CORE, seed), shell.build());
+  pair.core.userData.kit = "bush";
+  return pair;
 };
 
 /* See-through: scenery between the camera and Niko is dithered away in a small circle around him, so trees, stones
@@ -981,7 +1185,7 @@ export const atmos = (material) => {
   return material;
 };
 
-export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
+export function buildIsland({ scene, withRim, coarse = false, clear = [], kit = false }) {
   const root = new THREE.Group();
   root.name = "island";
   scene.add(root);
@@ -994,14 +1198,25 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   const glowing = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
   glowing.color.setScalar(2.4);
 
-  const bake = makeBake();
-  const glowBake = makeBake();
-  const leafBake = makeBake();
+  const bake = makeBake({ split: kit });
+  const glowBake = makeBake({ split: kit });
+  const leafBake = makeBake({ split: kit });
   const leafTex = foliageTexture();
   const leafMaterial = atmos(occlude(windSway(new THREE.MeshToonMaterial({ vertexColors: true, map: leafTex, alphaTest: 0.5, side: THREE.DoubleSide, gradientMap: ramp }), true)));
   const leafDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: leafTex, alphaTest: 0.5, side: THREE.DoubleSide });
   /* A tree or bush: its core into the props, its leaf cards into the leaf mesh, swaying together */
+  let plantCount = 0;
   const plant = (model, matrix, vary, seed, sway) => {
+    if (bake.split) {
+      bake.setLabel(model.core.userData.kit || "plant");
+      bake.begin();
+      bake.put(model.core, new THREE.Matrix4(), vary, seed, 0);
+      bake.put(model.leaves, new THREE.Matrix4(), vary, seed, 0, true);
+      const group = bake.end();
+      group.name = `${model.core.userData.kit || "plant"}-${plantCount++}`;
+      matrix.decompose(group.position, group.quaternion, group.scale);
+      return;
+    }
     bake.put(model.core, matrix, vary, seed, sway);
     leafBake.put(model.leaves, matrix, vary, seed, sway);
   };
@@ -1067,7 +1282,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       colour.lerp(tint.set(tone > 0.5 ? ISLE.rockWarm : ISLE.rockCool), Math.abs(tone - 0.5) * 1.1);
     } else if (t.stair) {
       mixC(ISLE.ruin, ISLE.ruinDeep, grain);
-    } else if (y < 1.1 && (t.region?.beach || y < 0.7 || !t.region)) {
+    } else if (t.region?.beach || (!t.region && y < 1.1)) {
       if (y < -0.08) mixC(ISLE.sandWet, ISLE.seabed, -y / 2.2);
       else {
         /* Sand: crisp drifts of pale and darker grains, thin ripple lines, a hard damp tide line, trodden paths */
@@ -1113,6 +1328,11 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       const camp = Math.hypot(u - campAt[0], v - campAt[1]) / MAP.K - (grain - 0.5) * 1.2;
       colour.lerp(tint.set(ISLE.dirt), (1 - cut(camp, 1.8)) * 0.75 + (1 - cut(camp, 2.6)) * cut(camp, 1.8) * 0.35);
       grassHere *= cut(camp, 2.4);
+      if (t.region?.name === "ground") {
+        const court = Math.hypot(u - MAP.spots.landing[0], v - MAP.spots.landing[1]) / MAP.K - (grain - 0.5) * 0.35;
+        colour.lerp(tint.set(ISLE.dirt), (1 - cut(court, 3.6)) * 0.7);
+        grassHere *= cut(court, 3.8);
+      }
       if (MAP.riverDist(u, v) < MAP.river.w + 0.2) {
         colour.set(ISLE.seabed);
         grassHere = 0;
@@ -1213,7 +1433,8 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     for (let k = 0; k < n * n; k += 1) uvs.set([(px[k] - min) / span, (pz[k] - min) / span], k * 2);
     geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
     terrain = new THREE.Mesh(geometry, groundMaterial);
-    terrain.name = "terrain";
+    terrain.name = "ground";
+    if (kit) terrain.userData.image = { width: TEX, height: TEX, data: groundPixels };
     terrain.receiveShadow = true;
     terrain.castShadow = true;
     root.add(terrain);
@@ -1221,12 +1442,13 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
 
   /* Cliffs: chunky rock columns stood along every drop, from below the lower ground to just under the grass lip */
   {
+    if (kit) bake.setLabel("cliff");
     const placed = [];
     const rocks = [ISLE.rock, ISLE.rockDeep, ISLE.rockLight, ISLE.rock];
     for (let j = 0; j < size; j += 1) {
       for (let i = 0; i < size; i += 1) {
         const h = hgrid[j * size + i];
-        if (h < 0.6) continue;
+        if (h < 0.35) continue;
         let low = h;
         let di = 0;
         let dj = 0;
@@ -1241,6 +1463,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
           }
         }
         if (h - low < 0.9) continue;
+        if (h < 0.6 && low > -1) continue;
         if (sgrid[(j + dj) * size + (i + di)]) continue;
         const x = min + (i + 0.5) * cell;
         const z = min + (j + 0.5) * cell;
@@ -1252,7 +1475,8 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
         if (placed.some((p) => Math.hypot(p[0] - cx, p[1] - cz) < 1.0)) continue;
         placed.push([cx, cz]);
         const far = hAt(i + di * 3, j + dj * 3);
-        const bottom = Math.min(low, far) - (Math.min(low, far) < 0.2 ? 1.6 : 0.7);
+        let bottom = Math.min(low, far) - (Math.min(low, far) < 0.2 ? 1.6 : 0.7);
+        if (low < -1) bottom = Math.max(bottom, h - 3.4);
         const r = 0.58 + rand(cx * 2, cz) * 0.45;
         const top = h - 0.1 - rand(cz, cx * 2) * 0.45 + (rand(cx, cz * 3) > 0.96 ? 0.3 : 0);
         const k = Math.floor(rand(cx * 5, cz * 5) * 4);
@@ -1260,40 +1484,6 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       }
     }
   }
-
-  /* Boulders around the shore and in the shallows, kept off the decks and the boat's mooring */
-  const nearDeck = (u, v, margin) =>
-    MAP.platforms.some((p) => {
-      const pu = u - p.a[0];
-      const pv = v - p.a[1];
-      const t = (pu * p.dir[0] + pv * p.dir[1]) / p.len;
-      return t > -margin / p.len && t < 1 + margin / p.len && Math.abs(pu * p.dir[1] - pv * p.dir[0]) < p.w + margin;
-    }) || Math.hypot(u - MAP.spots.boat[0], v - MAP.spots.boat[1]) < 3;
-  const wetRocks = [];
-  const atWaterline = (x, z, cy, ry, rx) => {
-    if (Math.abs(cy) < ry * 0.9) wetRocks.push([x, z, rx * Math.sqrt(1 - (cy / ry) ** 2)]);
-  };
-  for (let k = 0; k < 220; k += 1) {
-    const x = min + rand(k * 3.3, 1.7) * span;
-    const z = min + rand(k * 1.9, 8.1) * span;
-    const [i, j] = cellOf(x, z);
-    const h = hAt(i, j);
-    if (h > 0.25 || h < -1.8) continue;
-    const [u, v] = MAP.toUV(x, z);
-    if (nearDeck(u, v, 1.4) || MAP.pathDist(u, v) < 1.2) continue;
-    const s = 0.3 + rand(k, 4.4) * 0.75;
-    atWaterline(x, z, h + s * 0.25, s * 0.8, s * 1.1);
-    bake.add(G.rock[k % 3], [ISLE.rock, ISLE.rockLight, ISLE.rock, ISLE.rockDeep][k % 4], at(x, h + s * 0.25, z, { ry: k, sx: s * 1.2, sy: s * 0.8, sz: s }), 0, [0.7, 1.08]);
-    if (k % 3 === 0) bake.add(G.rock[(k + 1) % 3], ISLE.rockDeep, at(x + s * 0.9, h + s * 0.1, z - s * 0.4, { ry: k * 2, s: s * 0.45 }), 0, [0.7, 1.08]);
-  }
-  /* Big sea rocks standing out in the water, like the ones ringing the island on the board */
-  [[-24.5, 12.5, 1.5], [-26, 6.5, 1.1], [-14, 23.5, 1.2], [-6.5, 20, 0.9], [3.5, 19.5, 1.3], [13.5, 17, 1], [-22.5, -9.5, 1.2]].forEach(([u, v, s], k) => {
-    const [x, z] = uvToXZ(...MAP.lay(u, v));
-    const floor = MAP.heightAt(x, z);
-    atWaterline(x, z, floor + s * 0.9, s * 1.6, s * 1.2);
-    bake.add(G.stones[k % 2], k % 2 ? ISLE.rock : ISLE.rockLight, at(x, floor + s * 0.9, z, { ry: k * 1.7, sx: s * 1.6, sy: s * 1.6, sz: s * 1.5 }), 0, [0.6, 1.1]);
-    bake.add(G.rock[(k + 2) % 3], ISLE.rockDeep, at(x + s * 0.9, floor + s * 0.4, z + s * 0.5, { ry: k, s: s * 0.6 }), 0, [0.6, 1.1]);
-  });
 
   /* Stairs: thick stone treads on the ramps, each flanked by a cheek block that steps up with it (one stepped stone
      wall per side, no long sloping beams), and arches over two of them */
@@ -1346,6 +1536,12 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   const lampPost = (x, z, base, ry, s = 1.85) => {
     const frame = at(x, base, z, { ry, s });
     const L = (lx, ly, lz, o = {}) => frame.clone().multiply(at(lx, ly, lz, o));
+    if (kit) {
+      bake.setLabel("lamp");
+      bake.begin();
+      glowBake.setLabel("lamp");
+      glowBake.begin();
+    }
     bake.add(G.taper, ISLE.rockDeep, L(0, 0.2, 0, { sx: 0.24, sy: 0.42, sz: 0.24 }));
     bake.add(G.taper, ISLE.wood, L(0, 1.27, 0, { sx: 0.09, sy: 1.7, sz: 0.09 }));
     bake.add(G.peak, ISLE.woodDeep, L(0, 2.16, 0, { sx: 0.066, sy: 0.08, sz: 0.066 }));
@@ -1359,11 +1555,21 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     bake.add(G.box, ISLE.iron, L(0, 1.46, 0.7, { sx: 0.075, sy: 0.03, sz: 0.075 }));
     bake.add(G.peak, ISLE.iron, L(0, 1.42, 0.7, { rx: Math.PI, sx: 0.03, sy: 0.06, sz: 0.03 }));
     lanterns.push(new THREE.Vector3(0, 1.57, 0.7).applyMatrix4(frame));
+    if (kit) {
+      const lamp = bake.end(true);
+      const glow = glowBake.end(false);
+      glow.children.forEach((child) => {
+        child.position.sub(lamp.position);
+        lamp.add(child);
+      });
+      glowBake.discard();
+    }
   };
   const deckAt = (p, t, side) => {
     const off = (p.w - 0.06) * side;
     return uvToXZ(p.a[0] + p.dir[0] * p.len * t + p.dir[1] * off, p.a[1] + p.dir[1] * p.len * t - p.dir[0] * off);
   };
+  if (kit) bake.setLabel("deck");
   MAP.platforms.forEach((p) => {
     const [dx, dz] = worldDir(p.dir);
     const ry = Math.atan2(dx, dz);
@@ -1473,7 +1679,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   beam.position.set(sx, MAP.dais.h + 13, sz);
   beam.renderOrder = 2;
   beam.frustumCulled = false;
-  root.add(beam);
+  if (!kit) root.add(beam);
 
   /* Placement helpers for props and scatter */
   const flatAt = (x, z, r = 0.8) => {
@@ -1505,6 +1711,10 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   const fires = [];
   {
     const fire = groundUV(...MAP.lay(-9.9, -7.1));
+    if (kit) {
+      bake.setLabel("campfire");
+      bake.begin();
+    }
     for (let k = 0; k < 7; k += 1) {
       const a = (k / 7) * Math.PI * 2;
       bake.add(G.rock[k % 3], ISLE.rockDeep, at(fire.x + Math.cos(a) * 0.82, fire.h + 0.1, fire.z + Math.sin(a) * 0.82, { s: 0.27 }));
@@ -1518,12 +1728,21 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       m.position.y = hgt / 2;
       flame.add(m);
     });
-    root.add(flame);
+    if (kit) {
+      const group = bake.end(true);
+      flame.position.sub(group.position);
+      flame.name = "flame";
+      group.add(flame);
+    } else root.add(flame);
     fires.push(flame);
     block(fire.x, fire.z, 1);
   }
 
   const fence = (authored, level) => {
+    if (kit) {
+      bake.setLabel("fence");
+      bake.begin();
+    }
     const points = authored.map(([u, v]) => MAP.lay(u, v));
     for (let k = 1; k < points.length; k += 1) {
       const [u0, v0] = points[k - 1];
@@ -1546,22 +1765,33 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
         }
       }
     }
+    if (kit) bake.end(true);
   };
   fence([[-17.2, -5.4], [-16.2, -2.6], [-13.8, -1.4], [-11.2, -1.2]], MAP.LEVEL.mid);
   /* Props are sized against Niko (2.5 units, about 1.5 m): a barrel comes to his waist, a crate to his hip */
   const crate = (u, v, s = 1, turn = 0) => {
+    if (kit) {
+      bake.setLabel("crate");
+      bake.begin();
+    }
     s *= 1.4;
     const p = groundUV(...MAP.lay(u, v));
     bake.add(G.box, ISLE.wood, at(p.x, p.h + 0.4 * s, p.z, { ry: turn, s: 0.8 * s }));
     [-0.3, 0.3].forEach((y) => bake.add(G.box, ISLE.woodDeep, at(p.x, p.h + (0.4 + y) * s, p.z, { ry: turn, sx: 0.84 * s, sy: 0.09 * s, sz: 0.84 * s })));
     block(p.x, p.z, 0.6 * s);
+    if (kit) bake.end(true);
   };
   const barrel = (u, v, s = 1) => {
+    if (kit) {
+      bake.setLabel("barrel");
+      bake.begin();
+    }
     s *= 1.5;
     const p = groundUV(...MAP.lay(u, v));
     bake.add(G.oct, ISLE.wood, at(p.x, p.h + 0.45 * s, p.z, { sx: 0.36 * s, sz: 0.36 * s, sy: 0.9 * s }));
     [0.18, 0.72].forEach((y) => bake.add(G.oct, ISLE.woodDeep, at(p.x, p.h + y * s, p.z, { sx: 0.385 * s, sz: 0.385 * s, sy: 0.08 * s })));
     block(p.x, p.z, 0.45 * s);
+    if (kit) bake.end(true);
   };
   /* A lamp post `along` units down path `index`, standing just off its `side` edge with the lantern over the path */
   const lantern = (index, along, side) => {
@@ -1602,132 +1832,46 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     [10, 1.1, -1],
   ].forEach(([index, along, side]) => lantern(index, along, side));
 
-  /* Beach and dock: cargo at the foot of the dock, a fisher's shack with a net rack,
-     driftwood, an upturned rowboat in the cove, and starfish and shells along the tide line */
-  crate(-12.2, 14.6, 0.9, 0.2);
-  crate(-11.5, 15.3, 0.65, 1.1);
-  crate(-12.1, 14.7, 0.55, 0.6);
-  barrel(-14.7, 12.1);
-  barrel(-15.3, 12.7, 0.8);
-  barrel(-11.1, 14.2, 0.75);
   const placer = (u, v, ry, s = 1) => {
     const p = groundUV(u, v);
     const frame = at(p.x, p.h, p.z, { ry, s });
     return (lx, ly, lz, o = {}) => frame.clone().multiply(at(lx, ly, lz, o));
   };
-  {
-    /* Scaled so the door clears Niko's head */
-    const S = 1.65;
-    const ry = faceAngle(MAP.spots.shack, MAP.lay(-11.6, 11.6));
-    const L = placer(...MAP.spots.shack, ry, S);
-    const gableShape = new THREE.Shape();
-    gableShape.moveTo(-1.08, 0);
-    gableShape.lineTo(1.08, 0);
-    gableShape.lineTo(1.08, 1.6);
-    gableShape.lineTo(0, 2.28);
-    gableShape.lineTo(-1.08, 1.6);
-    gableShape.closePath();
-    const gable = facet(new THREE.ExtrudeGeometry(gableShape, { depth: 0.12, bevelEnabled: false }).translate(0, 0, -0.06));
-    bake.add(G.box, ISLE.plank, L(0, 0.1, 0, { sx: 2.7, sy: 0.2, sz: 2.4 }));
-    bake.add(G.box, ISLE.wood, L(0, 0.95, -1.02, { sx: 2.4, sy: 1.6, sz: 0.12 }));
-    [-1, 1].forEach((side) => bake.add(gable, ISLE.plank, L(side * 1.2, 0.15, 0, { ry: Math.PI / 2 })));
-    bake.add(G.box, ISLE.wood, L(-0.72, 0.95, 1.02, { sx: 0.96, sy: 1.6, sz: 0.12 }));
-    bake.add(G.box, ISLE.wood, L(0.86, 0.95, 1.02, { sx: 0.68, sy: 1.6, sz: 0.12 }));
-    bake.add(G.box, ISLE.wood, L(0.1, 1.6, 1.02, { sx: 0.7, sy: 0.3, sz: 0.12 }));
-    bake.add(G.box, ISLE.woodDeep, L(0.1, 0.78, 1.05, { sx: 0.62, sy: 1.18, sz: 0.05 }));
-    [-1, 1].forEach((side) => bake.add(G.box, ISLE.roof, L(0, 2.08, side * 0.6, { rx: side * 0.56, sx: 2.85, sy: 0.12, sz: 1.5 })));
-    bake.add(G.box, ISLE.woodDeep, L(0, 2.42, 0, { sx: 2.95, sy: 0.12, sz: 0.16 }));
-    glowBake.add(G.box, "#ffd98a", L(1.27, 1.05, 0.2, { sx: 0.04, sy: 0.42, sz: 0.52 }));
-    glowBake.add(G.box, "#ffd98a", L(-0.72, 1.1, 1.09, { sx: 0.42, sy: 0.36, sz: 0.04 }));
-    bake.add(G.box, ISLE.plank, L(-0.7, 0.42, 1.55, { sx: 1.1, sy: 0.1, sz: 0.36 }));
-    [-1.1, -0.3].forEach((lx) => bake.add(G.box, ISLE.woodDeep, L(lx, 0.2, 1.55, { sx: 0.1, sy: 0.4, sz: 0.3 })));
-    /* Net rack beside the shack */
-    [-0.75, 0.75].forEach((lx) => bake.add(G.box, ISLE.woodDeep, L(2.4 + lx, 0.8, 0.6, { sx: 0.1, sy: 1.6, sz: 0.1 })));
-    bake.add(G.box, ISLE.woodDeep, L(2.4, 1.55, 0.6, { sx: 1.7, sy: 0.08, sz: 0.08 }));
-    bake.add(G.box, ISLE.net, L(2.4, 1.05, 0.62, { rx: 0.08, sx: 1.4, sy: 0.95, sz: 0.03 }));
-    bake.add(ring, "#d8c69a", L(1.6, 0.05, -0.4, { s: 1.6 }));
-    const [sx2, sz2] = uvToXZ(...MAP.spots.shack);
-    block(sx2, sz2, 1.75 * S);
-    const [nx, nz] = [sx2 + (Math.cos(ry) * 2.4 + Math.sin(ry) * 0.6) * S, sz2 + (-Math.sin(ry) * 2.4 + Math.cos(ry) * 0.6) * S];
-    block(nx, nz, 0.9 * S);
-  }
-  barrel(-17.6, 9.2, 0.9);
-  crate(-17.1, 10.4, 0.7, 0.5);
-  /* Driftwood */
-  [[-8.4, 14.8, 0.6], [-0.6, 13.6, 2.2], [-19.2, 6.6, 1.1], [3.2, 12.2, 2.8]].forEach(([lu, lv, turn], k) => {
-    const [u, v] = MAP.lay(lu, lv);
-    const p = groundUV(u, v);
-    if (p.h < -0.1) return;
-    bake.add(G.hex, ISLE.driftwood, at(p.x, p.h + 0.12, p.z, { ry: turn, rz: Math.PI / 2, sx: 0.14, sy: 1.8 + k * 0.3, sz: 0.14 }));
-    bake.add(G.hex, ISLE.driftwood, at(p.x + 0.4, p.h + 0.1, p.z + 0.2, { ry: turn + 0.9, rz: Math.PI / 2, sx: 0.07, sy: 0.7, sz: 0.07 }));
+  groundPlaces.forEach((item, k) => {
+    const spot = groundUV(...MAP.lay(item.u, item.v));
+    if (spot.h < 0.2) return;
+    const ry = item.ry || 0;
+    if (kit && item.kind !== "lamp") {
+      bake.setLabel(item.kind);
+      bake.begin();
+    }
+    if (item.kind === "pillar") {
+      const n = item.blocks || 3;
+      bake.add(G.oct, ISLE.ruinDeep, at(spot.x, spot.h + 0.12, spot.z, { ry, sx: 0.72, sz: 0.72, sy: 0.24 }));
+      for (let b = 0; b < n; b += 1) {
+        const broken = b === n - 1 && n > 2;
+        bake.add(G.oct, b % 2 ? ISLE.ruin : ISLE.ruinDeep, at(spot.x, spot.h + 0.38 + b * 0.74, spot.z, { ry: ry + b * 0.18, sx: 0.48 - b * 0.04, sz: 0.48 - b * 0.04, sy: broken ? 0.46 : 0.7 }));
+      }
+      block(spot.x, spot.z, 0.55);
+    } else if (item.kind === "ruin") {
+      const n = item.blocks || 3;
+      const frame = at(spot.x, spot.h, spot.z, { ry });
+      const L = (lx, ly, lz, o = {}) => frame.clone().multiply(at(lx, ly, lz, o));
+      for (let b = 0; b < n; b += 1) {
+        const tall = b === n - 1 ? 0.72 : 1.2;
+        bake.add(G.slab[b % 3], b % 2 ? ISLE.ruin : ISLE.ruinDeep, L((b - (n - 1) / 2) * 0.72, tall / 2, 0, { sx: 0.64, sy: tall, sz: 0.4 }));
+      }
+      bake.add(G.slab[1], ISLE.ruinDeep, L(n * 0.32, 0.18, 0.55, { rz: Math.PI / 2, rx: 0.15, sx: 0.78, sy: 0.16, sz: 0.42 }));
+      block(spot.x, spot.z, 0.8);
+    } else if (item.kind === "stones") {
+      const s = item.s || 0.8;
+      bake.add(G.stones[k % 2], k % 2 ? ISLE.rock : ISLE.rockLight, at(spot.x, spot.h + s * 0.4, spot.z, { ry, s }), 0, [0.7, 1.05]);
+      block(spot.x, spot.z, s * 0.7);
+    } else if (item.kind === "lamp") {
+      lampPost(spot.x, spot.z, spot.h, faceAngle(MAP.lay(item.u, item.v), MAP.lay(item.faceU, item.faceV)), 1.55);
+    }
+    if (kit && item.kind !== "lamp") bake.end(true);
   });
-
-  /* Boats: hull shared by the moored sailboat, the rowboat at the jetty and the upturned one in the cove */
-  const hullShape = new THREE.Shape();
-  hullShape.moveTo(0, -1.9);
-  hullShape.quadraticCurveTo(0.85, -1.1, 0.8, 0.6);
-  hullShape.quadraticCurveTo(0.7, 1.5, 0, 1.7);
-  hullShape.quadraticCurveTo(-0.7, 1.5, -0.8, 0.6);
-  hullShape.quadraticCurveTo(-0.85, -1.1, 0, -1.9);
-  const hullGeo = facet(new THREE.ExtrudeGeometry(hullShape, { depth: 0.7, bevelEnabled: true, bevelSize: 0.08, bevelThickness: 0.08, bevelSegments: 1, curveSegments: 4 }).rotateX(Math.PI / 2));
-  const boats = [];
-  const makeBoat = (spot, ry, s, sail) => {
-    const p = groundUV(...spot);
-    const hull = makeBake({ dry: true });
-    hull.add(hullGeo, ISLE.wood, at(0, 0.35, 0));
-    hull.add(G.box, ISLE.plank, at(0, 0.38, 0.2, { sx: 1.3, sy: 0.06, sz: 2.4 }));
-    hull.add(G.box, ISLE.plank, at(0, 0.42, -0.5, { sx: 1.4, sy: 0.08, sz: 0.3 }));
-    if (sail) {
-      hull.add(G.box, ISLE.clothRed, at(0, 0.5, -0.9, { sx: 1.1, sy: 0.22, sz: 0.4 }));
-      hull.add(G.hex, ISLE.woodDeep, at(0, 2.2, 0.3, { sx: 0.07, sz: 0.07, sy: 3.8 }));
-      hull.add(G.box, ISLE.woodDeep, at(0, 1.3, 0.1, { sx: 0.06, sy: 0.06, sz: 1.8 }));
-      hull.add(G.box, ISLE.cloth, at(0, 2.2, -0.35, { rx: 0.12, sx: 0.04, sy: 1.8, sz: 1.1 }));
-      hull.add(G.box, ISLE.star, at(0, 4.15, 0.3, { sx: 0.06, sy: 0.25, sz: 0.4 }));
-    } else {
-      [-1, 1].forEach((side) => hull.add(G.box, ISLE.woodDeep, at(side * 0.75, 0.62, 0.1, { rz: side * 0.5, sx: 0.06, sy: 0.06, sz: 1.2 })));
-    }
-    const mesh = hull.build(painted);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    const group = new THREE.Group();
-    group.add(mesh);
-    group.position.set(p.x, 0, p.z);
-    group.rotation.y = ry;
-    group.scale.setScalar(s);
-    root.add(group);
-    boats.push({ group, phase: boats.length * 1.7, ry });
-  };
-  const pierDir = MAP.platforms.find((p) => p.name === "pier").dir;
-  const jetty = MAP.platforms.find((p) => p.name === "jetty");
-  makeBoat(MAP.spots.boat, Math.atan2(...worldDir(pierDir)), 1.3, true);
-  makeBoat([jetty.b[0] + jetty.dir[1] * 2.1, jetty.b[1] - jetty.dir[0] * 2.1], Math.atan2(...worldDir(jetty.dir)) + 0.25, 0.85, false);
-  {
-    const p = groundUV(...MAP.lay(-16.2, 4.8));
-    bake.add(hullGeo, ISLE.wood, at(p.x, p.h + 0.05, p.z, { ry: 1.1, rz: Math.PI, s: 0.85 }));
-    bake.add(G.hex, ISLE.woodDeep, at(p.x + 1.3, p.h + 0.08, p.z + 0.6, { ry: 0.3, rz: Math.PI / 2, sx: 0.07, sy: 2.2, sz: 0.07 }));
-    block(p.x, p.z, 1.5);
-  }
-  /* Starfish and shells on the damp sand */
-  {
-    const star = new THREE.Shape();
-    for (let k = 0; k < 10; k += 1) {
-      const a = (k / 10) * Math.PI * 2;
-      const r = k % 2 ? 0.07 : 0.17;
-      star[k ? "lineTo" : "moveTo"](Math.sin(a) * r, Math.cos(a) * r);
-    }
-    const starGeo = facet(new THREE.ExtrudeGeometry(star, { depth: 0.03, bevelEnabled: false }).rotateX(-Math.PI / 2));
-    let placed = 0;
-    for (let k = 0; k < 900 && placed < 46; k += 1) {
-      const u = (-22 + rand(k, 61) * 32) * MAP.K;
-      const v = (-2 + rand(k, 67) * 24) * MAP.K;
-      const [x, z] = uvToXZ(u, v);
-      const t = MAP.terrainAtUV(u, v);
-      if (!t.region?.beach || t.h < 0.05 || t.h > 0.42 || nearDeck(u, v, 0.6)) continue;
-      placed += 1;
-      if (k % 3 === 0) bake.add(starGeo, k % 2 ? ISLE.starfish : "#e8a04f", at(x, t.h + 0.01, z, { ry: k }));
-      else bake.add(G.ico, ISLE.shell, at(x, t.h + 0.02, z, { ry: k, sx: 0.09, sy: 0.05, sz: 0.11 }));
-    }
-  }
 
   /* Meadow stall by the lookout path: posts and a striped awning */
   {
@@ -1736,6 +1880,10 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     const at2 = MAP.lay(-0.8, 7.8);
     const p = groundUV(...at2);
     const L = placer(...at2, towardPath(...at2), S);
+    if (kit) {
+      bake.setLabel("stall");
+      bake.begin();
+    }
     [[-0.9, -0.6], [0.9, -0.6], [-0.9, 0.6], [0.9, 0.6]].forEach(([a, b]) => {
       const tall = 1.8 + (b < 0 ? 0.3 : 0);
       bake.add(G.box, ISLE.woodDeep, L(a, tall / 2, b, { sx: 0.1, sy: tall, sz: 0.1 }));
@@ -1744,8 +1892,10 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     bake.add(G.box, ISLE.plank, L(0, 0.75, 0, { sx: 1.9, sy: 0.12, sz: 0.8 }));
     bake.add(G.box, ISLE.wood, L(0, 0.4, 0, { sx: 1.8, sy: 0.7, sz: 0.7 }));
     block(p.x, p.z, 1.15 * S);
+    if (kit) bake.end(true);
   }
 
+  if (kit) bake.setLabel("ruin");
   /* Ruins: broken pillars and a fallen column along the path to the shrine */
   [[-4.4, -7.6, 3], [-5.6, -9.4, 2], [4.4, -9.8, 3], [2.4, -10.2, 1], [-3, -3.2, 2], [6.4, -12.4, 2], [-6.6, -13.2, 3]].forEach(([lu, lv, blocks], k) => {
     const [u, v] = MAP.lay(lu, lv);
@@ -1810,25 +1960,6 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   function t2(u, v) {
     return MAP.fbm(u * 0.3 - 7, v * 0.3 + 2) > 0.55 && v > -10;
   }
-  /* Trees at the back of the beach, sheltering under the cliffs */
-  scatter(
-    950,
-    3.2,
-    (t, u, v) => t.region?.beach && t.h > 0.44 && MAP.pathDist(u, v) > 2.4 && !nearDeck(u, v, 2.4),
-    (x, h, z, k) => {
-      const [i, j] = cellOf(x, z);
-      let up = 0;
-      for (let q = -4; q <= 4; q += 1) for (let p = -4; p <= 4; p += 1) up = Math.max(up, hAt(i + p, j + q) - h);
-      if (up < 1.8 || rand(k, 13) > 0.6) return;
-      plant(k % 3 ? pines[k % 2] : rounds[k % 3], at(x, h - 0.05, z, { ry: rand(k, 3) * 6, s: 1.2 + rand(k, 9) * 0.5 }), 0.18, k, 0.22);
-      block(x, z, 0.75);
-    }
-  );
-  /* A pine on each sea stack, and a round tree on the islet */
-  [[15.5, 9.5], [20, -2.5], [-24.4, -4.2], [10.4, 20.6]].forEach(([u, v], k) => {
-    const p = groundUV(...MAP.lay(u, v));
-    plant(k === 3 ? rounds[0] : pines[k % 2], at(p.x, p.h - 0.05, p.z, { ry: k, s: k === 3 ? 1.35 : 1.15 }), 0.2, k + 50, 0.22);
-  });
   scatter(
     1200,
     1.6,
@@ -1837,13 +1968,17 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       !t.region.stack &&
       t.h > 0.3 &&
       MAP.pathDist(u, v) > 1.1 &&
+      t.region.name !== "ground" &&
       (t.region.name !== "meadow" || MAP.fbm(u * 0.16 + 3, v * 0.16) > 0.52) &&
       (!t.region.beach || MAP.fbm(u * 0.2 - 9, v * 0.2 + 4) > 0.66),
     (x, h, z, k) => {
       if (k % 3 === 0) {
         const s = 0.35 + rand(k, 1) * 0.4;
         if (s > 0.6) bake.add(G.stones[k % 2], k % 2 ? ISLE.rock : ISLE.rockLight, at(x, h + s * 0.45, z, { ry: k, s: s * 0.9 }));
-        else bake.add(G.rock[k % 3], k % 2 ? ISLE.rock : ISLE.rockLight, at(x, h + s * 0.2, z, { ry: k, sx: s * 1.3, sy: s * 0.75, sz: s }));
+        else {
+          if (kit) bake.setLabel("rock");
+          bake.add(G.rock[k % 3], k % 2 ? ISLE.rock : ISLE.rockLight, at(x, h + s * 0.2, z, { ry: k, sx: s * 1.3, sy: s * 0.75, sz: s }));
+        }
         block(x, z, s * 0.9);
       } else if (h > 2) {
         const bush = bushes[k % 3];
@@ -2184,7 +2319,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     tufts.receiveShadow = true;
     tufts.frustumCulled = false;
     tufts.name = "grass";
-    root.add(tufts);
+    if (!kit) root.add(tufts);
   }
 
   /* Floating rocks drift around the island, the way the concept board has them */
@@ -2211,78 +2346,11 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     return { mesh, base: y, phase: k * 1.3 };
   });
 
-  /* Water: one big plane. Depth comes from a texture of the terrain under it, giving shallows, deep blue and
-     moving foam lines along every shore; the far edge fades out into the sky. */
-  const depthData = new Uint8Array(size * size);
-  const depthAt = hgrid.map((h) => -h);
-  /* Rocks standing in the water get their own shallow halo and foam ring */
-  wetRocks.forEach(([x, z, r]) => {
-    const [ci, cj] = cellOf(x, z);
-    const reach = Math.ceil((r + 2.5) / cell);
-    for (let j = Math.max(0, cj - reach); j <= Math.min(size - 1, cj + reach); j += 1)
-      for (let i = Math.max(0, ci - reach); i <= Math.min(size - 1, ci + reach); i += 1) {
-        const d = Math.hypot(min + (i + 0.5) * cell - x, min + (j + 0.5) * cell - z) - r * 0.8;
-        depthAt[j * size + i] = Math.min(depthAt[j * size + i], 0.05 + Math.max(0, d) * 0.8);
-      }
-  });
-  for (let k = 0; k < size * size; k += 1) depthData[k] = Math.round(THREE.MathUtils.clamp(depthAt[k], 0, 4) * 63.75);
-  const depthMap = new THREE.DataTexture(depthData, size, size, THREE.RedFormat, THREE.UnsignedByteType);
-  depthMap.minFilter = depthMap.magFilter = THREE.LinearFilter;
-  depthMap.needsUpdate = true;
   const glslNoise = [
     "float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
     "float noise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
     "  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y); }",
   ].join("\n");
-  const waterUniforms = {
-    time: { value: 0 },
-    depthMap: { value: depthMap },
-    mapMin: { value: min },
-    mapSpan: { value: span },
-    shallow: { value: new THREE.Color(ISLE.shallow) },
-    mid: { value: new THREE.Color(ISLE.water) },
-    deep: { value: new THREE.Color(ISLE.waterDeep) },
-    waterLight,
-  };
-  const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(170, 170).rotateX(-Math.PI / 2),
-    new THREE.ShaderMaterial({
-      transparent: true,
-      /* Writes depth so the edge pass (world.js post) sees the sea surface, not the seabed's edges through it */
-      depthWrite: true,
-      uniforms: waterUniforms,
-      vertexShader: "varying vec3 wp; void main(){ vec4 w = modelMatrix * vec4(position, 1.0); wp = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }",
-      fragmentShader: [
-        "uniform float time; uniform sampler2D depthMap; uniform float mapMin; uniform float mapSpan;",
-        "uniform vec3 shallow; uniform vec3 mid; uniform vec3 deep; uniform vec3 waterLight; varying vec3 wp;",
-        glslNoise,
-        "void main(){",
-        "  vec2 uv = (wp.xz - mapMin) / mapSpan;",
-        "  float inside = smoothstep(0.0, 0.08, min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)));",
-        "  float depth = mix(4.0, texture2D(depthMap, clamp(uv, 0.0, 1.0)).r * 4.0, inside);",
-        "  float n = noise(wp.xz * 0.45 + vec2(time * 0.12, time * 0.08));",
-        "  float m = noise(wp.xz * 1.3 - vec2(time * 0.2, -time * 0.15));",
-        "  vec3 col = mix(shallow, mid, smoothstep(0.05, 1.3, depth + (n - 0.5) * 0.3));",
-        "  col = mix(col, deep, smoothstep(1.4, 3.8, depth));",
-        "  col += (m - 0.5) * 0.06;",
-        "  float shore = 1.0 - smoothstep(0.08, 0.28 + n * 0.22, depth);",
-        "  float wave = sin(depth * 7.0 - time * 1.4 + n * 4.0);",
-        "  float lines = smoothstep(0.82, 0.93, wave) * (1.0 - smoothstep(0.35, 1.25, depth)) * smoothstep(0.3, 0.6, m + 0.2);",
-        "  float glint = smoothstep(0.9, 0.96, noise(wp.xz * 1.6 + vec2(time * 0.5, -time * 0.4))) * smoothstep(0.6, 1.6, depth) * 0.22;",
-        "  float foam = max(shore, lines * 0.85);",
-        "  col = mix(col, vec3(1.0), clamp(foam + glint, 0.0, 1.0));",
-        "  float alpha = mix(0.62, 0.94, smoothstep(0.0, 1.4, depth));",
-        "  alpha = max(alpha, foam);",
-        "  alpha *= 1.0 - smoothstep(34.0, 52.0, length(wp.xz));",
-        "  gl_FragColor = vec4(col * waterLight, alpha);",
-        "}",
-      ].join("\n"),
-    })
-  );
-  water.renderOrder = 1;
-  water.name = "water";
-  root.add(water);
-
   /* The stream: flat runs of flowing water on each level, and a falling sheet wherever the ground drops */
   const flowUniforms = { time: { value: 0 }, waterLight };
   const splashes = [];
@@ -2403,7 +2471,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     );
     stream.renderOrder = 2;
     stream.name = "stream";
-    root.add(stream);
+    if (!kit) root.add(stream);
   }
 
   /* White water where each fall lands */
@@ -2414,7 +2482,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       const a = (k / 6) * Math.PI * 2 + s;
       const mesh = new THREE.Mesh(G.ico, splashMat);
       mesh.position.set(p.x + Math.cos(a) * 0.55, p.y + 0.1, p.z + Math.sin(a) * 0.55);
-      root.add(mesh);
+      if (!kit) root.add(mesh);
       puffs.push({ mesh, phase: k * 1.1 + s, size: 0.22 + rand(k, s) * 0.16 });
     }
   });
@@ -2426,10 +2494,13 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   props.name = "props";
   root.add(props);
   const glows = glowBake.build(glowing);
-  if (glows) root.add(glows);
+  if (glows) {
+    glows.name = "glows";
+    root.add(glows);
+  }
   {
     const leaves = leafBake.build(leafMaterial);
-    if (leaves) {
+    if (leaves && !kit) {
       leaves.castShadow = true;
       leaves.receiveShadow = true;
       leaves.customDepthMaterial = leafDepth;
@@ -2614,7 +2685,9 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
   const halos = new THREE.Group();
   halos.name = "halos";
   halos.visible = false;
-  root.add(halos);
+  if (!kit) root.add(halos);
+  let fireHalos = [];
+  if (!kit) {
   const haloTexture = (() => {
     const c = document.createElement("canvas");
     c.width = c.height = 128;
@@ -2639,7 +2712,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     s.scale.setScalar(1.5);
     halos.add(s);
   });
-  const fireHalos = fires.map((f) => {
+  fireHalos = fires.map((f) => {
     const s = new THREE.Sprite(haloMaterial("#ff8a30", 0.7));
     s.position.copy(f.position).y += 0.55;
     s.scale.setScalar(3);
@@ -2654,6 +2727,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     inlay.position.copy(shrine).y += 0.06;
     halos.add(inlay);
   }
+  }
 
   /* Everything that moves on its own. rainHits = flat [x,z,x,z,…] from world-rain. Wind sway is not driven here:
      world.js copies the climate's wind phase into windTime. `pinned` freezes clouds and water for review shots. */
@@ -2666,16 +2740,11 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
       const fire = k >= lanterns.length ? Math.sin(time * 17 + k) * 0.035 + Math.sin(time * 9.3) * 0.03 : 0;
       lampLights.value[k].w = r * (1 + Math.sin(time * 7.1 + k * 1.7) * 0.02 + Math.sin(time * 12.3 + k) * 0.012 + fire);
     });
-    waterUniforms.time.value = time;
     flowUniforms.time.value = time;
     splashMat.color.copy(waterLight.value);
     beamMat.uniforms.time.value = time;
     atmosTime.value = time;
     if (robot) player.copy(robot);
-    boats.forEach((b) => {
-      b.group.position.y = Math.sin(time * 1.1 + b.phase) * 0.06 - 0.05;
-      b.group.rotation.set(Math.sin(time * 0.7 + 1 + b.phase) * 0.02, b.ry + Math.sin(time * 0.3 + b.phase) * 0.03, Math.sin(time * 0.9 + b.phase) * 0.035, "YXZ");
-    });
     floaters.forEach((f) => (f.mesh.position.y = f.base + Math.sin(time * 0.6 + f.phase) * 0.35));
     puffs.forEach((p) => p.mesh.scale.setScalar(p.size * (0.75 + 0.35 * Math.sin(time * 6 + p.phase))));
     fires.forEach((flame) => {
@@ -2688,7 +2757,6 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [] }) {
     root,
     terrain,
     pick: [terrain, props],
-    water,
     beam,
     beamMat,
     shrine,

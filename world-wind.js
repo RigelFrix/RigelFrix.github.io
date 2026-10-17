@@ -14,10 +14,10 @@ const material = (res) =>
     uniforms: {
       head: { value: 0 },
       tail: { value: 0 },
-      width: { value: 3 },
+      width: { value: 1.6 },
       res,
       drift: { value: new THREE.Vector3() },
-      opacity: { value: 0.85 },
+      opacity: { value: 0.28 },
     },
     vertexShader: [
       "attribute vec3 aNext; attribute float aS; attribute float aSide;",
@@ -40,7 +40,7 @@ const material = (res) =>
       "uniform float opacity; varying float vShow;",
       "void main(){",
       "  if (vShow < 0.5) discard;",
-      "  gl_FragColor = vec4(1.0, 1.0, 1.0, opacity);",
+      "  gl_FragColor = vec4(0.93, 0.96, 1.0, opacity * vShow);",
       "}",
     ].join("\n"),
     transparent: true,
@@ -172,7 +172,7 @@ export function windLines({ scene, groundAt, count = 6 }) {
         u.head.value = easeOut(Math.min(1, t / 0.62));
         u.tail.value = easeIn(THREE.MathUtils.clamp((t - 0.38) / 0.62, 0, 1));
         u.drift.value.copy(WIND).multiplyScalar(line.age * 0.9);
-        u.width.value = 3.4 * ratio;
+        u.width.value = 1.7 * ratio;
         u.opacity.value = 0.85 * (0.25 + light * 0.75);
         if (t >= 1) {
           line.live = false;

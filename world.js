@@ -4,7 +4,11 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import nikoGlb from "./assets/niko.glb";
+import nikoBody from "./assets/niko/body.glb";
+import nikoHair from "./assets/niko/hair.glb";
+import nikoCoat from "./assets/niko/coat.glb";
+import nikoClothes from "./assets/niko/clothes.glb";
+import nikoShoes from "./assets/niko/shoes.glb";
 import nikoEyesUrl from "./assets/niko-eyes.png";
 import { atmos, buildIsland, CLOUD_GLSL, CLOUD_SHADE, cloudCover, cloudShade, cloudSun, cloudTime, cloudUniforms, ISLE, lampGain, lamped, makeRamp, waterLight, occlude, seeThrough, rainAmt, windMul, windTime, weatherFog, weatherFogColor, weatherWet } from "./world-island.js";
 import { lay, toXZ } from "./world-map.js";
@@ -192,17 +196,19 @@ async function start() {
      hardware-filtered taps (each one already blends 2×2 texels), so the edge is a smooth ramp about four texels wide
      with no pattern in it. shadowRadius scales the tap spacing. */
   THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fragment.replace(
-    /float phi = interleavedGradientNoise\( gl_FragCoord\.xy \) \* PI2;\s*shadow = \([\s\S]*?\) \* 0\.2;/,
+    /float radius = shadowRadius \* texelSize\.x;[\s\S]*?\) \* 0\.2;/,
     [
-      "vec2 tap = texelSize * shadowRadius;",
-      "shadow = 0.0;",
-      "for ( int i = -1; i <= 1; i ++ ) {",
-      "  for ( int j = -1; j <= 1; j ++ ) {",
-      "    float w = ( i == 0 ? 2.0 : 1.0 ) * ( j == 0 ? 2.0 : 1.0 );",
-      "    shadow += w * texture( shadowMap, vec3( shadowCoord.xy + vec2( float( i ), float( j ) ) * tap, shadowCoord.z ) );",
+      "vec2 tap = texelSize * max( shadowRadius, 1.0 );",
+      "float shadowSum = 0.0;",
+      "float weightSum = 0.0;",
+      "for ( int i = -2; i <= 2; i ++ ) {",
+      "  for ( int j = -2; j <= 2; j ++ ) {",
+      "    float w = 1.0 - 0.18 * float( abs( i ) + abs( j ) );",
+      "    shadowSum += w * texture( shadowMap, vec3( shadowCoord.xy + vec2( float( i ), float( j ) ) * tap, shadowCoord.z ) );",
+      "    weightSum += w;",
       "  }",
       "}",
-      "shadow /= 16.0;",
+      "shadow = smoothstep( 0.2, 0.8, shadowSum / weightSum );",
     ].join("\n")
   );
 
@@ -522,14 +528,13 @@ async function start() {
   /* Deep enough for low evening light; the sides are fitted to the view in fitShadow */
   Object.assign(sun.shadow.camera, { left: -50, right: 50, top: 50, bottom: -50, near: 1, far: 200 });
   sun.shadow.camera.updateProjectionMatrix();
-  sun.shadow.bias = -0.0006;
-  /* Faceted rocks catch their own shadow at grazing light without a little push along the normal */
-  sun.shadow.normalBias = 0.035;
-  sun.shadow.radius = 1;
-  /* The props never move, so the shadow map is only redrawn (bakeShadows) when the sun or moon has travelled a little,
-     a few times a second while the day runs, or when the view needs a new fit. Moving things (Niko, gems, debris)
-     cast no map shadow; Niko has his own contact shadow decal. */
-  sun.shadow.autoUpdate = false;
+  sun.shadow.bias = -0.0004;
+  /* A small push keeps faceted rocks from shadowing themselves. Larger values open a bright gap under every mesh. */
+  sun.shadow.normalBias = 0.012;
+  sun.shadow.radius = 1.35;
+  /* One directional light, the way a Unity sun works: it redraws every frame so Niko casts a shadow and the
+     island's shadows fall on him. bakeShadows still forces a redraw when the fit or the sun moves. */
+  sun.shadow.autoUpdate = true;
   sun.shadow.needsUpdate = true;
   const bakeShadows = () => (sun.shadow.needsUpdate = true);
   const SUN_DISTANCE = 80;
@@ -658,14 +663,16 @@ async function start() {
           [
             /* The same weather as the island, a little lighter so he stays the clearest thing on screen: cloud shadow
                passing over him, wet cloth in rain, storm mist */
-            CLOUD_SHADE("vCharPos", "0.8"),
             "{",
+            "  float sunLit = smoothstep(0.05, 0.4, length(reflectedLight.directDiffuse));",
             "  float charK = smoothstep(0.0, 0.3, dot(normal, charDir));",
-            `  vec3 charFloor = diffuseColor.rgb * (charAmb + charKey * charK${face ? " + charFace" : ""});`,
-            "  outgoingLight = max(outgoingLight, charFloor);",
-            "  outgoingLight *= mix(vec3(1.0), vec3(0.8, 0.84, 0.92), weatherWet * 0.45);",
-            "  outgoingLight = mix(outgoingLight, weatherFogColor, clamp(weatherFog * 0.4, 0.0, 0.32));",
+            `  reflectedLight.indirectDiffuse = max(reflectedLight.indirectDiffuse, diffuseColor.rgb * (charAmb${face ? " + charFace * 0.5" : ""}));`,
+            "  outgoingLight = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;",
+            "  outgoingLight += diffuseColor.rgb * charKey * charK * sunLit;",
             "}",
+            CLOUD_SHADE("vCharPos", "0.8"),
+            "outgoingLight *= mix(vec3(1.0), vec3(0.8, 0.84, 0.92), weatherWet * 0.45);",
+            "outgoingLight = mix(outgoingLight, weatherFogColor, clamp(weatherFog * 0.4, 0.0, 0.32));",
             "#include <opaque_fragment>",
           ].join("\n")
         );
@@ -1754,7 +1761,9 @@ async function start() {
   robot.position.copy(landing);
   robot.rotation.y = Math.PI / 4;
   bot.body.scale.setScalar(1.12);
-  const robotShadow = decal(scene, { color: "#1f2a22", size: 1.5, opacity: 0.45, y: 0.018 });
+  const footRay = new THREE.Raycaster();
+  const footOrigin = new THREE.Vector3();
+  const footDown = new THREE.Vector3(0, -1, 0);
   const pose = { crouch: 0, lift: 0, spin: 0, flip: 0, raise: 0, tilt: 0 };
   const jiggle = { lx: 0, lv: 0, hy: 0, hv: 0 };
   const buddyAt = new THREE.Vector3(0.55, 1.85, 0.1);
@@ -1911,19 +1920,49 @@ async function start() {
     mat.customProgramCacheKey = () => `niko-eye-${layer}-${lift}`;
     return { mat, uniforms };
   };
+  /* Default outfit. Each piece is its own skinned model; point a slot at another file to change it. */
+  const NIKO_PARTS = { body: nikoBody, hair: nikoHair, coat: nikoCoat, clothes: nikoClothes, shoes: nikoShoes };
   const useNikoModel = async () => {
     const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
-    const data = nikoGlb.buffer.slice(nikoGlb.byteOffset, nikoGlb.byteOffset + nikoGlb.byteLength);
-    const gltf = await new GLTFLoader().parseAsync(data, "");
+    const loader = new GLTFLoader();
+    const parse = (buf) => loader.parseAsync(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), "");
+    const loaded = {};
+    for (const [slot, buf] of Object.entries(NIKO_PARTS)) loaded[slot] = await parse(buf);
+    const gltf = loaded.body;
     const model = gltf.scene;
-    model.scale.setScalar(NIKO_SCALE);
-    model.position.y = 0.5 * NIKO_SCALE;
     const bones = {};
-    const meshes = [];
     model.traverse((node) => {
       if (node.isBone) bones[node.name] = node;
-      if (node.isSkinnedMesh) meshes.push(node);
     });
+    const parts = {};
+    const claim = (slot, file) => {
+      parts[slot] = [];
+      const found = [];
+      file.scene.traverse((node) => {
+        if (node.isSkinnedMesh) found.push(node);
+      });
+      if (!found.length) throw new Error(`Niko ${slot} has no mesh`);
+      for (const mesh of found) {
+        const bindMatrix = mesh.bindMatrix.clone();
+        const inverses = mesh.skeleton.boneInverses;
+        const skinBones = mesh.skeleton.bones.map((bone) => {
+          const hit = bones[bone.name];
+          if (!hit) throw new Error(`Niko ${slot} is missing bone ${bone.name}`);
+          return hit;
+        });
+        model.add(mesh);
+        mesh.bind(new THREE.Skeleton(skinBones, inverses), bindMatrix);
+        mesh.userData.slot = slot;
+        parts[slot].push(mesh);
+      }
+    };
+    for (const [slot, file] of Object.entries(loaded)) claim(slot, file);
+    model.scale.setScalar(NIKO_SCALE);
+    model.position.y = 0.5 * NIKO_SCALE;
+    model.updateMatrixWorld(true);
+    const planted = new THREE.Box3().setFromObject(model);
+    if (Number.isFinite(planted.min.y) && Math.abs(planted.min.y) < 0.6) model.position.y -= planted.min.y;
+    const meshes = Object.values(parts).flat();
 
     /* Face texture carries only blush, nose and mouth; the eyes are their own decal meshes (eyeL/eyeR) */
     const faceOpen = bot.paintFace(false, {
@@ -1959,6 +1998,8 @@ async function start() {
       const eye = eyeDecals.find((e) => e.name === name);
       if (eye) {
         mesh.material = eye.eye.mat;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
         mesh.renderOrder = 3;
         mesh.frustumCulled = false;
         eye.brows.forEach(({ mat }, i) => {
@@ -1975,9 +2016,8 @@ async function start() {
       } else if (name === "glow") mesh.material = glow("#ffe7a0", 2.4);
       else if (name === "lining") mesh.material = lining;
       else mesh.material = nikoToon(`#${mesh.material.color.getHexString()}`);
-      mesh.castShadow = false;
-      /* No cast shadows on the face: the bang strands' shadow-map shadows read as dirty smudges around the eyes */
-      mesh.receiveShadow = name !== "lining" && name !== "glow" && name !== "face";
+      mesh.castShadow = name !== "glow" && name !== "face" && name !== "lining";
+      mesh.receiveShadow = name !== "glow";
       mesh.frustumCulled = false;
       if (name !== "face" && name !== "glow" && name !== "lining") addInk(mesh, ink, aroundEyes);
     });
@@ -2025,6 +2065,7 @@ async function start() {
       actions,
       cloak,
       sockets,
+      parts,
       legs: [bones.RightUpLeg, bones.LeftUpLeg],
       knees: [bones.RightLeg, bones.LeftLeg],
       arms: [bones.RightArm, bones.LeftArm],
@@ -2953,9 +2994,16 @@ async function start() {
       }
     }
 
-    /* Feet stay on the ground: terraces, stair ramps and decks */
-    const floor = island.groundAt(robot.position.x, robot.position.z);
-    robot.position.y = calm || !started ? floor : THREE.MathUtils.damp(robot.position.y, floor, 18, dt);
+    /* Feet stay on the drawn ground, not the height grid: the mesh sags between samples, and standing on the
+       grid leaves a lit gap under the soles. Decks stay on the grid height when the terrain is far below. */
+    const guess = island.groundAt(robot.position.x, robot.position.z);
+    footOrigin.set(robot.position.x, guess + 3, robot.position.z);
+    footRay.set(footOrigin, footDown);
+    footRay.far = 8;
+    const footHit = footRay.intersectObject(island.terrain, false);
+    const footY = footHit.length ? footHit[0].point.y : guess;
+    const floor = Math.abs(footY - guess) < 0.8 ? footY : guess;
+    robot.position.y = !moving || calm || !started ? floor : THREE.MathUtils.damp(robot.position.y, floor, 18, dt);
     travelled.subVectors(robot.position, before).setY(0);
 
     if (state.path.length && travelled.length() < SPEED * dt * 0.2) {
@@ -3109,12 +3157,6 @@ async function start() {
     if (!calm) buddyTo.y += Math.sin(time * 2) * 0.06;
     bot.buddy.position.lerp(buddyTo, 1 - Math.exp(-dt * 6));
     bot.buddyStar.rotation.y = calm ? 0 : time * 1.6;
-
-    robotShadow.visible = robot.visible;
-    robotShadow.position.set(robot.position.x, robot.position.y + 0.03, robot.position.z);
-    const air = THREE.MathUtils.clamp(bot.body.position.y, 0, 1.2);
-    robotShadow.scale.set((1.5 - air * 0.5) * bot.grow, 1, (1.5 - air * 0.5) * bot.grow);
-    robotShadow.material.opacity = 0.5 - air * 0.25;
 
     if (time > state.blinkAt) {
       const t = time - state.blinkAt;
@@ -3385,7 +3427,6 @@ async function start() {
   };
 
   const prewarm = async () => {
-    robot.traverse((node) => (node.castShadow = false));
     const shown = [];
     scene.traverse((node) => {
       if (!node.visible) {
@@ -3806,6 +3847,7 @@ async function start() {
       },
       zoomNow: () => +camera.zoom.toFixed(3),
       zoom: (z) => {
+        gsap.killTweensOf(camera);
         zoomGoal = null;
         camera.zoom = z;
         camera.updateProjectionMatrix();
