@@ -15,7 +15,7 @@ page.on("pageerror", (error) => console.log("pageerror", error.message));
 page.on("console", (m) => /error|warn/i.test(m.type()) && console.log("console", m.text().slice(0, 400)));
 await page.setViewport({ width: 1000, height: 640, deviceScaleFactor: Number(process.env.DPR || 1) });
 await page.goto(`${base}?view=world&t=${Date.now()}`, { waitUntil: "domcontentloaded", timeout: 90000 });
-await page.waitForFunction(() => document.documentElement.classList.contains("world-ready"), { timeout: 90000 });
+await page.waitForFunction(() => document.documentElement.classList.contains("world-ready"), { timeout: 240000 });
 await page.evaluate(() => void window.PortfolioWorld.debug.finishIntro());
 await new Promise((r) => setTimeout(r, 2000));
 console.log(JSON.stringify(await page.evaluate(new Function("const d = window.PortfolioWorld.debug; return (async () => (" + code + "))();")), null, 1));

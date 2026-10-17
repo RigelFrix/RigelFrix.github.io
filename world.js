@@ -934,8 +934,9 @@ async function start() {
   const rain = calm || lite ? null : makeRain({ scene, lite: coarse });
   const rays = calm ? null : makeRays({ scene, groundAt: island.groundAt, sun, shadowSize: SHADOW_SIZE, lite: lite || coarse });
   const rayTint = new THREE.Color();
-  const VOLUME_BASE = 0.3;
-  const VOLUME_RAYS = 0.9;
+  /* Fully lit air at strength 1 lifts the shade about this much (screen blend, so it never passes white) */
+  const VOLUME_BASE = 0.035;
+  const VOLUME_RAYS = 0.5;
 
   /* World objects */
 
@@ -3216,7 +3217,9 @@ async function start() {
         camera,
         center: camLook,
         extent: shadowFit.reach,
-        strength: (VOLUME_BASE * sunUp + climateSample.rays * VOLUME_RAYS) * sky.dawn,
+        strength: VOLUME_BASE * sunUp * sky.dawn,
+        rays: climateSample.rays * VOLUME_RAYS * sky.dawn,
+        sunDir: climateSample.sunDir,
         tint: rayTint.setRGB(1, 0.9 + climateSample.gold * -0.08 + 0.04, 0.76 - climateSample.gold * 0.16),
       });
     }

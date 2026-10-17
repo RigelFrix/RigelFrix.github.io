@@ -7,9 +7,9 @@
    - Slices are depth tested, so whatever stands in front hides the air behind it.
    - Each pixel samples at a jittered point along its view ray (orthographic camera: the pixel stays the same), which
      turns the step between slices into fine grain instead of stacked copies of every shadow.
-   - Air only counts above the ground (a baked height map) and thins with altitude, so low ground (beach, sea) sits
-     behind more glow than the plateau: aerial depth for free.
-   - Light is HDR and added on top, so the brightest shafts tip into bloom. */
+   - Air only counts in a fixed band above the ground (a baked height map), so every spot has the same depth of air;
+     low ground gets only a slight extra haze for depth.
+   - Blended like a screen layer, so it lifts shade but never pushes sunlit ground past white. */
 
 import * as THREE from "three";
 import { CLOUD_GLSL, cloudUniforms } from "./world-island.js";
@@ -19,6 +19,8 @@ export function makeRays({ scene, groundAt, sun, shadowSize = 4096, lite = false
   const BOTTOM = -0.4;
   const TOP = 15;
   const HEIGHT_MAX = 16;
+  /* How deep the glowing air is above any ground */
+  const DEPTH = 7;
 
   /* Ground height under every point of air, so slices fade in above the terrain instead of cutting a line on it */
   const RES = 208;
@@ -64,6 +66,10 @@ export function makeRays({ scene, groundAt, sun, shadowSize = 4096, lite = false
     shadowMatrix: { value: new THREE.Matrix4() },
     shadowTexel: { value: 1 / shadowSize },
     strength: { value: 0 },
+    rays: { value: 0 },
+    time: { value: 0 },
+    lightRight: { value: new THREE.Vector3(1, 0, 0) },
+    lightUp: { value: new THREE.Vector3(0, 0, 1) },
     tint: { value: new THREE.Color(1, 0.9, 0.74) },
   };
   cloudUniforms({ uniforms });
@@ -74,14 +80,16 @@ export function makeRays({ scene, groundAt, sun, shadowSize = 4096, lite = false
     depthTest: true,
     side: THREE.DoubleSide,
     toneMapped: false,
-    /* Add light, leave alpha alone (the sky is CSS behind a transparent canvas) */
+    /* Screen-style: result = light + scene × (1 − light). Dark shade lifts, sunlit ground (already at or past white)
+       barely moves, so the volume can never wash the image out or feed bloom. The factor comes from the light, not
+       the scene, so it stays safe on HDR pixels. Alpha is left alone (the sky is CSS behind a transparent canvas). */
     blending: THREE.CustomBlending,
     blendEquation: THREE.AddEquation,
     blendSrc: THREE.OneFactor,
-    blendDst: THREE.OneFactor,
+    blendDst: THREE.OneMinusSrcColorFactor,
     blendSrcAlpha: THREE.ZeroFactor,
     blendDstAlpha: THREE.OneFactor,
-    defines: { LAYERS_F: LAYERS.toFixed(1), BOTTOM: BOTTOM.toFixed(2), TOP: TOP.toFixed(2), HEIGHT_MAX: HEIGHT_MAX.toFixed(1) },
+    defines: { DEPTH: DEPTH.toFixed(1), BOTTOM: BOTTOM.toFixed(2), TOP: TOP.toFixed(2), HEIGHT_MAX: HEIGHT_MAX.toFixed(1) },
     vertexShader: [
       "uniform vec3 center; uniform float extent;",
       "attribute float aLayer;",
@@ -95,9 +103,16 @@ export function makeRays({ scene, groundAt, sun, shadowSize = 4096, lite = false
     fragmentShader: [
       "uniform sampler2DShadow shadowMap; uniform mat4 shadowMatrix; uniform float shadowTexel;",
       "uniform sampler2D heightMap; uniform float span; uniform vec3 viewDir; uniform float spacing;",
-      "uniform float strength; uniform vec3 tint;",
+      "uniform float strength; uniform float rays; uniform float time; uniform vec3 lightRight; uniform vec3 lightUp; uniform vec3 tint;",
       CLOUD_GLSL,
       "varying vec3 vWorld; varying float vLayer;",
+      /* Shafts: gaps in a high canopy, a pattern laid out across the sun direction. Every point on one sun line reads
+         the same value, so each gap becomes a beam running down along the sun to the ground. Drifts slowly. */
+      "float beamAt(vec3 p){",
+      "  vec2 q = vec2(dot(p, lightRight), dot(p, lightUp));",
+      "  float n = cloudNoise(q * 0.42 + vec2(time * 0.05, time * 0.02)) * 0.75 + cloudNoise(q * 1.1 + vec2(3.7, -time * 0.04)) * 0.25;",
+      "  return smoothstep(0.56, 0.74, n);",
+      "}",
       /* Four spread taps: shafts get the soft edge of light through air, not the crisp one of a cast shadow */
       "float sunLit(vec3 p){",
       "  vec4 c = shadowMatrix * vec4(p, 1.0);",
@@ -113,9 +128,15 @@ export function makeRays({ scene, groundAt, sun, shadowSize = 4096, lite = false
       "  float ground = texture2D(heightMap, (p.xz + span) / (2.0 * span)).r * HEIGHT_MAX;",
       "  float above = p.y - ground;",
       "  if (above <= 0.0) discard;",
-      "  float air = smoothstep(0.0, 1.8, above) * (1.0 - smoothstep(TOP - 4.0, TOP, p.y)) * exp(-max(p.y, 0.0) * 0.075);",
+      /* The same depth of air over every spot (a band DEPTH above the ground), so the glow measures how much of that
+         air is lit, not how far the ground sits below the top slice; low ground only gets a slight extra haze */
+      "  float air = smoothstep(0.0, 1.5, above) * (1.0 - smoothstep(DEPTH * 0.6, DEPTH, above)) * (1.0 - smoothstep(TOP - 2.0, TOP, p.y));",
+      "  air *= 1.0 + 0.15 * (1.0 - smoothstep(0.5, 8.0, ground));",
       "  float lit = sunLit(p) * (1.0 - cloudAt3(p) * cloudShade);",
-      "  float a = air * lit * strength / LAYERS_F;",
+      /* Beams fill the whole column (long streaks), fading toward the top so they taper out of the light */
+      "  float beamAir = smoothstep(0.0, 1.5, above) * (1.0 - smoothstep(TOP - 5.0, TOP, p.y));",
+      "  float beam = rays > 0.001 ? beamAt(p) * beamAir * rays : 0.0;",
+      "  float a = (air * strength / (DEPTH * 0.8) + beam / 7.5) * lit * spacing;",
       "  if (a < 0.0002) discard;",
       "  gl_FragColor = vec4(tint * a, 1.0);",
       "}",
@@ -126,18 +147,30 @@ export function makeRays({ scene, groundAt, sun, shadowSize = 4096, lite = false
   mesh.renderOrder = 4;
   mesh.visible = false;
   mesh.name = "sun-volume";
+  /* The shadow pass runs before any object draws, so the map always exists here, also in the prewarm render that
+     shows every hidden mesh once (an unset sampler2DShadow there is a GL error) */
+  mesh.onBeforeRender = () => {
+    uniforms.shadowMap.value = sun?.shadow?.map?.depthTexture ?? null;
+    uniforms.shadowMatrix.value.copy(sun.shadow.matrix);
+  };
   scene.add(mesh);
 
   return {
     mesh,
-    /* extent: half-size of the area the slices must cover (the shadow fit's reach) */
-    update(dt, { camera, center, extent = 40, strength = 0, tint }) {
+    /* extent: half-size of the area the slices must cover (the shadow fit's reach). strength = even glow of sunlit air,
+       rays = the beams on top of it. */
+    update(dt, { camera, center, extent = 40, strength = 0, rays = 0, sunDir, tint }) {
       const map = sun?.shadow?.map?.depthTexture;
       uniforms.strength.value = strength;
-      mesh.visible = strength > 0.005 && Boolean(map);
+      uniforms.rays.value = rays;
+      mesh.visible = strength + rays > 0.005 && Boolean(map);
       if (!mesh.visible) return;
-      uniforms.shadowMap.value = map;
-      uniforms.shadowMatrix.value.copy(sun.shadow.matrix);
+      uniforms.time.value += dt;
+      if (sunDir) {
+        const d = new THREE.Vector3(sunDir[0], sunDir[1], sunDir[2]).normalize();
+        uniforms.lightRight.value.crossVectors(THREE.Object3D.DEFAULT_UP, d).normalize();
+        uniforms.lightUp.value.crossVectors(d, uniforms.lightRight.value);
+      }
       uniforms.center.value.set(center.x, 0, center.z);
       uniforms.extent.value = extent;
       camera.getWorldDirection(uniforms.viewDir.value);
