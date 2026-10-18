@@ -4,11 +4,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import nikoBody from "./assets/niko/body.glb";
-import nikoHair from "./assets/niko/hair.glb";
-import nikoCoat from "./assets/niko/coat.glb";
-import nikoClothes from "./assets/niko/clothes.glb";
-import nikoShoes from "./assets/niko/shoes.glb";
+import nikoBody from "./assets/niko/niko-t-pose-rigged.glb";
 import nikoEyesUrl from "./assets/niko-eyes.png";
 import { atmos, buildIsland, CLOUD_GLSL, CLOUD_SHADE, cloudCover, cloudShade, cloudSun, cloudTime, cloudUniforms, ISLE, lampGain, lamped, makeRamp, waterLight, occlude, seeThrough, rainAmt, windMul, windTime, weatherFog, weatherFogColor, weatherWet } from "./world-island.js";
 import { lay, toXZ } from "./world-map.js";
@@ -1869,7 +1865,7 @@ async function start() {
       )
     );
   };
-  const eyeMaterial = (tiles, layer, { lift = 0, opacity = 1 } = {}) => {
+  const eyeMaterial = (tiles, layer, { lift = 0, opacity = 1, mask = true } = {}) => {
     const uniforms = {
       eyeShut: { value: 0 },
       eyeGaze: { value: new THREE.Vector2() },
@@ -1877,7 +1873,7 @@ async function start() {
       ...Object.fromEntries(EYE_LAYERS.map((name) => [`t_${name}`, { value: tiles[name] }])),
     };
     const mat = new THREE.MeshBasicMaterial({ map: layer === "brow" ? tiles.brow : tiles.scl, color: "#f4eeee", transparent: true, depthWrite: false, opacity });
-    if (lift) {
+    if (lift && mask) {
       Object.assign(mat, { stencilWrite: true, stencilRef: 1, stencilFunc: THREE.EqualStencilFunc, stencilFail: THREE.KeepStencilOp, stencilZFail: THREE.KeepStencilOp, stencilZPass: THREE.KeepStencilOp });
     }
     /* A slight negative LOD bias keeps the tiny on-screen eye crisp instead of one mip too soft */
@@ -1917,11 +1913,12 @@ async function start() {
         );
       }
     };
-    mat.customProgramCacheKey = () => `niko-eye-${layer}-${lift}`;
+    mat.customProgramCacheKey = () => `niko-eye-${layer}-${lift}-${mask ? 1 : 0}`;
     return { mat, uniforms };
   };
-  /* Default outfit. Each piece is its own skinned model; point a slot at another file to change it. */
-  const NIKO_PARTS = { body: nikoBody, hair: nikoHair, coat: nikoCoat, clothes: nikoClothes, shoes: nikoShoes };
+  /* Body slot is the clean T-pose. Hair, coat, clothes, and shoes are added here as their own skinned files on this skeleton. */
+  const NIKO_PARTS = { body: nikoBody };
+  const PREVIOUS_HEIGHT = 2.17;
   const useNikoModel = async () => {
     const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
     const loader = new GLTFLoader();
@@ -1957,11 +1954,16 @@ async function start() {
       }
     };
     for (const [slot, file] of Object.entries(loaded)) claim(slot, file);
-    model.scale.setScalar(NIKO_SCALE);
-    model.position.y = 0.5 * NIKO_SCALE;
+    model.scale.setScalar(1);
+    model.updateMatrixWorld(true);
+    const span = new THREE.Box3().setFromObject(model);
+    model.scale.setScalar(PREVIOUS_HEIGHT / Math.max(0.001, span.max.y - span.min.y));
+    /* This mesh is authored with its origin at the soles. The old waist lift left him in the air,
+       and the plant only corrected offsets under 0.6, so the lift stayed. */
+    model.position.set(0, 0, 0);
     model.updateMatrixWorld(true);
     const planted = new THREE.Box3().setFromObject(model);
-    if (Number.isFinite(planted.min.y) && Math.abs(planted.min.y) < 0.6) model.position.y -= planted.min.y;
+    if (Number.isFinite(planted.min.y)) model.position.y -= planted.min.y;
     const meshes = Object.values(parts).flat();
 
     /* Face texture carries only blush, nose and mouth; the eyes are their own decal meshes (eyeL/eyeR) */
@@ -1979,11 +1981,71 @@ async function start() {
        camera is orthographic, so it changes occlusion, never screen position. Brows draw twice: solid where nothing
        covers them, and faintly through the bangs. */
     const eyeTiles = eyeTextures(await new THREE.ImageLoader().loadAsync(nikoEyesUrl));
+    const hasFace = meshes.some((mesh) => mesh.material?.name === "face");
+    /* This body has no eye cards. Seat the same painted decals on the front of the head; they follow the Head bone. */
+    if (!meshes.some((mesh) => mesh.material?.name === "eyeL") && bones.Head) {
+      const skin = meshes.find((mesh) => mesh.material?.name === "skin");
+      const raycaster = new THREE.Raycaster();
+      const cells = 10;
+      const halfW = 0.04;
+      const halfH = 0.036;
+      const seat = (x, y) => {
+        const origin = new THREE.Vector3(x, y, 1).applyMatrix4(model.matrixWorld);
+        const dir = new THREE.Vector3(0, 0, -1).transformDirection(model.matrixWorld).normalize();
+        raycaster.set(origin, dir);
+        raycaster.far = 4;
+        const hit = skin && raycaster.intersectObject(skin, false)[0];
+        if (!hit) return { point: new THREE.Vector3(x, y, 0.13), normal: new THREE.Vector3(0, 0, 1) };
+        const point = model.worldToLocal(hit.point.clone());
+        const normal = hit.face.normal.clone().transformDirection(skin.matrixWorld);
+        normal.transformDirection(new THREE.Matrix4().copy(model.matrixWorld).invert()).normalize();
+        point.addScaledVector(normal, 0.006);
+        return { point, normal };
+      };
+      for (const [name, cx] of [["eyeL", 0.046], ["eyeR", -0.046]]) {
+        const positions = [];
+        const normals = [];
+        const uvs = [];
+        const indices = [];
+        for (let j = 0; j <= cells; j += 1) {
+          for (let i = 0; i <= cells; i += 1) {
+            const x = cx + (i / cells - 0.5) * 2 * halfW;
+            const y = 1.312 + (0.5 - j / cells) * 2 * halfH;
+            const { point, normal } = seat(x, y);
+            positions.push(point.x, point.y, point.z);
+            normals.push(normal.x, normal.y, normal.z);
+            uvs.push(i / cells, j / cells);
+          }
+        }
+        for (let j = 0; j < cells; j += 1) {
+          for (let i = 0; i < cells; i += 1) {
+            const a = j * (cells + 1) + i;
+            indices.push(a, a + cells + 1, a + cells + 2, a, a + cells + 2, a + 1);
+          }
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+        geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+        geometry.setIndex(indices);
+        const decal = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ name, color: "#ffffff" }));
+        model.add(decal);
+        model.updateMatrixWorld(true);
+        bones.Head.attach(decal);
+        meshes.push(decal);
+      }
+    }
     const eyeDecals = [["eyeL", 0], ["eyeR", 1]].map(([name, row]) => ({
       name,
-      eye: eyeMaterial(eyeTiles[row], "eye", { lift: 0.08 }),
-      brows: [eyeMaterial(eyeTiles[row], "brow"), eyeMaterial(eyeTiles[row], "brow", { lift: 0.08, opacity: 0.4 })],
+      eye: eyeMaterial(eyeTiles[row], "eye", { lift: hasFace ? 0.08 : 0, mask: hasFace }),
+      brows: [eyeMaterial(eyeTiles[row], "brow"), eyeMaterial(eyeTiles[row], "brow", { lift: hasFace ? 0.08 : 0, opacity: 0.4, mask: hasFace })],
     }));
+    if (!hasFace) {
+      eyeDecals.forEach((decal) => {
+        decal.eye.mat.side = THREE.DoubleSide;
+        decal.brows.forEach(({ mat }) => (mat.side = THREE.DoubleSide));
+      });
+    }
     const nikoCache = new Map();
     const nikoToon = (color) => {
       if (!nikoCache.has(color)) nikoCache.set(color, withCharLight(lamped(withRim(new THREE.MeshToonMaterial({ color, gradientMap: ramp })))));
@@ -2015,7 +2077,7 @@ async function start() {
         mesh.renderOrder = -1;
       } else if (name === "glow") mesh.material = glow("#ffe7a0", 2.4);
       else if (name === "lining") mesh.material = lining;
-      else mesh.material = nikoToon(`#${mesh.material.color.getHexString()}`);
+      else mesh.material = nikoToon(name === "skin" ? "#d7a07a" : `#${mesh.material.color.getHexString()}`);
       mesh.castShadow = name !== "glow" && name !== "face" && name !== "lining";
       mesh.receiveShadow = name !== "glow";
       mesh.frustumCulled = false;
@@ -2047,11 +2109,15 @@ async function start() {
       sphere("RightLeg", [0, -0.06, 0], 0.065),
     ]);
 
-    const glowHolder = new THREE.Group();
-    glowHolder.position.set(0, -0.09, 0.03);
-    glowHolder.scale.setScalar(1.12 / NIKO_SCALE);
-    bones.Lantern.add(glowHolder);
-    const bulbGlow = halo(glowHolder, { color: "#ffc35a", size: 0.7, opacity: 0.45 });
+    let bulbGlow = new THREE.Group();
+    if (bones.Lantern) {
+      const glowHolder = new THREE.Group();
+      glowHolder.position.set(0, -0.09, 0.03);
+      glowHolder.scale.setScalar(1.12 / NIKO_SCALE);
+      bones.Lantern.add(glowHolder);
+      bulbGlow = halo(glowHolder, { color: "#ffc35a", size: 0.7, opacity: 0.45 });
+    }
+    const spare = () => new THREE.Object3D();
 
     const body = new THREE.Group();
     body.add(model);
@@ -2070,15 +2136,16 @@ async function start() {
       knees: [bones.RightLeg, bones.LeftLeg],
       arms: [bones.RightArm, bones.LeftArm],
       head: bones.Head,
-      antenna: bones.Ahoge,
-      hair: bones.Hair,
-      hairRest: bones.Hair.position.y,
+      antenna: bones.Ahoge || spare(),
+      hair: bones.Hair || spare(),
+      hairRest: bones.Hair ? bones.Hair.position.y : 0,
       hairLag: 0.09,
-      lantern: bones.Lantern,
+      lantern: bones.Lantern || spare(),
       cape: new THREE.Object3D(),
       cloth: null,
       waist: 1.1,
-      grow: NIKO_SCALE / 1.95,
+      grow: model.scale.y / 1.95,
+      ownPose: true,
       bulbGlow,
       faceMat,
       faceOpen,
@@ -3061,25 +3128,29 @@ async function start() {
       actions.run.setEffectiveWeight(state.walk);
       actions.run.setEffectiveTimeScale(1.2 * state.pace);
       bot.mixer.update(calm ? 0 : dt);
-      const spread = 0.2 + pose.crouch * 0.45;
-      bones.LeftArm.quaternion.premultiply(overlayQ.setFromAxisAngle(AXIS_Z, spread));
-      bones.RightArm.quaternion.premultiply(overlayQ.setFromAxisAngle(AXIS_Z, -spread));
-      if (pose.raise > 0.001) {
-        bones.LeftArm.quaternion.slerp(RAISED_ARM, pose.raise);
-        bones.LeftForeArm.quaternion.slerp(overlayQ.identity(), pose.raise);
-        bones.LeftHand.rotateZ(wave * 4);
+      /* These offsets were measured on the old skeleton, whose bones rested at identity. The Y Bot rig already
+         carries Mixamo's bone axes, so the same turns point the limbs the wrong way. */
+      if (!bot.ownPose) {
+        const spread = 0.2 + pose.crouch * 0.45;
+        bones.LeftArm.quaternion.premultiply(overlayQ.setFromAxisAngle(AXIS_Z, spread));
+        bones.RightArm.quaternion.premultiply(overlayQ.setFromAxisAngle(AXIS_Z, -spread));
+        if (pose.raise > 0.001) {
+          bones.LeftArm.quaternion.slerp(RAISED_ARM, pose.raise);
+          bones.LeftForeArm.quaternion.slerp(overlayQ.identity(), pose.raise);
+          bones.LeftHand.rotateZ(wave * 4);
+        }
+        if (pose.crouch > 0.001) {
+          bot.legs.forEach((leg) => leg.rotateX(-pose.crouch * 0.9));
+          bot.knees.forEach((knee) => knee.rotateX(pose.crouch * 1.5));
+          bones.LeftFoot.rotateX(-pose.crouch * 0.6);
+          bones.RightFoot.rotateX(-pose.crouch * 0.6);
+        }
+        bones.Spine2.rotateX(-state.faceUp * 0.08);
+        bones.Neck.rotateX(-state.faceUp * 0.18);
+        bones.Head.rotateY(look * (0.7 - state.faceUp * 0.45));
+        bones.Head.rotateX(-pose.tilt * 0.16 - 0.1 - state.faceUp * 0.38);
+        bones.Head.rotateZ(pose.tilt * 0.2);
       }
-      if (pose.crouch > 0.001) {
-        bot.legs.forEach((leg) => leg.rotateX(-pose.crouch * 0.9));
-        bot.knees.forEach((knee) => knee.rotateX(pose.crouch * 1.5));
-        bones.LeftFoot.rotateX(-pose.crouch * 0.6);
-        bones.RightFoot.rotateX(-pose.crouch * 0.6);
-      }
-      bones.Spine2.rotateX(-state.faceUp * 0.08);
-      bones.Neck.rotateX(-state.faceUp * 0.18);
-      bones.Head.rotateY(look * (0.7 - state.faceUp * 0.45));
-      bones.Head.rotateX(-pose.tilt * 0.16 - 0.1 - state.faceUp * 0.38);
-      bones.Head.rotateZ(pose.tilt * 0.2);
     } else {
       bot.legs.forEach((leg, i) => {
         const side = i ? 1 : -1;

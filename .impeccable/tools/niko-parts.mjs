@@ -1,7 +1,8 @@
 /* Splits the rigged Niko (assets/niko.glb, from niko-rig.mjs) into wearable pieces.
    Each file keeps the same skeleton and joint indices, so the game can parent them
    to the body and share one set of bones. Animations stay on body.glb only.
-   Run from .impeccable/tools: node niko-parts.mjs [niko.glb] [out dir] */
+   Run from .impeccable/tools: node niko-parts.mjs [niko.glb] [out dir]
+   Then node niko-body.mjs rebuilds body.glb into a closed T-pose (keeps body-source.glb). */
 import { NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import { prune } from "@gltf-transform/functions";

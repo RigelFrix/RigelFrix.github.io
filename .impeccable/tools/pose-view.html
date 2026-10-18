@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+<style>html,body{margin:0;background:#cfd8e6}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"/vendor/three/three.module.min.js","three/addons/":"/vendor/three/addons/"}}</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { FBXLoader } from "/.impeccable/fbx/addons/loaders/FBXLoader.js";
+
+const params = new URLSearchParams(location.search);
+const file = params.get("file");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color("#cfd8e6");
+scene.add(new THREE.HemisphereLight("#ffffff", "#667", 1.5));
+const sun = new THREE.DirectionalLight("#ffffff", 1.6);
+sun.position.set(-2, 4, 3);
+scene.add(sun);
+
+const root = file.endsWith(".fbx")
+  ? await new FBXLoader().loadAsync(encodeURI(file))
+  : (await new GLTFLoader().loadAsync(encodeURI(file))).scene;
+scene.add(root);
+root.updateMatrixWorld(true);
+
+const meshes = [];
+const bones = [];
+root.traverse((n) => {
+  if (n.isMesh) meshes.push(n);
+  if (n.isBone) bones.push(n);
+});
+const box = new THREE.Box3().setFromObject(root);
+const size = box.getSize(new THREE.Vector3());
+const center = box.getCenter(new THREE.Vector3());
+const wp = new THREE.Vector3();
+const wc = new THREE.Vector3();
+window.info = {
+  size: size.toArray().map((v) => +v.toFixed(3)),
+  center: center.toArray().map((v) => +v.toFixed(3)),
+  meshes: meshes.map((m) => {
+    m.getWorldPosition(wp);
+    const b = new THREE.Box3().setFromObject(m);
+    return {
+      name: m.name,
+      mat: m.material?.name || "",
+      verts: m.geometry?.attributes?.position?.count || 0,
+      box: [b.min.toArray().map((v) => +v.toFixed(3)), b.max.toArray().map((v) => +v.toFixed(3))],
+    };
+  }),
+  bones: bones.filter((b) => /Hips|Spine|Neck|Head|Arm|ForeArm|Hand$|UpLeg|Leg$|Foot|Eye|eye/.test(b.name)).map((b) => {
+    b.getWorldPosition(wp);
+    const child = b.children.find((c) => c.isBone);
+    let dir = null;
+    if (child) {
+      child.getWorldPosition(wc);
+      dir = wc.sub(wp).normalize().toArray().map((v) => +v.toFixed(2));
+      b.getWorldPosition(wp);
+    }
+    return { name: b.name, p: wp.toArray().map((v) => +v.toFixed(3)), dir };
+  }),
+};
+const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.01, 1000);
+window.view = (yaw, elev, fit = 2.2) => {
+  const r = Math.max(size.x, size.y, size.z) * fit;
+  camera.position.set(center.x + Math.sin(yaw) * Math.cos(elev) * r, center.y + Math.sin(elev) * r, center.z + Math.cos(yaw) * Math.cos(elev) * r);
+  camera.lookAt(center);
+  renderer.render(scene, camera);
+};
+window.focus = (x, y, z, r) => {
+  camera.position.set(x, y, z + r);
+  camera.lookAt(x, y, z);
+  renderer.render(scene, camera);
+};
+window.ready = true;
+</script>
+</body>
+</html>
