@@ -4,7 +4,10 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import nikoBody from "./assets/niko/niko-t-pose-rigged.glb";
+import { FBXLoader } from "./.impeccable/fbx/addons/loaders/FBXLoader.js";
+import nikoBody from "./assets/niko/low-poly-humanoid.glb";
+import nikoIdleFbx from "./assets/Happy Idle.fbx";
+import nikoRunFbx from "./assets/Running (1).fbx";
 import nikoEyesUrl from "./assets/niko-eyes.png";
 import { atmos, buildIsland, CLOUD_GLSL, CLOUD_SHADE, cloudCover, cloudShade, cloudSun, cloudTime, cloudUniforms, ISLE, lampGain, lamped, makeRamp, waterLight, occlude, seeThrough, rainAmt, windMul, windTime, weatherFog, weatherFogColor, weatherWet } from "./world-island.js";
 import { lay, toXZ } from "./world-map.js";
@@ -1919,6 +1922,72 @@ async function start() {
   /* Body slot is the clean T-pose. Hair, coat, clothes, and shoes are added here as their own skinned files on this skeleton. */
   const NIKO_PARTS = { body: nikoBody };
   const PREVIOUS_HEIGHT = 2.17;
+  /* Mixamo clips stay on the FBX. Any body with the same bone names can play them: the prefix is stripped,
+     the clip's world swing is turned so the FBX's left arm lines up with this body's, and the hips only bob. */
+  const stripMixamo = (name) => name.replace(/^mixamorig\d*:?/, "");
+  const parseFbx = (buf) => new FBXLoader().parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), "");
+  const retargetMixamo = (clipName, sourceGroup, model, bones) => {
+    const srcBones = {};
+    sourceGroup.traverse((node) => {
+      if (node.isBone) srcBones[stripMixamo(node.name)] = node;
+    });
+    const names = Object.keys(bones).filter((name) => srcBones[name]);
+    const armAcross = (map) => {
+      const left = new THREE.Vector3();
+      const right = new THREE.Vector3();
+      map.LeftArm.getWorldPosition(left);
+      map.RightArm.getWorldPosition(right);
+      return left.sub(right).setY(0).normalize();
+    };
+    const savedYaw = model.rotation.y;
+    model.rotation.y = 0;
+    model.updateMatrixWorld(true);
+    sourceGroup.updateMatrixWorld(true);
+    const align = new THREE.Quaternion().setFromUnitVectors(armAcross(srcBones), armAcross(bones));
+    const alignInv = align.clone().invert();
+    const worldOf = (bone) => bone.getWorldQuaternion(new THREE.Quaternion());
+    const srcRest = {};
+    const tgtRest = {};
+    for (const name of names) {
+      srcRest[name] = worldOf(srcBones[name]);
+      tgtRest[name] = worldOf(bones[name]);
+    }
+    const srcHipRest = srcBones.Hips.position.clone();
+    const tgtHipRest = bones.Hips.position.clone();
+    const hipScale = tgtHipRest.y / (Math.abs(srcHipRest.y) > 1e-4 ? srcHipRest.y : 1);
+    model.rotation.y = savedYaw;
+    const srcMixer = new THREE.AnimationMixer(sourceGroup);
+    const srcClip = sourceGroup.animations[0];
+    srcMixer.clipAction(srcClip).play();
+    const frames = Math.max(2, Math.round(srcClip.duration * 30));
+    const times = new Float32Array(frames);
+    const quats = Object.fromEntries(names.map((name) => [name, new Float32Array(frames * 4)]));
+    const hips = new Float32Array(frames * 3);
+    for (let frame = 0; frame < frames; frame += 1) {
+      const time = (srcClip.duration * frame) / (frames - 1);
+      times[frame] = time;
+      srcMixer.setTime(time);
+      sourceGroup.updateMatrixWorld(true);
+      const posed = {};
+      for (const name of names) {
+        const delta = worldOf(srcBones[name]).multiply(srcRest[name].clone().invert());
+        posed[name] = align.clone().multiply(delta).multiply(alignInv).multiply(tgtRest[name].clone()).normalize();
+      }
+      for (const name of names) {
+        const parent = bones[name].parent;
+        const local = parent && posed[parent.name]
+          ? posed[parent.name].clone().invert().multiply(posed[name])
+          : posed[name].clone();
+        quats[name].set([local.x, local.y, local.z, local.w], frame * 4);
+      }
+      hips[frame * 3] = tgtHipRest.x;
+      hips[frame * 3 + 1] = tgtHipRest.y + (srcBones.Hips.position.y - srcHipRest.y) * hipScale;
+      hips[frame * 3 + 2] = tgtHipRest.z;
+    }
+    const tracks = names.map((name) => new THREE.QuaternionKeyframeTrack(`${name}.quaternion`, times, quats[name]));
+    tracks.push(new THREE.VectorKeyframeTrack("Hips.position", times, hips));
+    return new THREE.AnimationClip(clipName, srcClip.duration, tracks);
+  };
   const useNikoModel = async () => {
     const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
     const loader = new GLTFLoader();
@@ -1927,6 +1996,9 @@ async function start() {
     for (const [slot, buf] of Object.entries(NIKO_PARTS)) loaded[slot] = await parse(buf);
     const gltf = loaded.body;
     const model = gltf.scene;
+    model.traverse((node) => {
+      if (node.isBone) node.name = stripMixamo(node.name);
+    });
     const bones = {};
     model.traverse((node) => {
       if (node.isBone) bones[node.name] = node;
@@ -1955,6 +2027,8 @@ async function start() {
     };
     for (const [slot, file] of Object.entries(loaded)) claim(slot, file);
     model.scale.setScalar(1);
+    /* The mesh nose is +X. A +90° yaw turns that nose toward -Z, so -90° faces him along +Z, which is forward for the walk. */
+    model.rotation.y = -Math.PI / 2;
     model.updateMatrixWorld(true);
     const span = new THREE.Box3().setFromObject(model);
     model.scale.setScalar(PREVIOUS_HEIGHT / Math.max(0.001, span.max.y - span.min.y));
@@ -1982,8 +2056,10 @@ async function start() {
        covers them, and faintly through the bangs. */
     const eyeTiles = eyeTextures(await new THREE.ImageLoader().loadAsync(nikoEyesUrl));
     const hasFace = meshes.some((mesh) => mesh.material?.name === "face");
-    /* This body has no eye cards. Seat the same painted decals on the front of the head; they follow the Head bone. */
-    if (!meshes.some((mesh) => mesh.material?.name === "eyeL") && bones.Head) {
+    const textured = meshes.some((mesh) => mesh.material?.map);
+    /* This body has no eye cards. Seat the same painted decals on the front of the head; they follow the Head bone.
+       A textured body already carries its own face, so the cards would sit on top of the paint. */
+    if (!textured && !meshes.some((mesh) => mesh.material?.name === "eyeL") && bones.Head) {
       const skin = meshes.find((mesh) => mesh.material?.name === "skin");
       const raycaster = new THREE.Raycaster();
       const cells = 10;
@@ -2056,6 +2132,14 @@ async function start() {
     /* No outline on the bang edges around the eye cut-outs: at game size they framed the eyes like goggles */
     const aroundEyes = (x, y, z) => z > 0.06 && y > 0.26 && y < 0.355 && Math.abs(x) < 0.11;
     meshes.forEach((mesh) => {
+      if (mesh.material?.map) {
+        const map = mesh.material.map;
+        mesh.material = withCharLight(lamped(withRim(new THREE.MeshToonMaterial({ map, gradientMap: ramp }))));
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.frustumCulled = false;
+        return;
+      }
       const name = mesh.material.name;
       const eye = eyeDecals.find((e) => e.name === name);
       if (eye) {
@@ -2090,12 +2174,12 @@ async function start() {
 
     const mixer = new THREE.AnimationMixer(model);
     const actions = {};
-    for (const clip of gltf.animations) {
-      actions[clip.name] = mixer.clipAction(clip);
-      actions[clip.name].play();
-      actions[clip.name].setEffectiveWeight(0);
+    for (const [name, buf] of [["idle", nikoIdleFbx], ["run", nikoRunFbx]]) {
+      const clip = retargetMixamo(name, parseFbx(buf), model, bones);
+      actions[name] = mixer.clipAction(clip);
+      actions[name].play();
+      actions[name].setEffectiveWeight(name === "idle" ? 1 : 0);
     }
-    actions.idle.setEffectiveWeight(1);
     mixer.update(0);
 
     const sphere = (bone, offset, r) => ({ bone: bones[bone], offset: new THREE.Vector3(...offset), r });

@@ -31,7 +31,7 @@ await build({
   legalComments: "eof",
   banner: { js: "/* Built from world.js by .impeccable/tools/build-world.mjs. Edit world.js, then rebuild. */" },
   plugins: [vendoredThree],
-  loader: { ".glb": "binary", ".png": "dataurl" },
+  loader: { ".glb": "binary", ".fbx": "binary", ".png": "dataurl" },
   logLevel: "info",
 });
 
