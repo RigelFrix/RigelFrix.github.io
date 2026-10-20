@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { FBXLoader } from "./.impeccable/fbx/addons/loaders/FBXLoader.js";
-import nikoBody from "./assets/niko/low-poly-humanoid.glb";
+import nikoBody from "./assets/niko/low-poly-humanoid-v2.glb";
 import nikoIdleFbx from "./assets/Happy Idle.fbx";
 import nikoRunFbx from "./assets/Running (1).fbx";
 import nikoEyesUrl from "./assets/niko-eyes.png";
