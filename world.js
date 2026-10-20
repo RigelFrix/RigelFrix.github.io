@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { FBXLoader } from "./.impeccable/fbx/addons/loaders/FBXLoader.js";
-import nikoBody from "./assets/niko/low-poly-humanoid-v2.glb";
+import nikoBody from "./assets/niko/low-poly-humanoid-v6-clean.glb";
 import nikoIdleFbx from "./assets/Happy Idle.fbx";
 import nikoRunFbx from "./assets/Running (1).fbx";
 import nikoEyesUrl from "./assets/niko-eyes.png";
@@ -1868,23 +1868,28 @@ async function start() {
       )
     );
   };
-  const eyeMaterial = (tiles, layer, { lift = 0, opacity = 1, mask = true } = {}) => {
+  /* lit: the eye is shaded by the same toon light, shadows and night tint as the skin under it, so it reads as paint
+     on the face instead of a bright sticker */
+  const eyeMaterial = (tiles, layer, { lift = 0, opacity = 1, mask = true, lit = false } = {}) => {
     const uniforms = {
       eyeShut: { value: 0 },
       eyeGaze: { value: new THREE.Vector2() },
       charEye: charLight.eye,
       ...Object.fromEntries(EYE_LAYERS.map((name) => [`t_${name}`, { value: tiles[name] }])),
     };
-    const mat = new THREE.MeshBasicMaterial({ map: layer === "brow" ? tiles.brow : tiles.scl, color: "#f4eeee", transparent: true, depthWrite: false, opacity });
+    const params = { map: layer === "brow" ? tiles.brow : tiles.scl, color: "#f4eeee", transparent: true, depthWrite: false, opacity };
+    const mat = lit ? new THREE.MeshToonMaterial({ ...params, gradientMap: ramp }) : new THREE.MeshBasicMaterial(params);
     if (lift && mask) {
       Object.assign(mat, { stencilWrite: true, stencilRef: 1, stencilFunc: THREE.EqualStencilFunc, stencilFail: THREE.KeepStencilOp, stencilZFail: THREE.KeepStencilOp, stencilZPass: THREE.KeepStencilOp });
     }
     /* A slight negative LOD bias keeps the tiny on-screen eye crisp instead of one mip too soft */
     const tile = (name, uv) => `eyeTap(t_${name}, ${uv})`;
+    const clip = "if (vMapUv.x < 0.0 || vMapUv.x > 1.0 || vMapUv.y < 0.0 || vMapUv.y > 1.0) discard;";
     const fragment =
       layer === "brow"
-        ? `diffuseColor *= ${tile("brow", "vMapUv")};`
+        ? `${clip}\ndiffuseColor *= ${tile("brow", "vMapUv")};`
         : [
+            clip,
             `vec4 scl = ${tile("scl", "vMapUv")};`,
             `vec4 iris = ${tile("iris", "vMapUv - eyeGaze")};`,
             `vec4 lash = ${tile("lash", "vMapUv")};`,
@@ -1908,7 +1913,7 @@ async function start() {
             "vec4 eyeTap(sampler2D t, vec2 uv){ vec4 c = texture2D(t, clamp(uv, 0.0, 1.0), -0.6); return vec4(c.rgb / max(c.a, 1e-4), c.a); }",
           ].join("\n")
         )
-        .replace("#include <map_fragment>", `${fragment}\ndiffuseColor.rgb *= charEye;`);
+        .replace("#include <map_fragment>", lit ? fragment : `${fragment}\ndiffuseColor.rgb *= charEye;`);
       if (lift) {
         shader.vertexShader = shader.vertexShader.replace(
           "#include <project_vertex>",
@@ -1916,8 +1921,150 @@ async function start() {
         );
       }
     };
-    mat.customProgramCacheKey = () => `niko-eye-${layer}-${lift}-${mask ? 1 : 0}`;
-    return { mat, uniforms };
+    mat.customProgramCacheKey = () => `niko-eye-${layer}-${lift}-${mask ? 1 : 0}-${lit ? 1 : 0}`;
+    return { mat: lit ? withCharLight(lamped(mat)) : mat, uniforms };
+  };
+  /* Painted face, in three parts that each describe one asset:
+     FACE_REF   where the eyes sit on the reference front render (pixels; his left eye is on the picture's right).
+     faceAnchor where that face is on the mesh: the pointed nose tip and the crown. The nose is the origin and
+                crown-to-nose sets the scale, so the reference layout carries over to any head.
+     paintBox   where the painted eye is inside its atlas tile (alpha bounds of sclera + lash), so the art is
+                stretched onto the reference eye box and not the padded tile.
+     The eyes are then the head's own front triangles, skinned with the face, so turning him shows the cheek
+     curving away instead of a card floating off it. */
+  const FACE_REF = { crown: 44, nose: [510.5, 192] };
+  /* Eye placement, in reference pixels (148 px = crown to nose tip, so 1 px is about 1/148 of the upper head).
+     Try values live in the browser console with PortfolioWorld.debug.eyes({ gap: 24, raise: 9 }), then copy them here. */
+  const EYE_FIT = {
+    gap: 28, // between the two inner corners; smaller brings the eyes together
+    width: 39, // each eye, inner to outer corner
+    height: 37, // each eye, top of the lashes to the lower lid
+    raise: 7, // nose tip up to the lower lid; bigger moves the eyes up
+  };
+  const faceAnchor = (pos) => {
+    let crown = -Infinity;
+    for (let i = 0; i < pos.count; i += 1) crown = Math.max(crown, pos.getY(i));
+    /* Profile down the middle of the face: the furthest-forward point at each height */
+    const profile = new Map();
+    for (let i = 0; i < pos.count; i += 1) {
+      const y = pos.getY(i);
+      if (Math.abs(pos.getZ(i)) > 0.006 || y < crown * 0.7) continue;
+      const key = Math.round(y * 1e4);
+      profile.set(key, Math.max(profile.get(key) ?? -Infinity, pos.getX(i)));
+    }
+    const line = [...profile].sort((a, b) => a[0] - b[0]).map(([key, x]) => ({ y: key / 1e4, x }));
+    const front = Math.max(...line.map((p) => p.x));
+    /* The nose tip is the sharpest spike among the most-forward points; the brow ridge is a flat run, not a spike */
+    let nose = line.reduce((a, b) => (b.x > a.x ? b : a));
+    let sharpest = 0;
+    line.forEach((p, i) => {
+      if (p.x < front * 0.97 || i === 0 || i === line.length - 1) return;
+      const spike = p.x - Math.max(line[i - 1].x, line[i + 1].x);
+      if (spike > sharpest) [sharpest, nose] = [spike, p];
+    });
+    return { nose, crown, scale: (crown - nose.y) / (FACE_REF.nose[1] - FACE_REF.crown) };
+  };
+  const paintBox = (tiles) => {
+    const size = tiles.scl.image.width;
+    const box = [size, size, 0, 0];
+    for (const layer of ["scl", "lash"]) {
+      const { data } = tiles[layer].image.getContext("2d").getImageData(0, 0, size, size);
+      for (let y = 0; y < size; y += 1) {
+        for (let x = 0; x < size; x += 1) {
+          if (data[(y * size + x) * 4 + 3] < 24) continue;
+          box[0] = Math.min(box[0], x);
+          box[1] = Math.min(box[1], y);
+          box[2] = Math.max(box[2], x + 1);
+          box[3] = Math.max(box[3], y + 1);
+        }
+      }
+    }
+    return box.map((v) => v / size);
+  };
+  const paintEyes = (skin, eyeTiles) => {
+    const src = skin?.geometry;
+    const pos = src?.attributes.position;
+    const norm = src?.attributes.normal;
+    const skinIndex = src?.attributes.skinIndex;
+    const skinWeight = src?.attributes.skinWeight;
+    const index = src?.index;
+    if (!pos || !norm || !skinIndex || !skinWeight || !index) return [];
+    const { nose, crown, scale } = faceAnchor(pos);
+    /* Reference pixel <-> mesh. Picture right is his left, which is -Z on this mesh (nose is +X). */
+    const toPicture = (y, z) => [FACE_REF.nose[0] - z / scale, FACE_REF.nose[1] - (y - nose.y) / scale];
+    /* The whole front of the face carries the paint, so EYE_FIT can move the eyes anywhere on it without
+       rebuilding; texture coordinates outside the eye tile are discarded */
+    const onHead = (i) => pos.getY(i) > nose.y - (crown - nose.y) * 0.4 && pos.getX(i) > nose.x * 0.45;
+    /* side +1 = his left eye, on the picture's right */
+    const specs = [
+      { name: "eyeL", row: 0, side: 1 },
+      { name: "eyeR", row: 1, side: -1 },
+    ];
+    return specs.map((spec) => {
+      /* Atlas tiles keep picture orientation (row 0 has its iris on the nose side, like his left eye in the
+         reference), so u follows picture x for both eyes and the pair mirrors across the nose */
+      const [u0, v0, u1, v1] = paintBox(eyeTiles[spec.row]);
+      const uv = (y, z) => {
+        const { gap, width, height, raise } = EYE_FIT;
+        const near = FACE_REF.nose[0] + (spec.side * gap) / 2;
+        const far = near + spec.side * width;
+        const left = Math.min(near, far);
+        const bottom = FACE_REF.nose[1] - raise;
+        const [px, py] = toPicture(y, z);
+        return [u0 + ((px - left) / width) * (u1 - u0), v0 + ((py - (bottom - height)) / height) * (v1 - v0)];
+      };
+      const map = new Map();
+      const positions = [];
+      const normals = [];
+      const uvs = [];
+      const bones = [];
+      const weights = [];
+      const indices = [];
+      const add = (i) => {
+        const hit = map.get(i);
+        if (hit != null) return hit;
+        const n = positions.length / 3;
+        map.set(i, n);
+        positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+        normals.push(norm.getX(i), norm.getY(i), norm.getZ(i));
+        uvs.push(0, 0);
+        for (let k = 0; k < 4; k += 1) {
+          bones.push(skinIndex.getComponent(i, k));
+          weights.push(skinWeight.getComponent(i, k));
+        }
+        return n;
+      };
+      for (let t = 0; t < index.count; t += 3) {
+        const tri = [index.getX(t), index.getX(t + 1), index.getX(t + 2)];
+        if (!tri.every(onHead)) continue;
+        indices.push(add(tri[0]), add(tri[1]), add(tri[2]));
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+      geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+      geometry.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(bones, 4));
+      geometry.setAttribute("skinWeight", new THREE.Float32BufferAttribute(weights, 4));
+      geometry.setIndex(indices);
+      const mesh = new THREE.SkinnedMesh(geometry, new THREE.MeshBasicMaterial({ name: spec.name, color: "#ffffff" }));
+      const brow = new THREE.SkinnedMesh(geometry, new THREE.MeshBasicMaterial({ name: `${spec.name}-brow`, color: "#ffffff" }));
+      const refit = () => {
+        const attr = geometry.attributes.uv;
+        const at = geometry.attributes.position;
+        for (let k = 0; k < at.count; k += 1) attr.setXY(k, ...uv(at.getY(k), at.getZ(k)));
+        attr.needsUpdate = true;
+      };
+      refit();
+      Object.assign(mesh.userData, { brow, refit, anchor: { nose: [nose.x, nose.y], crown, scale } });
+      [mesh, brow].forEach((decal) => {
+        decal.bind(skin.skeleton, skin.bindMatrix);
+        decal.frustumCulled = false;
+        decal.castShadow = false;
+        decal.receiveShadow = true;
+        skin.parent.add(decal);
+      });
+      return mesh;
+    });
   };
   /* Body slot is the clean T-pose. Hair, coat, clothes, and shoes are added here as their own skinned files on this skeleton. */
   const NIKO_PARTS = { body: nikoBody };
@@ -2056,70 +2203,21 @@ async function start() {
        covers them, and faintly through the bangs. */
     const eyeTiles = eyeTextures(await new THREE.ImageLoader().loadAsync(nikoEyesUrl));
     const hasFace = meshes.some((mesh) => mesh.material?.name === "face");
-    const textured = meshes.some((mesh) => mesh.material?.map);
-    /* This body has no eye cards. Seat the same painted decals on the front of the head; they follow the Head bone.
-       A textured body already carries its own face, so the cards would sit on top of the paint. */
-    if (!textured && !meshes.some((mesh) => mesh.material?.name === "eyeL") && bones.Head) {
-      const skin = meshes.find((mesh) => mesh.material?.name === "skin");
-      const raycaster = new THREE.Raycaster();
-      const cells = 10;
-      const halfW = 0.04;
-      const halfH = 0.036;
-      const seat = (x, y) => {
-        const origin = new THREE.Vector3(x, y, 1).applyMatrix4(model.matrixWorld);
-        const dir = new THREE.Vector3(0, 0, -1).transformDirection(model.matrixWorld).normalize();
-        raycaster.set(origin, dir);
-        raycaster.far = 4;
-        const hit = skin && raycaster.intersectObject(skin, false)[0];
-        if (!hit) return { point: new THREE.Vector3(x, y, 0.13), normal: new THREE.Vector3(0, 0, 1) };
-        const point = model.worldToLocal(hit.point.clone());
-        const normal = hit.face.normal.clone().transformDirection(skin.matrixWorld);
-        normal.transformDirection(new THREE.Matrix4().copy(model.matrixWorld).invert()).normalize();
-        point.addScaledVector(normal, 0.006);
-        return { point, normal };
-      };
-      for (const [name, cx] of [["eyeL", 0.046], ["eyeR", -0.046]]) {
-        const positions = [];
-        const normals = [];
-        const uvs = [];
-        const indices = [];
-        for (let j = 0; j <= cells; j += 1) {
-          for (let i = 0; i <= cells; i += 1) {
-            const x = cx + (i / cells - 0.5) * 2 * halfW;
-            const y = 1.312 + (0.5 - j / cells) * 2 * halfH;
-            const { point, normal } = seat(x, y);
-            positions.push(point.x, point.y, point.z);
-            normals.push(normal.x, normal.y, normal.z);
-            uvs.push(i / cells, j / cells);
-          }
-        }
-        for (let j = 0; j < cells; j += 1) {
-          for (let i = 0; i < cells; i += 1) {
-            const a = j * (cells + 1) + i;
-            indices.push(a, a + cells + 1, a + cells + 2, a, a + cells + 2, a + 1);
-          }
-        }
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-        geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
-        geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-        geometry.setIndex(indices);
-        const decal = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ name, color: "#ffffff" }));
-        model.add(decal);
-        model.updateMatrixWorld(true);
-        bones.Head.attach(decal);
-        meshes.push(decal);
-      }
+    if (!meshes.some((mesh) => mesh.material?.name === "eyeL")) {
+      paintEyes(meshes.find((mesh) => mesh.isSkinnedMesh), eyeTiles).forEach((mesh) => meshes.push(mesh));
     }
     const eyeDecals = [["eyeL", 0], ["eyeR", 1]].map(([name, row]) => ({
       name,
-      eye: eyeMaterial(eyeTiles[row], "eye", { lift: hasFace ? 0.08 : 0, mask: hasFace }),
-      brows: [eyeMaterial(eyeTiles[row], "brow"), eyeMaterial(eyeTiles[row], "brow", { lift: hasFace ? 0.08 : 0, opacity: 0.4, mask: hasFace })],
+      eye: eyeMaterial(eyeTiles[row], "eye", { lift: hasFace ? 0.08 : 0, mask: hasFace, lit: !hasFace }),
+      brows: [eyeMaterial(eyeTiles[row], "brow", { lit: !hasFace })].concat(hasFace ? [eyeMaterial(eyeTiles[row], "brow", { lift: 0.08, opacity: 0.4, mask: true })] : []),
     }));
     if (!hasFace) {
       eyeDecals.forEach((decal) => {
-        decal.eye.mat.side = THREE.DoubleSide;
-        decal.brows.forEach(({ mat }) => (mat.side = THREE.DoubleSide));
+        [decal.eye.mat, ...decal.brows.map(({ mat }) => mat)].forEach((mat) => {
+          mat.polygonOffset = true;
+          mat.polygonOffsetFactor = -4;
+          mat.polygonOffsetUnits = -4;
+        });
       });
     }
     const nikoCache = new Map();
@@ -2145,15 +2243,14 @@ async function start() {
       if (eye) {
         mesh.material = eye.eye.mat;
         mesh.castShadow = false;
-        mesh.receiveShadow = false;
+        mesh.receiveShadow = !hasFace;
         mesh.renderOrder = 3;
         mesh.frustumCulled = false;
-        eye.brows.forEach(({ mat }, i) => {
-          const brow = mesh.clone();
-          brow.material = mat;
-          brow.renderOrder = 2 + i * 2;
-          mesh.parent.add(brow);
-        });
+        const brow = mesh.userData.brow;
+        if (brow) {
+          brow.material = eye.brows[0].mat;
+          brow.renderOrder = 4;
+        }
         return;
       }
       if (name === "face") {
@@ -3085,6 +3182,7 @@ async function start() {
 
   const travelled = new THREE.Vector3();
   const lookTarget = new THREE.Vector3();
+  const faceViewAt = new THREE.Vector3();
   const offTarget = new THREE.Vector3();
   const tilt = camOffset.y / camOffset.length();
 
@@ -3390,6 +3488,19 @@ async function start() {
     }
     camera.position.copy(camLook).add(camOffset);
     camera.lookAt(camLook);
+    if (state.faceView != null && bot.head) {
+      /* Review only: a level camera on his face, faceView radians around from the front (0 = like the reference render) */
+      const around = robot.rotation.y + state.faceView;
+      bot.head.getWorldPosition(faceViewAt);
+      faceViewAt.y += 0.1;
+      camera.position.set(faceViewAt.x + Math.sin(around) * 4, faceViewAt.y, faceViewAt.z + Math.cos(around) * 4);
+      camera.lookAt(faceViewAt);
+      /* The game frustum is off-centre; slide the camera so the face lands mid-screen */
+      camera.updateMatrixWorld();
+      const ndc = faceViewAt.clone().project(camera);
+      camera.translateX((ndc.x * (camera.right - camera.left)) / 2 / camera.zoom);
+      camera.translateY((ndc.y * (camera.top - camera.bottom)) / 2 / camera.zoom);
+    }
     camera.updateMatrixWorld();
     fitShadow();
     post.snap();
@@ -4008,6 +4119,16 @@ async function start() {
         camera.updateProjectionMatrix();
       },
       finishIntro: () => void finishIntro(),
+      /* Level camera on Niko's face, `angle` radians around from the front, for comparing with the reference; null releases it */
+      faceView: (angle = 0) => void (state.faceView = angle),
+      /* Move the painted eyes live: eyes({ gap, width, height, raise }) in reference pixels (see EYE_FIT); returns the current fit */
+      eyes: (fit) => {
+        if (fit) {
+          Object.assign(EYE_FIT, fit);
+          bot.model?.traverse((node) => node.userData.refit?.());
+        }
+        return { ...EYE_FIT };
+      },
       /* climate({ hour, weather, instant }) — weather rolls in unless instant; climate() reads the live env */
       climate: (opts) => (opts == null ? climate.sample() : climate.set(opts)),
       /* Freeze clouds and water at time t (null to release) so screenshots differ only by wind */
