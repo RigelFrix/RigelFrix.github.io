@@ -6,6 +6,7 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { FBXLoader } from "./.impeccable/fbx/addons/loaders/FBXLoader.js";
 import nikoBody from "./assets/niko/low-poly-humanoid-v6-clean.glb";
+import nikoHair from "./assets/niko/hair-short.glb";
 import nikoIdleFbx from "./assets/Happy Idle.fbx";
 import nikoRunFbx from "./assets/Running (1).fbx";
 import nikoEyesUrl from "./assets/niko-eyes.png";
@@ -1398,6 +1399,47 @@ async function start() {
     mesh.add(hull);
     return hull;
   };
+  /* The hair is an open shell of spikes. The body hull pushes along mesh normals, which point into the
+     gaps and the cavity, so the ink reads as thick strokes inside the hair. This one keeps faces that
+     point away from the skull and grows them straight out from it. */
+  const addHairInk = (mesh) => {
+    const src = mesh.geometry;
+    const pos = src.attributes.position;
+    const index = src.index.array;
+    const keep = [];
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const c = new THREE.Vector3();
+    const n = new THREE.Vector3();
+    const mid = new THREE.Vector3();
+    for (let t = 0; t < index.length; t += 3) {
+      a.fromBufferAttribute(pos, index[t]);
+      b.fromBufferAttribute(pos, index[t + 1]);
+      c.fromBufferAttribute(pos, index[t + 2]);
+      n.crossVectors(b.clone().sub(a), c.clone().sub(a));
+      mid.copy(a).add(b).add(c);
+      if (n.dot(mid) <= 0) continue;
+      keep.push(index[t], index[t + 1], index[t + 2]);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", pos);
+    const inkNormal = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i += 1) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      const z = pos.getZ(i);
+      const len = Math.hypot(x, y, z) || 1;
+      inkNormal[i * 3] = x / len;
+      inkNormal[i * 3 + 1] = y / len;
+      inkNormal[i * 3 + 2] = z / len;
+    }
+    geometry.setAttribute("inkNormal", new THREE.BufferAttribute(inkNormal, 3));
+    geometry.setIndex(keep);
+    const hull = new THREE.Mesh(geometry, inkMaterial(0.0016));
+    hull.frustumCulled = false;
+    mesh.add(hull);
+    return hull;
+  };
 
   const buildRobot = () => {
     const inked = [];
@@ -1985,6 +2027,23 @@ async function start() {
     height: 37, // each eye, top of the lashes to the lower lid
     raise: 7, // nose tip up to the lower lid; bigger moves the eyes up
   };
+  /* Hair placement on the bald head. Scale 1 is the authored cap seated on the skull.
+     Position is in head units: x toward the nose, y up, z toward his right. About 0.01 is a small nudge.
+     Try it live with PortfolioWorld.debug.hair({ scale: 0.9, y: -0.02 }), then copy the numbers here. */
+  const HAIR_FIT = {
+    scale: 1,
+    x: 0.01,
+    y: -0.02,
+    z: 0.01,
+  };
+  let hairAdjust = null;
+  const applyHairFit = () => {
+    if (hairAdjust) {
+      hairAdjust.scale.setScalar(HAIR_FIT.scale);
+      hairAdjust.position.set(HAIR_FIT.x, HAIR_FIT.y, HAIR_FIT.z);
+    }
+    return { ...HAIR_FIT };
+  };
   const faceAnchor = (pos) => {
     let crown = -Infinity;
     for (let i = 0; i < pos.count; i += 1) crown = Math.max(crown, pos.getY(i));
@@ -2110,7 +2169,7 @@ async function start() {
       return mesh;
     });
   };
-  /* Body slot is the clean T-pose. Hair, coat, clothes, and shoes are added here as their own skinned files on this skeleton. */
+  /* Body slot is the clean T-pose. Coat, clothes, and shoes join here as their own skinned files. Hair is a static cap seated below. */
   const NIKO_PARTS = { body: nikoBody };
   const PREVIOUS_HEIGHT = 2.17;
   /* Mixamo clips stay on the FBX. Any body with the same bone names can play them: the prefix is stripped,
@@ -2217,6 +2276,75 @@ async function start() {
       }
     };
     for (const [slot, file] of Object.entries(loaded)) claim(slot, file);
+    /* hair-short.glb is a Sketchfab cap: a tiny axis-swap scale and a large offset live on parent nodes,
+       and its front points +Z. Bake that world matrix, yaw it onto the nose, then shrink it to this skull.
+       Scale and position stay on the mesh (HAIR_FIT) so they can be nudged live. */
+    const seatHair = (file, skin, headBone) => {
+      let mesh = null;
+      file.scene.traverse((node) => {
+        if (node.isMesh && !mesh) mesh = node;
+      });
+      if (!mesh || !headBone) return null;
+      const geometry = mesh.geometry;
+      file.scene.updateMatrixWorld(true);
+      geometry.applyMatrix4(mesh.matrixWorld);
+      mesh.position.set(0, 0, 0);
+      mesh.quaternion.identity();
+      mesh.scale.set(1, 1, 1);
+      geometry.applyMatrix4(new THREE.Matrix4().makeRotationY(Math.PI / 2));
+      const pos = geometry.attributes.position;
+      const at = new THREE.Vector3();
+      const centroid = new THREE.Vector3();
+      for (let i = 0; i < pos.count; i += 1) centroid.add(at.set(pos.getX(i), pos.getY(i), pos.getZ(i)));
+      centroid.multiplyScalar(1 / pos.count);
+      const skinPos = skin.geometry.attributes.position;
+      let maxY = -Infinity;
+      for (let i = 0; i < skinPos.count; i += 1) maxY = Math.max(maxY, skinPos.getY(i));
+      const skull = new THREE.Vector3();
+      let skullCount = 0;
+      let skullHalf = 0;
+      for (let i = 0; i < skinPos.count; i += 1) {
+        const y = skinPos.getY(i);
+        if (y < maxY - 0.12) continue;
+        at.set(skinPos.getX(i), y, skinPos.getZ(i));
+        skull.add(at);
+        skullCount += 1;
+      }
+      skull.multiplyScalar(1 / Math.max(1, skullCount));
+      for (let i = 0; i < skinPos.count; i += 1) {
+        if (skinPos.getY(i) < maxY - 0.12) continue;
+        skullHalf = Math.max(skullHalf, Math.hypot(skinPos.getX(i) - skull.x, skinPos.getZ(i) - skull.z));
+      }
+      let hairHalf = 0;
+      for (let i = 0; i < pos.count; i += 1) {
+        hairHalf = Math.max(hairHalf, Math.hypot(pos.getX(i) - centroid.x, pos.getZ(i) - centroid.z));
+      }
+      const fit = (skullHalf * 1.28) / Math.max(hairHalf, 1e-4);
+      geometry.translate(-centroid.x, -centroid.y, -centroid.z);
+      geometry.scale(fit, fit, fit);
+      geometry.translate(centroid.x, centroid.y, centroid.z);
+      geometry.translate(skull.x - centroid.x, skull.y - centroid.y, skull.z - centroid.z);
+      /* Leave the skull at the mesh origin so HAIR_FIT.scale grows around the head, and x/y/z nudge it in head axes. */
+      geometry.translate(-skull.x, -skull.y, -skull.z);
+      model.position.set(0, 0, 0);
+      model.rotation.set(0, 0, 0);
+      model.scale.set(1, 1, 1);
+      model.updateMatrixWorld(true);
+      const pivot = new THREE.Object3D();
+      const seated = new THREE.Matrix4().makeTranslation(skull.x, skull.y, skull.z).premultiply(headBone.matrixWorld.clone().invert());
+      pivot.matrix.copy(seated);
+      pivot.matrix.decompose(pivot.position, pivot.quaternion, pivot.scale);
+      mesh.position.set(0, 0, 0);
+      mesh.rotation.set(0, 0, 0);
+      mesh.scale.set(1, 1, 1);
+      mesh.userData.slot = "hair";
+      headBone.add(pivot);
+      pivot.add(mesh);
+      hairAdjust = mesh;
+      applyHairFit();
+      return mesh;
+    };
+    const hairMesh = seatHair(await parse(nikoHair), parts.body[0], bones.Head);
     model.scale.setScalar(1);
     /* The mesh nose is +X. A +90° yaw turns that nose toward -Z, so -90° faces him along +Z, which is forward for the walk. */
     model.rotation.y = -Math.PI / 2;
@@ -2230,6 +2358,7 @@ async function start() {
     const planted = new THREE.Box3().setFromObject(model);
     if (Number.isFinite(planted.min.y)) model.position.y -= planted.min.y;
     const meshes = Object.values(parts).flat();
+    if (hairMesh) meshes.push(hairMesh);
 
     /* Face texture carries only blush, nose and mouth; the eyes are their own decal meshes (eyeL/eyeR) */
     const faceOpen = bot.paintFace(false, {
@@ -2303,10 +2432,18 @@ async function start() {
       } else if (name === "glow") mesh.material = glow("#ffe7a0", 2.4);
       else if (name === "lining") mesh.material = lining;
       else mesh.material = nikoToon(name === "skin" ? "#d7a07a" : `#${mesh.material.color.getHexString()}`);
+      /* The cap's inner surface sits on the scalp. A small depth pull keeps the coplanar shell from flickering. */
+      if (mesh.userData.slot === "hair") {
+        mesh.material.side = THREE.DoubleSide;
+        mesh.material.polygonOffset = true;
+        mesh.material.polygonOffsetFactor = -2;
+        mesh.material.polygonOffsetUnits = -2;
+      }
       mesh.castShadow = name !== "glow" && name !== "face" && name !== "lining";
       mesh.receiveShadow = name !== "glow";
       mesh.frustumCulled = false;
-      if (name !== "face" && name !== "glow" && name !== "lining") addInk(mesh, ink, aroundEyes);
+      if (mesh.userData.slot === "hair") addHairInk(mesh);
+      else if (name !== "face" && name !== "glow" && name !== "lining") addInk(mesh, ink, aroundEyes);
     });
     const sockets = {};
     model.traverse((node) => {
@@ -2820,12 +2957,18 @@ async function start() {
     stickEl.classList.remove("is-on");
   };
 
-  /* Zoom: the wheel and pinches move a goal that the camera eases toward; the intro tweens the camera itself */
+  /* Zoom: the wheel and pinches move a goal that the camera eases toward; the intro tweens the camera itself.
+     Play stays inside 0.7–1.7. A debug zoom can pull further back (down to 0.25) and the wheel keeps that wider range until it is released. */
   const ZOOM_MIN = 0.7;
   const ZOOM_MAX = 1.7;
+  const DEBUG_ZOOM_MIN = 0.25;
+  const DEBUG_ZOOM_MAX = 8;
   let zoomGoal = null;
+  let zoomHold = false;
   const zoomBy = (factor, now = false) => {
-    zoomGoal = THREE.MathUtils.clamp((zoomGoal ?? camera.zoom) * factor, ZOOM_MIN, ZOOM_MAX);
+    const min = zoomHold ? DEBUG_ZOOM_MIN : ZOOM_MIN;
+    const max = zoomHold ? DEBUG_ZOOM_MAX : ZOOM_MAX;
+    zoomGoal = THREE.MathUtils.clamp((zoomGoal ?? camera.zoom) * factor, min, max);
     if (now) {
       camera.zoom = zoomGoal;
       camera.updateProjectionMatrix();
@@ -4156,11 +4299,21 @@ async function start() {
         started = false;
       },
       zoomNow: () => +camera.zoom.toFixed(3),
+      /* Debug camera only. zoom(0.4) pulls back past the play limit (0.7) so more of Niko is in frame.
+         The wheel then stays in 0.25–8 until zoom(null) hands it back to play. zoom() reads the current value. */
       zoom: (z) => {
         gsap.killTweensOf(camera);
+        if (z === undefined) return +camera.zoom.toFixed(3);
+        if (z === null) {
+          zoomHold = false;
+          zoomGoal = THREE.MathUtils.clamp(camera.zoom, ZOOM_MIN, ZOOM_MAX);
+          return +zoomGoal.toFixed(3);
+        }
+        zoomHold = z < ZOOM_MIN || z > ZOOM_MAX;
         zoomGoal = null;
         camera.zoom = z;
         camera.updateProjectionMatrix();
+        return +camera.zoom.toFixed(3);
       },
       finishIntro: () => void finishIntro(),
       /* Level camera on Niko's face, `angle` radians around from the front, for comparing with the reference; null releases it */
@@ -4172,6 +4325,11 @@ async function start() {
           bot.model?.traverse((node) => node.userData.refit?.());
         }
         return { ...EYE_FIT };
+      },
+      /* Move the hair live: hair({ scale, x, y, z }) — see HAIR_FIT. x is toward the nose, y is up, z is toward his right. */
+      hair: (fit) => {
+        if (fit) Object.assign(HAIR_FIT, fit);
+        return applyHairFit();
       },
       /* climate({ hour, weather, instant }) — weather rolls in unless instant; climate() reads the live env */
       climate: (opts) => (opts == null ? climate.sample() : climate.set(opts)),
