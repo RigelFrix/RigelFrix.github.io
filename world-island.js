@@ -378,7 +378,10 @@ const makeBake = ({ dry = false, split = false } = {}) => {
       }
       list.push(g);
     },
-    build(material) {
+    /* `cell` (world units) merges by area instead of into one mesh: each square of the island becomes its own mesh,
+       so the camera and the shadow camera skip the squares they can't see, and nearer squares draw first and hide
+       what is behind them. `reach` grows each square's bounds by how far wind sway can move its vertices. */
+    build(material, { cell = 0, reach = 0 } = {}) {
       if (split) {
         const group = new THREE.Group();
         group.name = "props";
@@ -390,10 +393,34 @@ const makeBake = ({ dry = false, split = false } = {}) => {
       [["aSway", 3], ["aLeaf", 2]].forEach(([name, n]) => {
         if (list.some((g) => g.attributes[name])) list.forEach((g) => g.attributes[name] || g.setAttribute(name, new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * n), n)));
       });
-      const merged = mergeGeometries(list);
+      const merge = (pieces) => {
+        const merged = mergeGeometries(pieces);
+        merged.computeBoundingSphere();
+        merged.boundingSphere.radius += reach;
+        return new THREE.Mesh(merged, material);
+      };
+      let result;
+      if (!cell) result = merge(list);
+      else {
+        const cells = new Map();
+        const centre = new THREE.Vector3();
+        for (const g of list) {
+          if (!g.boundingBox) g.computeBoundingBox();
+          g.boundingBox.getCenter(centre);
+          const key = `${Math.floor(centre.x / cell)},${Math.floor(centre.z / cell)}`;
+          if (!cells.has(key)) cells.set(key, []);
+          cells.get(key).push(g);
+        }
+        result = new THREE.Group();
+        for (const [key, pieces] of cells) {
+          const mesh = merge(pieces);
+          mesh.name = `cell ${key}`;
+          result.add(mesh);
+        }
+      }
       list.forEach((g) => g.dispose());
       list.length = 0;
-      return new THREE.Mesh(merged, material);
+      return result;
     },
   };
 };
@@ -1055,6 +1082,8 @@ export const makeRamp = (levels = [100, 176, 255], edges = [0.5, 0.63], blend = 
    squared falloff. buildIsland fills the list and flickers the radii. */
 const LAMPS = 24;
 export const lampLights = { value: Array.from({ length: LAMPS }, () => new THREE.Vector4(0, -999, 0, 1)) };
+/* How many of lampLights are in use this frame (the ones that light the view are packed first) */
+export const lampCount = { value: LAMPS };
 /* Lamp pools read stronger as the day light fades (set from climate) */
 export const lampGain = { value: 1 };
 /* Unlit water (sea, stream, waterfall, splashes) is multiplied by this so it follows the day and night light */
@@ -1062,9 +1091,11 @@ export const waterLight = { value: new THREE.Color(1, 1, 1) };
 const LAMP_GLSL = [
   `uniform vec4 lampLights[${LAMPS}];`,
   "uniform float lampGain;",
+  "uniform int lampCount;",
   "float lampAt(vec3 p){",
   "  float k = 0.0;",
   `  for (int i = 0; i < ${LAMPS}; i++) {`,
+  "    if (i >= lampCount) break;",
   "    vec3 d = p - lampLights[i].xyz;",
   "    float f = max(0.0, 1.0 - dot(d, d) / (lampLights[i].w * lampLights[i].w));",
   "    k += f * f;",
@@ -1082,6 +1113,7 @@ export const lamped = (material) => {
   material.onBeforeCompile = (shader, renderer) => {
     previous?.(shader, renderer);
     shader.uniforms.lampLights = lampLights;
+    shader.uniforms.lampCount = lampCount;
     shader.uniforms.lampGain = lampGain;
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vLampPos;")
@@ -1105,25 +1137,74 @@ export const cloudShade = { value: 0.7 };
 /* Sun direction xz / y: the cloud layer sits at CLOUD_HEIGHT and its shadow falls along the sun, so cloud patches on
    the ground and the beams through the air (world-rays.js) line up, and both slide as the sun crosses the sky */
 export const cloudSun = { value: new THREE.Vector2() };
-export const CLOUD_GLSL = [
-  "uniform float cloudTime; uniform float cloudCover; uniform float cloudShade; uniform vec2 cloudSun;",
+/* Patches a few Nikos across, not one big blob: three octaves for frayed edges, and a slow warp that evolves on its
+   own so the shapes break up and re-form as they drift instead of sliding past as rigid silhouettes. */
+export const CLOUD_NOISE_GLSL = [
   "float cloudHash(vec2 p){ vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }",
   "float cloudNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
   "  return mix(mix(cloudHash(i), cloudHash(i + vec2(1.0, 0.0)), f.x), mix(cloudHash(i + vec2(0.0, 1.0)), cloudHash(i + vec2(1.0, 1.0)), f.x), f.y); }",
-  /* 0 in sun, 1 under a cloud. Patches a few Nikos across, not one big blob: three octaves for frayed edges, and a
-     slow warp that evolves on its own so the shapes break up and re-form as they drift instead of sliding past
-     as rigid silhouettes. Thick cores sit a little darker than the thin fringe. */
-  "float cloudAt(vec2 xz){",
+  "float cloudNoiseAt(vec2 xz){",
   "  vec2 p = xz * 0.14 + vec2(cloudTime * 0.045, cloudTime * 0.028);",
   "  vec2 w = vec2(cloudNoise(p * 0.45 + vec2(3.1, cloudTime * 0.011)), cloudNoise(p * 0.45 + vec2(cloudTime * 0.009, 8.7))) - 0.5;",
   "  p += w * 1.6;",
-  "  float c = cloudNoise(p) * 0.5 + cloudNoise(p * 2.03 + 5.2) * 0.3 + cloudNoise(p * 4.1 + 9.4) * 0.2;",
+  "  return cloudNoise(p) * 0.5 + cloudNoise(p * 2.03 + 5.2) * 0.3 + cloudNoise(p * 4.1 + 9.4) * 0.2;",
+  "}",
+].join("\n");
+/* The noise is drawn once per frame into cloudMapTex (makeCloudMap) over the area around the view; lit pixels read it
+   with one tap instead of five noise layers each. Two 8-bit channels carry it (r + g / 255), which stays exact under
+   linear filtering. cloudMapArea = (x0, z0, 1 / width, 1 / depth) of that area on the cloud plane. */
+export const cloudMapTex = { value: null };
+export const cloudMapArea = { value: new THREE.Vector4(-100, -100, 1 / 200, 1 / 200) };
+export const CLOUD_GLSL = [
+  "uniform float cloudTime; uniform float cloudCover; uniform float cloudShade; uniform vec2 cloudSun;",
+  "uniform sampler2D cloudMap; uniform vec4 cloudMapArea;",
+  "float cloudNoiseMap(vec2 xz){ vec4 t = texture2D(cloudMap, (xz - cloudMapArea.xy) * cloudMapArea.zw); return t.r + t.g / 255.0; }",
+  /* 0 in sun, 1 under a cloud. Thick cores sit a little darker than the thin fringe. */
+  "float cloudAt(vec2 xz){",
+  "  float c = cloudNoiseMap(xz);",
   "  float edge = smoothstep(cloudCover - 0.02, cloudCover + 0.08, c);",
   "  return edge * (0.72 + 0.28 * smoothstep(cloudCover + 0.08, cloudCover + 0.24, c));",
   "}",
   "float cloudAt3(vec3 p){ return cloudAt(p.xz + cloudSun * (18.0 - p.y)); }",
   "const vec3 CLOUD_TINT = vec3(0.74, 0.8, 0.95);",
 ].join("\n");
+/* Draws the cloud noise into cloudMapTex. update(x, z, half) centres the map on (x, z) of the cloud plane (the view
+   centre shifted along the sun) and makes it 2 * half units across. */
+export const makeCloudMap = (renderer, size = 512) => {
+  const target = new THREE.WebGLRenderTarget(size, size, { depthBuffer: false, stencilBuffer: false });
+  Object.assign(target.texture, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false, wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping });
+  cloudMapTex.value = target.texture;
+  const material = new THREE.ShaderMaterial({
+    uniforms: { cloudTime, cloudMapArea },
+    vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+    fragmentShader: [
+      "uniform float cloudTime; uniform vec4 cloudMapArea; varying vec2 vUv;",
+      CLOUD_NOISE_GLSL,
+      "void main(){",
+      "  float c = clamp(cloudNoiseAt(cloudMapArea.xy + vUv / cloudMapArea.zw), 0.0, 1.0) * 255.0;",
+      "  gl_FragColor = vec4(floor(c) / 255.0, fract(c), 0.0, 1.0);",
+      "}",
+    ].join("\n"),
+    depthTest: false,
+    depthWrite: false,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+  quad.frustumCulled = false;
+  const scene = new THREE.Scene();
+  scene.add(quad);
+  const camera = new THREE.Camera();
+  const map = {
+    update(x, z, half) {
+      cloudMapArea.value.set(x - half, z - half, 1 / (2 * half), 1 / (2 * half));
+      const previous = renderer.getRenderTarget();
+      renderer.setRenderTarget(target);
+      renderer.render(scene, camera);
+      renderer.setRenderTarget(previous);
+    },
+  };
+  map.update(0, 0, 100);
+  return map;
+};
 /* A cloud blocks the sun, not the sky: take most of the direct light away and cool what is left. Multiplying the
    final colour did nothing on sunlit sand, which is already brighter than white before the screen clips it. */
 export const CLOUD_SHADE = (pos, amount = "1.0") =>
@@ -1132,7 +1213,7 @@ export const CLOUD_SHADE = (pos, amount = "1.0") =>
     "  outgoingLight -= reflectedLight.directDiffuse * cloudK * 0.78;",
     "  outgoingLight *= mix(vec3(1.0), CLOUD_TINT, cloudK * 0.35); }",
   ].join("\n");
-export const cloudUniforms = (shader) => Object.assign(shader.uniforms, { cloudTime, cloudCover, cloudShade, cloudSun });
+export const cloudUniforms = (shader) => Object.assign(shader.uniforms, { cloudTime, cloudCover, cloudShade, cloudSun, cloudMap: cloudMapTex, cloudMapArea });
 export const atmos = (material) => {
   const previous = material.onBeforeCompile;
   const key = material.customProgramCacheKey?.() || "";
@@ -1141,6 +1222,7 @@ export const atmos = (material) => {
     shader.uniforms.atmosTime = atmosTime;
     cloudUniforms(shader);
     shader.uniforms.lampLights = lampLights;
+    shader.uniforms.lampCount = lampCount;
     shader.uniforms.lampGain = lampGain;
     shader.uniforms.weatherWet = weatherWet;
     shader.uniforms.weatherFog = weatherFog;
@@ -1184,6 +1266,10 @@ export const atmos = (material) => {
   material.customProgramCacheKey = () => `${key}-atmos3`;
   return material;
 };
+
+/* Size (world units) of the squares the props, leaves and grass are split into for frustum culling. The default
+   view spans a few squares; smaller squares cull tighter but cost a draw call each. */
+const CULL_CELL = 12;
 
 export function buildIsland({ scene, withRim, coarse = false, clear = [], kit = false }) {
   const root = new THREE.Group();
@@ -2196,10 +2282,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [], kit = 
       [0.6, 0.66, 0.7, 0.06],
     ]);
 
-    const geometry = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
-    const seeds = new Float32Array(cards.length * 2);
-    cards.forEach((c, k) => seeds.set([rand(c.x * 1.3, c.z * 4.1), c.kind], k * 2));
-    geometry.setAttribute("aGrass", new THREE.InstancedBufferAttribute(seeds, 2));
+    const card = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
 
     const material = new THREE.MeshToonMaterial({ gradientMap: ramp, side: THREE.DoubleSide });
     material.onBeforeCompile = (shader) => {
@@ -2310,14 +2393,36 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [], kit = 
     material.customProgramCacheKey = () => "grass-cards-phase";
     atmos(material);
 
-    const tufts = new THREE.InstancedMesh(geometry, material, cards.length);
-    cards.forEach((c, k) => {
-      const s = (c.kind ? 0.58 : 0.5) * (0.88 + rand(c.x * 9.7, c.z * 0.3) * 0.24);
-      tufts.setMatrixAt(k, at(c.x, c.y - 0.03, c.z, { s }));
-      tufts.setColorAt(k, c.colour);
-    });
-    tufts.receiveShadow = true;
-    tufts.frustumCulled = false;
+    /* One instanced mesh per square of the island. Cards face the camera and bend in the shader, so the bounds are
+       the card roots plus the tallest card's reach rather than the instanced plane. */
+    const tufts = new THREE.Group();
+    const squares = new Map();
+    for (const c of cards) {
+      const key = `${Math.floor(c.x / CULL_CELL)},${Math.floor(c.z / CULL_CELL)}`;
+      if (!squares.has(key)) squares.set(key, []);
+      squares.get(key).push(c);
+    }
+    for (const [key, group] of squares) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setIndex(card.index);
+      ["position", "normal", "uv"].forEach((name) => geometry.setAttribute(name, card.attributes[name]));
+      const seeds = new Float32Array(group.length * 2);
+      group.forEach((c, k) => seeds.set([rand(c.x * 1.3, c.z * 4.1), c.kind], k * 2));
+      geometry.setAttribute("aGrass", new THREE.InstancedBufferAttribute(seeds, 2));
+      const mesh = new THREE.InstancedMesh(geometry, material, group.length);
+      const box = new THREE.Box3();
+      group.forEach((c, k) => {
+        const s = (c.kind ? 0.58 : 0.5) * (0.88 + rand(c.x * 9.7, c.z * 0.3) * 0.24);
+        mesh.setMatrixAt(k, at(c.x, c.y - 0.03, c.z, { s }));
+        mesh.setColorAt(k, c.colour);
+        box.expandByPoint(new THREE.Vector3(c.x, c.y, c.z));
+      });
+      mesh.boundingSphere = box.getBoundingSphere(new THREE.Sphere());
+      mesh.boundingSphere.radius += 1.2;
+      mesh.receiveShadow = true;
+      mesh.name = `grass ${key}`;
+      tufts.add(mesh);
+    }
     tufts.name = "grass";
     if (!kit) root.add(tufts);
   }
@@ -2488,9 +2593,9 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [], kit = 
   });
 
   /* Bake it all */
-  const props = bake.build(windSway(paintedProps));
-  props.castShadow = true;
-  props.receiveShadow = true;
+  const meshesOf = (object, fn) => object.traverse((o) => o.isMesh && fn(o));
+  const props = bake.build(windSway(paintedProps), { cell: kit ? 0 : CULL_CELL, reach: 1.2 });
+  meshesOf(props, (mesh) => Object.assign(mesh, { castShadow: true, receiveShadow: true }));
   props.name = "props";
   root.add(props);
   const glows = glowBake.build(glowing);
@@ -2499,11 +2604,9 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [], kit = 
     root.add(glows);
   }
   {
-    const leaves = leafBake.build(leafMaterial);
+    const leaves = leafBake.build(leafMaterial, { cell: CULL_CELL, reach: 1.6 });
     if (leaves && !kit) {
-      leaves.castShadow = true;
-      leaves.receiveShadow = true;
-      leaves.customDepthMaterial = leafDepth;
+      meshesOf(leaves, (mesh) => Object.assign(mesh, { castShadow: true, receiveShadow: true, customDepthMaterial: leafDepth }));
       leaves.name = "leaves";
       root.add(leaves);
     }
@@ -2679,6 +2782,10 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [], kit = 
     ...fires.map((f) => [f.position.x, f.position.y + 0.9, f.position.z, 3.6]),
   ].slice(0, LAMPS);
   lampSpots.forEach(([x, y, z, r], k) => lampLights.value[k].set(x, y, z, r));
+  lampCount.value = lampSpots.length;
+  const lampView = new THREE.Frustum();
+  const lampMatrix = new THREE.Matrix4();
+  const lampSphere = new THREE.Sphere();
 
   /* Halos: phones draw straight to the screen without bloom, so soft additive sprites stand in for the glow around
      lanterns, the campfire and the shrine inlay. Hidden while bloom is on. */
@@ -2732,14 +2839,23 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [], kit = 
   /* Everything that moves on its own. rainHits = flat [x,z,x,z,…] from world-rain. Wind sway is not driven here:
      world.js copies the climate's wind phase into windTime. `pinned` freezes clouds and water for review shots. */
   const motion = { pinned: null };
-  const update = (dt, clock, robot, renderer, rainHits) => {
+  const update = (dt, clock, robot, renderer, rainHits, camera) => {
     const time = motion.pinned ?? clock;
     if (halos.visible) fireHalos.forEach((s, k) => s.scale.setScalar(3 * (1 + Math.sin(time * 11 + k) * 0.06 + Math.sin(time * 6.3) * 0.05)));
     trail.step(renderer, dt, robot, rainHits);
-    lampSpots.forEach(([, , , r], k) => {
+    /* Only lamps whose light reaches the view go to the shaders, packed first, so the per-pixel loop stops after them */
+    if (camera) lampView.setFromProjectionMatrix(lampMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    let shown = 0;
+    lampSpots.forEach(([x, y, z, r], k) => {
       const fire = k >= lanterns.length ? Math.sin(time * 17 + k) * 0.035 + Math.sin(time * 9.3) * 0.03 : 0;
-      lampLights.value[k].w = r * (1 + Math.sin(time * 7.1 + k * 1.7) * 0.02 + Math.sin(time * 12.3 + k) * 0.012 + fire);
+      const reach = r * (1 + Math.sin(time * 7.1 + k * 1.7) * 0.02 + Math.sin(time * 12.3 + k) * 0.012 + fire);
+      lampSphere.center.set(x, y, z);
+      lampSphere.radius = reach;
+      if (camera && !lampView.intersectsSphere(lampSphere)) return;
+      lampLights.value[shown].set(x, y, z, reach);
+      shown += 1;
     });
+    lampCount.value = shown;
     flowUniforms.time.value = time;
     splashMat.color.copy(waterLight.value);
     beamMat.uniforms.time.value = time;

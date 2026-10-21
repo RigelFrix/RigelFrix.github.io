@@ -12,7 +12,7 @@
    - Blended like a screen layer, so it lifts shade but never pushes sunlit ground past white. */
 
 import * as THREE from "three";
-import { CLOUD_GLSL, cloudUniforms } from "./world-island.js";
+import { CLOUD_GLSL, CLOUD_NOISE_GLSL, cloudUniforms } from "./world-island.js";
 
 export function makeRays({ scene, groundAt, sun, shadowSize = 4096, lite = false, span = 52 } = {}) {
   const LAYERS = lite ? 9 : 16;
@@ -105,6 +105,7 @@ export function makeRays({ scene, groundAt, sun, shadowSize = 4096, lite = false
       "uniform sampler2D heightMap; uniform float span; uniform vec3 viewDir; uniform float spacing;",
       "uniform float strength; uniform float rays; uniform float time; uniform vec3 lightRight; uniform vec3 lightUp; uniform vec3 tint;",
       CLOUD_GLSL,
+      CLOUD_NOISE_GLSL,
       "varying vec3 vWorld; varying float vLayer;",
       /* Shafts: gaps in a high canopy, a pattern laid out across the sun direction. Every point on one sun line reads
          the same value, so each gap becomes a beam running down along the sun to the ground. Drifts slowly. */

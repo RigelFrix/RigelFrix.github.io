@@ -9,7 +9,7 @@ import nikoBody from "./assets/niko/low-poly-humanoid-v6-clean.glb";
 import nikoIdleFbx from "./assets/Happy Idle.fbx";
 import nikoRunFbx from "./assets/Running (1).fbx";
 import nikoEyesUrl from "./assets/niko-eyes.png";
-import { atmos, buildIsland, CLOUD_GLSL, CLOUD_SHADE, cloudCover, cloudShade, cloudSun, cloudTime, cloudUniforms, ISLE, lampGain, lamped, makeRamp, waterLight, occlude, seeThrough, rainAmt, windMul, windTime, weatherFog, weatherFogColor, weatherWet } from "./world-island.js";
+import { atmos, buildIsland, CLOUD_GLSL, CLOUD_SHADE, cloudCover, cloudShade, cloudSun, cloudTime, cloudUniforms, ISLE, lampGain, lamped, makeCloudMap, makeRamp, waterLight, occlude, seeThrough, rainAmt, windMul, windTime, weatherFog, weatherFogColor, weatherWet } from "./world-island.js";
 import { lay, toXZ } from "./world-map.js";
 import { windLines } from "./world-wind.js";
 import { createClimate } from "./world-climate.js";
@@ -52,11 +52,10 @@ async function start() {
 
   const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const coarse = window.matchMedia("(pointer: coarse)").matches;
-  /* Lite (phones, or ?lite=1; ?lite=0 opts out): draw straight to the screen with no offscreen bloom chain, which costs
-     several times the scene itself on phone GPUs, and spend the savings on resolution; halo sprites stand in for bloom */
   const liteParam = new URLSearchParams(location.search).get("lite");
-  const lite = liteParam === "1" || (coarse && liteParam !== "0");
   const MAX_RATIO = 2;
+  /* Lowest resolution the frame-time guard may fall back to (only while frames stay under ~30 fps at 1x) */
+  const MIN_RATIO = 0.6;
   const gsap = window.gsap;
   const projects = window.PROJECT_ALBUMS || [];
   const defs = (window.WORLD_OBJECTS || []).map((def) => {
@@ -187,29 +186,70 @@ async function start() {
   /* stencil: Niko's eyes are masked to his face, also when frames go straight to the screen */
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, stencil: true, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_RATIO));
+  /* Software rendering (Chrome with hardware acceleration off, or a blocklisted GPU) draws every pixel on the CPU,
+     at a fraction of a GPU's speed; such a browser starts in lite at a lower resolution so it stays usable */
+  const gpuName = (() => {
+    const gl = renderer.getContext();
+    const ext = gl.getExtension("WEBGL_debug_renderer_info");
+    return String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+  })();
+  const software = /swiftshader|llvmpipe|softpipe|software|basic render/i.test(gpuName);
+  if (software) {
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 0.75));
+    console.warn(`Portfolio world: software rendering (${gpuName}). Turning on hardware acceleration in the browser makes it much faster.`);
+  }
+  /* Lite (phones, software rendering, or ?lite=1; ?lite=0 opts out): draw straight to the screen with no offscreen
+     bloom chain, which costs several times the scene itself on phone GPUs, and spend the savings on resolution; halo
+     sprites stand in for bloom */
+  const lite = liteParam === "1" || ((coarse || software) && liteParam !== "0");
   renderer.setClearColor(0x000000, 0);
   renderer.info.autoReset = false;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
-  /* three's PCF takes five noise-spun taps, which leaves grainy or stair-stepped shadow edges. Instead: a 3×3 tent of
+  /* three's PCF takes five noise-spun taps, which leaves grainy or stair-stepped shadow edges. Instead: a 5×5 tent of
      hardware-filtered taps (each one already blends 2×2 texels), so the edge is a smooth ramp about four texels wide
-     with no pattern in it. shadowRadius scales the tap spacing. */
+     with no pattern in it. shadowRadius scales the tap spacing.
+     Most pixels are wholly in sun or wholly in shade, so the 9 even taps go first: when they all agree the answer is
+     already 1 or 0 (a sliver small enough to slip between them stays above the smoothstep's 0.8 anyway), and only
+     pixels on an edge pay for the other 16. */
   THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fragment.replace(
     /float radius = shadowRadius \* texelSize\.x;[\s\S]*?\) \* 0\.2;/,
     [
       "vec2 tap = texelSize * max( shadowRadius, 1.0 );",
       "float shadowSum = 0.0;",
       "float weightSum = 0.0;",
-      "for ( int i = -2; i <= 2; i ++ ) {",
-      "  for ( int j = -2; j <= 2; j ++ ) {",
+      "float probes = 0.0;",
+      "for ( int i = -2; i <= 2; i += 2 ) {",
+      "  for ( int j = -2; j <= 2; j += 2 ) {",
       "    float w = 1.0 - 0.18 * float( abs( i ) + abs( j ) );",
-      "    shadowSum += w * texture( shadowMap, vec3( shadowCoord.xy + vec2( float( i ), float( j ) ) * tap, shadowCoord.z ) );",
+      "    float s = texture( shadowMap, vec3( shadowCoord.xy + vec2( float( i ), float( j ) ) * tap, shadowCoord.z ) );",
+      "    probes += s;",
+      "    shadowSum += w * s;",
       "    weightSum += w;",
       "  }",
       "}",
-      "shadow = smoothstep( 0.2, 0.8, shadowSum / weightSum );",
+      "if ( probes > 8.999 ) shadow = 1.0;",
+      "else if ( probes < 0.001 ) shadow = 0.0;",
+      "else {",
+      "  for ( int i = -2; i <= 2; i ++ ) {",
+      "    for ( int j = -2; j <= 2; j ++ ) {",
+      "      if ( abs( i ) % 2 == 0 && abs( j ) % 2 == 0 ) continue;",
+      "      float w = 1.0 - 0.18 * float( abs( i ) + abs( j ) );",
+      "      shadowSum += w * texture( shadowMap, vec3( shadowCoord.xy + vec2( float( i ), float( j ) ) * tap, shadowCoord.z ) );",
+      "      weightSum += w;",
+      "    }",
+      "  }",
+      "  shadow = smoothstep( 0.2, 0.8, shadowSum / weightSum );",
+      "}",
     ].join("\n")
   );
+
+  /* Every material writes display (sRGB) colour, also into the post target, so blending and the MSAA resolve work on
+     the same values whether a frame goes through post or straight to the screen. Resolving in linear light made thin
+     dark detail (grass blades, shade) fade, and the island looked paler whenever bloom was on. The post composite
+     therefore does no colour conversion of its own. */
+  /* Light that is taken away (cloud shade, Niko's light floor) can leave a channel below zero; pow() of that is NaN */
+  THREE.ShaderChunk.colorspace_fragment = "gl_FragColor = sRGBTransferOETF( vec4( max( gl_FragColor.rgb, 0.0 ), gl_FragColor.a ) );";
 
   const scene = new THREE.Scene();
 
@@ -328,7 +368,6 @@ async function start() {
         "  colour.rgb += bloom;",
         "  colour.a = max(colour.a, clamp(max(bloom.r, max(bloom.g, bloom.b)), 0.0, 1.0));",
         "  gl_FragColor = colour;",
-        "  #include <colorspace_fragment>",
         "}",
       ].join("\n"),
     });
@@ -397,7 +436,10 @@ async function start() {
         ].join("\n"),
         { tSrc: { value: null }, tBase: { value: null }, texel: { value: new THREE.Vector2() } }
       );
-      const settings = hdr ? { threshold: 1, knee: 0.35, strength: 0.32, gain: 0 } : { threshold: 0.93, knee: 0, strength: 0.32, gain: 1.5 };
+      /* Only light sources glow: glow() parts are 2x+ white (~1.4+ once sRGB-encoded, which the target now holds), sunlit
+         grass and sand stay under ~1.15. At the old threshold they bloomed too, which bled their colour over the whole
+         island. Kept subtle on purpose. */
+      const settings = hdr ? { threshold: 1.22, knee: 0.12, strength: 0.2, gain: 0 } : { threshold: 0.97, knee: 0, strength: 0.2, gain: 1.5 };
       const sized = new THREE.Vector2();
       return {
         settings,
@@ -513,6 +555,8 @@ async function start() {
       },
     };
   })();
+
+  const cloudMap = makeCloudMap(renderer, coarse ? 256 : 512);
 
   /* Daylight: a warm, high sun from the upper left of the screen so shadows fall toward the viewer, a cool sky
      ambient that tints the shade blue, a cool bounce on the side away from the sun and a warm kiss from behind */
@@ -2521,25 +2565,6 @@ async function start() {
     return ghost;
   });
 
-  const bloomTexture = (() => {
-    const c = document.createElement("canvas");
-    c.width = c.height = 128;
-    const ctx = c.getContext("2d");
-    const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-    g.addColorStop(0, "rgba(240, 247, 255, 1)");
-    g.addColorStop(0.22, "rgba(140, 190, 255, 0.7)");
-    g.addColorStop(1, "rgba(80, 130, 255, 0)");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 128, 128);
-    return new THREE.CanvasTexture(c);
-  })();
-
-  const bloom = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: bloomTexture, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false })
-  );
-  bloom.renderOrder = 1;
-  scene.add(bloom);
-
   const shockwaves = [PAL.yellow, PAL.cream].map((color) => {
     const wave = flat(
       scene,
@@ -3503,6 +3528,11 @@ async function start() {
     }
     camera.updateMatrixWorld();
     fitShadow();
+    /* Cloud shadows for this frame, on the cloud plane above the view (shifted along the sun, as cloudAt3 reads it) */
+    {
+      const lift = 18 - camLook.y;
+      cloudMap.update(camLook.x + cloudSun.value.x * lift, camLook.z + cloudSun.value.y * lift, Math.min(150, shadowFit.reach + cloudSun.value.length() * 24 + 8));
+    }
     post.snap();
     /* Niko's ink hull only reads once it is close to a pixel wide; thinner, it breaks into stray dark pixels wherever
        his parts overlap, so it only shows when zoomed in */
@@ -3531,7 +3561,7 @@ async function start() {
         tint: rayTint.setRGB(1, 0.9 + climateSample.gold * -0.08 + 0.04, 0.76 - climateSample.gold * 0.16),
       });
     }
-    island.update(dt, calm ? 0 : time, robot.visible ? robot.position : null, renderer, rain?.hits);
+    island.update(dt, calm ? 0 : time, robot.visible ? robot.position : null, renderer, rain?.hits, camera);
     if (shrineStar.visible) {
       shrineStar.position.y = island.shrine.y + 4.6 + (calm ? 0 : Math.sin(time * 1.4) * 0.18);
       shrineStar.material.rotation = calm ? 0 : Math.sin(time * 0.5) * 0.15;
@@ -3583,12 +3613,26 @@ async function start() {
     const average = (quality.time / quality.frames) * 1000;
     quality.time = 0;
     quality.frames = 0;
+    /* Below 1x is only a stopgap: when frames have plenty of room again (a busy moment passed), climb back toward 1x.
+       One step up costs ~1.4x the pixels, so 14 ms lands well under the 34 ms that would step it down again. */
+    if (average < 14 && quality.ratio < 1) {
+      setRatio(Math.min(1, quality.ratio + 0.15));
+      return;
+    }
     if (average <= 22) return;
     /* MSAA on the offscreen target goes first (resolving it costs more than the scene), then bloom (halos take over
-       the glow), then resolution in quarter steps, never below 1x: under that the island turns visibly pixelated */
-    if (post.state.bloom && post.state.msaa) post.set({ msaa: false });
+       the glow), then resolution in quarter steps down to 1x. Far too slow (a weak GPU on a large screen) takes all
+       of that at once. */
+    if (average > 60) {
+      post.set({ msaa: false, bloom: false });
+      if (quality.ratio > 1) setRatio(Math.max(1, quality.ratio - 0.5));
+      else if (quality.ratio > MIN_RATIO) setRatio(Math.max(MIN_RATIO, quality.ratio - 0.2));
+    } else if (post.state.bloom && post.state.msaa) post.set({ msaa: false });
     else if (post.state.bloom) post.set({ bloom: false });
     else if (quality.ratio > 1) setRatio(Math.max(1, quality.ratio - 0.25));
+    /* Still under ~30 fps at 1x: keep going below 1x. Softer, but playable instead of a slideshow; machines that
+       manage 30 fps never get here */
+    else if (average > 34 && quality.ratio > MIN_RATIO) setRatio(Math.max(MIN_RATIO, quality.ratio - 0.15));
   };
 
   /* ?diag=1: a readout for checking a real phone (frame time, resolution, bloom, HDR, reduced motion, GPU) */
@@ -3609,15 +3653,16 @@ async function start() {
     diag.el.textContent = [
       `${diag.ms.toFixed(1)} ms  dpr ${renderer.getPixelRatio()}`,
       `bloom ${post.state.bloom ? "on" : "off"}  hdr ${post.state.hdr ? "yes" : "no"}  lite ${lite}  msaa ${post.state.msaa}`,
-      `reduced motion ${calm ? "ON" : "off"}  coarse ${coarse}`,
+      `reduced motion ${calm ? "ON" : "off"}  coarse ${coarse}  software ${software}`,
       diag.gpu,
     ].join("\n");
   };
 
   renderer.setAnimationLoop((now) => {
     /* The frame timestamp can trail performance.now() (settle resets `last` with it), so never step backward */
-    const dt = THREE.MathUtils.clamp((now - last) / 1000, 0, 0.05);
-    if (diag) showDiag(now, Math.max(0, now - last));
+    const raw = Math.max(0, now - last) / 1000;
+    const dt = Math.min(raw, 0.05);
+    if (diag) showDiag(now, raw * 1000);
     last = now;
 
     if (overlayOpen()) {
@@ -3639,7 +3684,8 @@ async function start() {
     timing.update += (t1 - t0 - timing.update) * 0.05;
     timing.render += (t2 - t1 - timing.render) * 0.05;
     timing.frame += (dt * 1000 - timing.frame) * 0.05;
-    adaptQuality(dt);
+    /* Real frame time (dt is capped for the simulation); one-off hitches over 250 ms don't count */
+    adaptQuality(Math.min(raw, 0.25));
     started = true;
 
     frames += 1;
@@ -3816,10 +3862,7 @@ async function start() {
     bot.eyes.forEach((eye) => (eye.scale.y = 0.15));
     state.blinkAt = clock + 0.9;
 
-    bloom.position.copy(landing).y += 0.6;
-    gsap.fromTo(bloom.scale, { x: 3, y: 3 }, { x: 11, y: 11, duration: 0.5, ease: "expo.out" });
-    gsap.fromTo(bloom.material, { opacity: 1 }, { opacity: 0, duration: 0.55, ease: "power2.out" });
-    gsap.fromTo(impactLight, { intensity: 70 }, { intensity: 0, duration: 0.8, ease: "power2.out" });
+    gsap.fromTo(impactLight, { intensity: 35 }, { intensity: 0, duration: 0.8, ease: "power2.out" });
     gsap.fromTo(camera, { zoom: 1.06 }, { zoom: 1, duration: 0.6, ease: "expo.out", onUpdate: () => camera.updateProjectionMatrix() });
     gsap.fromTo(flash, { opacity: 0.45 }, { opacity: 0, duration: 0.35, ease: "power2.out" });
     shake = 0.55;
@@ -4085,6 +4128,7 @@ async function start() {
       holdYaw: (angle) => void (state.holdYaw = angle),
       bot: () => bot,
       scene: () => scene,
+      renderer: () => renderer,
       island: () => island,
       shrineStar: () => shrineStar,
       /* Final pass: { on, pixel, ink, lift } */
