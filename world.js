@@ -9,6 +9,7 @@ import nikoBody from "./assets/niko/low-poly-humanoid-v6-clean.glb";
 import nikoHair from "./assets/niko/hair-short.glb";
 import nikoIdleFbx from "./assets/Happy Idle.fbx";
 import nikoRunFbx from "./assets/Running (1).fbx";
+import lockonClips from "./assets/niko/lockon.json";
 import nikoEyesUrl from "./assets/niko-eyes.png";
 import { atmos, buildIsland, CLOUD_GLSL, CLOUD_SHADE, cloudCover, cloudShade, cloudSun, cloudTime, cloudUniforms, ISLE, lampGain, lamped, makeCloudMap, makeRamp, waterLight, occlude, seeThrough, rainAmt, windMul, windTime, weatherFog, weatherFogColor, weatherWet } from "./world-island.js";
 import { lay, toXZ } from "./world-map.js";
@@ -254,9 +255,18 @@ async function start() {
 
   const scene = new THREE.Scene();
 
-  /* The camera sits far back along the iso direction so nothing on the island ever crosses its near plane */
+  /* The old island view: offset (40, 58, 40), looking straight at Niko, about 45.7° down.
+     Yaw still orbits. The pitch is a live modifier (debug.angle, or ?angle= in degrees) and the
+     camera stays on that same sphere so he remains in the middle of the screen. */
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 260);
-  const camOffset = new THREE.Vector3(40, 58, 40);
+  const CAM_REACH = Math.hypot(40, 58, 40);
+  const angleQuery = new URLSearchParams(location.search).get("angle");
+  const angleNumber = angleQuery == null || angleQuery === "" ? NaN : Number(angleQuery);
+  let camPitch = Number.isFinite(angleNumber) ? THREE.MathUtils.degToRad(angleNumber) : Math.atan2(58, Math.hypot(40, 40));
+  camPitch = THREE.MathUtils.clamp(camPitch, 0.18, 1.4);
+  let camYaw = Math.PI / 4;
+  let camYawGoal = camYaw;
+  const camOffset = new THREE.Vector3();
   const camLook = new THREE.Vector3(0, 0, 0);
   let viewHeight = 16;
 
@@ -1845,6 +1855,84 @@ async function start() {
   const landing = island.spot("landing");
   robot.position.copy(landing);
   robot.rotation.y = Math.PI / 4;
+
+  /* Training dummy on the spawn court, in front of the camera and facing Niko.
+     iltaen's Sketchfab dummy has downloads disabled, so this is an original prop in that role:
+     helm, mail, sword, shield, and a wooden stand. */
+  const dummyAt = landing.clone();
+  dummyAt.x -= Math.SQRT1_2 * 3.2;
+  dummyAt.z -= Math.SQRT1_2 * 3.2;
+  dummyAt.y = island.groundAt(dummyAt.x, dummyAt.z);
+  const dummy = new THREE.Group();
+  const dummyBody = new THREE.Group();
+  dummy.add(dummyBody);
+  const wood = soft(ISLE.wood);
+  const woodDeep = soft(ISLE.woodDeep);
+  const mail = soft("#8e94a1");
+  const helmCol = soft("#c5ccd4");
+  const blade = soft("#e4eaf1");
+  const shieldCol = soft("#7e8b98");
+  const cross = soft("#e8eef3");
+  const armCol = soft("#c4895a");
+  const slit = soft("#2a241c");
+  part(dummyBody, box(1.2, 0.1, 0.16), woodDeep, 0, 0.06, 0);
+  part(dummyBody, box(0.16, 0.1, 1.2), woodDeep, 0, 0.1, 0);
+  part(dummyBody, new THREE.CylinderGeometry(0.09, 0.11, 1.12, 7), wood, 0, 0.66, 0);
+  part(dummyBody, box(0.62, 0.7, 0.34, 0.05), mail, 0, 1.5, 0);
+  part(dummyBody, box(0.5, 0.18, 0.3, 0.04), mail, 0, 1.1, 0.02);
+  part(dummyBody, new THREE.CylinderGeometry(0.2, 0.24, 0.34, 7), helmCol, 0, 2.02, 0);
+  part(dummyBody, box(0.3, 0.07, 0.06), slit, 0, 1.94, 0.18);
+  const swordArm = new THREE.Group();
+  swordArm.position.set(0.28, 1.68, 0);
+  swordArm.rotation.z = -1.05;
+  part(swordArm, box(0.4, 0.11, 0.11), armCol, 0.22, 0, 0);
+  part(swordArm, box(0.16, 0.06, 0.06), wood, 0.46, -0.02, 0);
+  part(swordArm, box(0.22, 0.05, 0.08), woodDeep, 0.5, 0.08, 0);
+  part(swordArm, box(0.07, 0.62, 0.035), blade, 0.5, 0.42, 0);
+  dummyBody.add(swordArm);
+  const shieldArm = new THREE.Group();
+  shieldArm.position.set(-0.28, 1.52, 0.04);
+  shieldArm.rotation.z = 0.35;
+  part(shieldArm, box(0.32, 0.11, 0.11), armCol, -0.14, 0, 0);
+  part(shieldArm, box(0.5, 0.62, 0.06, 0.05), shieldCol, -0.46, 0.02, 0.02);
+  part(shieldArm, box(0.1, 0.36, 0.03), cross, -0.46, 0.04, 0.07);
+  part(shieldArm, box(0.3, 0.1, 0.03), cross, -0.46, 0.06, 0.07);
+  dummyBody.add(shieldArm);
+  dummy.position.copy(dummyAt);
+  dummy.rotation.y = Math.atan2(landing.x - dummyAt.x, landing.z - dummyAt.z);
+  scene.add(dummy);
+  mergeStatic(dummyBody);
+  const dummyRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.62, 0.74, 28),
+    new THREE.MeshBasicMaterial({ color: "#ffc93c", transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  dummyRing.rotation.x = -Math.PI / 2;
+  dummyRing.position.y = 0.05;
+  dummyRing.visible = false;
+  dummy.add(dummyRing);
+  const dummyFocus = new THREE.Vector3(dummyAt.x, dummyAt.y + 1.45, dummyAt.z);
+  let lockTarget = null;
+  let lockLost = 0;
+  let lockSpeed = 0;
+  let lockPhase = 0;
+  const lockDir = { x: 0, y: 0 };
+  const LOCK_REACH = 18;
+  const LOCK_PAD = 0.08;
+  const LOCK_YAW_SKIP = THREE.MathUtils.degToRad(18);
+  const viewPoint = new THREE.Vector3();
+  const playerChest = new THREE.Vector3();
+  const savedCamPos = new THREE.Vector3();
+  const savedCamQuat = new THREE.Quaternion();
+  const trialAnchor = new THREE.Vector3();
+  /* 0–1 across the screen. The padded edge is the Pixel Pass safe viewport. */
+  const inCamera = (world) => {
+    viewPoint.copy(world).project(camera);
+    if (!Number.isFinite(viewPoint.z) || viewPoint.z < -1 || viewPoint.z > 1) return false;
+    const x = (viewPoint.x + 1) / 2;
+    const y = (viewPoint.y + 1) / 2;
+    return x >= LOCK_PAD && x <= 1 - LOCK_PAD && y >= LOCK_PAD && y <= 1 - LOCK_PAD;
+  };
+  colliders.push({ x: dummyAt.x, z: dummyAt.z, r: 0.45 });
   bot.body.scale.setScalar(1.12);
   const footRay = new THREE.Raycaster();
   const footOrigin = new THREE.Vector3();
@@ -2228,6 +2316,14 @@ async function start() {
         const local = parent && posed[parent.name]
           ? posed[parent.name].clone().invert().multiply(posed[name])
           : posed[name].clone();
+        /* q and -q are the same pose. Keep each key on the short arc from the previous one so the
+           hands don't spin a full turn between frames, or when two directions are blended. */
+        if (frame > 0) {
+          const prev = (frame - 1) * 4;
+          const values = quats[name];
+          const dot = values[prev] * local.x + values[prev + 1] * local.y + values[prev + 2] * local.z + values[prev + 3] * local.w;
+          if (dot < 0) local.set(-local.x, -local.y, -local.z, -local.w);
+        }
         quats[name].set([local.x, local.y, local.z, local.w], frame * 4);
       }
       hips[frame * 3] = tgtHipRest.x;
@@ -2452,11 +2548,89 @@ async function start() {
 
     const mixer = new THREE.AnimationMixer(model);
     const actions = {};
-    for (const [name, buf] of [["idle", nikoIdleFbx], ["run", nikoRunFbx]]) {
-      const clip = retargetMixamo(name, parseFbx(buf), model, bones);
-      actions[name] = mixer.clipAction(clip);
+    const idleSource = parseFbx(nikoIdleFbx);
+    const restPose = [];
+    const sourceName = {};
+    idleSource.traverse((node) => {
+      if (!node.isBone) return;
+      restPose.push([node, node.position.clone(), node.quaternion.clone()]);
+      sourceName[stripMixamo(node.name)] = node.name;
+    });
+    const restorePose = () => restPose.forEach(([node, position, quaternion]) => {
+      node.position.copy(position);
+      node.quaternion.copy(quaternion);
+    });
+    const retargeted = (name, source) => retargetMixamo(name, source, model, bones);
+    for (const [name, source] of [["idle", idleSource], ["run", parseFbx(nikoRunFbx)]]) {
+      actions[name] = mixer.clipAction(retargeted(name, source));
       actions[name].play();
       actions[name].setEffectiveWeight(name === "idle" ? 1 : 0);
+    }
+    /* The mixer blends quaternion tracks by their components. Two clips of the same hand pose still
+       twist through a full turn if one track is stored as q and the other as -q. */
+    const quatAt = (track, u) => {
+      const times = track.times;
+      const values = track.values;
+      const last = times.length - 1;
+      const time = u * times[last];
+      let index = 0;
+      while (index < last && times[index + 1] < time) index += 1;
+      const next = Math.min(index + 1, last);
+      const useNext = next !== index && time - times[index] > times[next] - time;
+      const offset = (useNext ? next : index) * 4;
+      return [values[offset], values[offset + 1], values[offset + 2], values[offset + 3]];
+    };
+    const matchHemisphere = (clip, reference, samples = 8) => {
+      for (const track of clip.tracks) {
+        if (!track.name.endsWith(".quaternion")) continue;
+        const ref = reference.tracks.find((item) => item.name === track.name);
+        if (!ref) continue;
+        let neg = 0;
+        let pos = 0;
+        for (let step = 0; step < samples; step += 1) {
+          const u = samples === 1 ? 0 : step / samples;
+          const here = quatAt(track, u);
+          const there = quatAt(ref, u);
+          const dot = here[0] * there[0] + here[1] * there[1] + here[2] * there[2] + here[3] * there[3];
+          if (dot < 0) neg += 1;
+          else pos += 1;
+        }
+        if (neg > pos) {
+          const values = track.values;
+          for (let i = 0; i < values.length; i += 1) values[i] *= -1;
+        }
+      }
+    };
+    /* Pixel Pass lock-on set: eight walk directions and the four run directions, same quaternion clips. */
+    const lockMoves = [];
+    for (const entry of lockonClips.clips) {
+      restorePose();
+      const tracks = [];
+      for (const bone of entry.bones) {
+        const nodeName = sourceName[bone.name];
+        if (!nodeName) continue;
+        tracks.push(new THREE.QuaternionKeyframeTrack(`${nodeName}.quaternion`, new Float32Array(bone.times), new Float32Array(bone.q)));
+        /* Unity stored these hip curves in meters. The Mixamo FBX skeleton is in centimeters, so the raw
+           values (~0.9) were applied against a rest of ~100 and dropped Niko through the floor. */
+        if (bone.pos) {
+          const pos = bone.pos.map((value) => value * 100);
+          tracks.push(new THREE.VectorKeyframeTrack(`${nodeName}.position`, new Float32Array(bone.posTimes), new Float32Array(pos)));
+        }
+      }
+      idleSource.animations = [new THREE.AnimationClip(entry.name, entry.duration, tracks)];
+      const action = mixer.clipAction(retargeted(entry.name, idleSource));
+      action.play();
+      action.setEffectiveWeight(0);
+      action.setEffectiveTimeScale(0);
+      lockMoves.push({ name: entry.name, gait: entry.gait, x: entry.x, y: entry.y, action });
+    }
+    const lockReference = lockMoves[0]?.action.getClip();
+    if (lockReference) {
+      matchHemisphere(lockReference, actions.idle.getClip(), 1);
+      lockMoves.forEach((move) => {
+        const clip = move.action.getClip();
+        if (clip !== lockReference) matchHemisphere(clip, lockReference);
+      });
     }
     mixer.update(0);
 
@@ -2491,6 +2665,7 @@ async function start() {
       bones,
       mixer,
       actions,
+      lockMoves,
       cloak,
       sockets,
       parts,
@@ -2932,6 +3107,8 @@ async function start() {
   };
 
   let press = null;
+  let orbitDrag = null;
+  const cursor = { x: 0.5, y: 0.5, on: false };
 
   /* Floating stick: a touch that drags turns into a joystick where the drag began, and the base stays put there;
      a quick tap still walks there. Two fingers pinch to zoom instead. */
@@ -2991,7 +3168,48 @@ async function start() {
     return Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
   };
 
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  host.addEventListener("pointermove", (event) => {
+    if (event.pointerType !== "mouse") return;
+    const rect = host.getBoundingClientRect();
+    cursor.x = (event.clientX - rect.left) / Math.max(1, rect.width);
+    cursor.y = (event.clientY - rect.top) / Math.max(1, rect.height);
+    cursor.on = true;
+  });
+  host.addEventListener("pointerleave", () => {
+    cursor.on = false;
+  });
+  window.addEventListener("blur", () => {
+    cursor.on = false;
+  });
+
+  /* Middle-click or G: a hit on the dummy locks on, a miss clears it. Same rule as Pixel Pass. */
+  const tryLock = (clientX, clientY) => {
+    const rect = canvas.getBoundingClientRect();
+    pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(pointer, camera);
+    lockTarget = raycaster.intersectObject(dummy, true).length ? dummy : null;
+    lockLost = 0;
+    return Boolean(lockTarget);
+  };
+
   canvas.addEventListener("pointerdown", (event) => {
+    if (event.button === 1) {
+      event.preventDefault();
+      if (!introLive) tryLock(event.clientX, event.clientY);
+      return;
+    }
+    if (event.button === 2) {
+      if (event.pointerType === "mouse" && !introLive) {
+        orbitDrag = { id: event.pointerId, x: event.clientX };
+        try {
+          canvas.setPointerCapture(event.pointerId);
+        } catch {
+          /* The pointer is already gone. The drag still tracks from the move events. */
+        }
+      }
+      return;
+    }
     if (event.pointerType !== "mouse") {
       touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
       canvas.setPointerCapture?.(event.pointerId);
@@ -3007,6 +3225,12 @@ async function start() {
   });
 
   canvas.addEventListener("pointermove", (event) => {
+    if (orbitDrag && event.pointerId === orbitDrag.id) {
+      const dx = event.clientX - orbitDrag.x;
+      orbitDrag.x = event.clientX;
+      camYawGoal -= dx * 0.12 * (Math.PI / 180);
+      return;
+    }
     const touch = touches.get(event.pointerId);
     if (touch) {
       touch.x = event.clientX;
@@ -3050,6 +3274,7 @@ async function start() {
   };
 
   const dropPress = (event) => {
+    if (orbitDrag && event.pointerId === orbitDrag.id) orbitDrag = null;
     if (lift(event)) return;
     if (press && event.pointerId !== press.id) return;
     press = null;
@@ -3059,6 +3284,10 @@ async function start() {
   canvas.addEventListener("lostpointercapture", dropPress);
 
   canvas.addEventListener("pointerup", (event) => {
+    if (orbitDrag && event.pointerId === orbitDrag.id) {
+      orbitDrag = null;
+      return;
+    }
     if (lift(event)) {
       return;
     }
@@ -3156,7 +3385,13 @@ async function start() {
       return;
     }
 
-    if (moveKeys[key] && (idle || !key.startsWith("arrow"))) {
+    if (key === "g") {
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const x = cursor.on ? rect.left + cursor.x * rect.width : rect.left + rect.width / 2;
+      const y = cursor.on ? rect.top + cursor.y * rect.height : rect.top + rect.height / 2;
+      tryLock(x, y);
+    } else if (moveKeys[key] && (idle || !key.startsWith("arrow"))) {
       event.preventDefault();
       state.keys.add(key);
     } else if (key === "e" || ((key === "enter" || key === " ") && idle)) {
@@ -3222,11 +3457,23 @@ async function start() {
     return { x, y };
   };
 
-  /* Screen-space input maps onto the isometric floor */
-
-  const screenUp = new THREE.Vector3(-1, 0, -1).normalize();
-  const screenRight = new THREE.Vector3(1, 0, -1).normalize();
+  /* Screen-space input maps onto the floor along the camera's yaw. W walks the way the camera looks. */
+  const screenUp = new THREE.Vector3();
+  const screenRight = new THREE.Vector3();
   const steer = new THREE.Vector3();
+  const dampAngle = (current, target, lambda, dt) => {
+    const t = 1 - Math.exp(-Math.max(0.01, lambda) * dt);
+    const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+    return current + delta * t;
+  };
+  const applyCamAxes = () => {
+    const back = Math.cos(camPitch) * CAM_REACH;
+    const height = Math.sin(camPitch) * CAM_REACH;
+    camOffset.set(Math.sin(camYaw) * back, height, Math.cos(camYaw) * back);
+    screenUp.set(-Math.sin(camYaw), 0, -Math.cos(camYaw));
+    screenRight.set(Math.cos(camYaw), 0, -Math.sin(camYaw));
+  };
+  applyCamAxes();
 
   const inputVector = () => {
     let x = 0;
@@ -3352,7 +3599,10 @@ async function start() {
   const lookTarget = new THREE.Vector3();
   const faceViewAt = new THREE.Vector3();
   const offTarget = new THREE.Vector3();
-  const tilt = camOffset.y / camOffset.length();
+  const tiltOf = () => Math.sin(camPitch);
+  const screenShift = new THREE.Vector3();
+  const screenShiftGoal = new THREE.Vector3();
+  const viewAnchor = new THREE.Vector3();
 
   /* The camera prefers to show the floor, but never lets the robot drift out of the middle of
      the screen. Narrow phone views need this most. */
@@ -3360,6 +3610,7 @@ async function start() {
     const reachX = ((camera.right - camera.left) / 2 / camera.zoom) * 0.35;
     const reachY = (viewHeight / 2 / camera.zoom) * 0.35;
 
+    const tilt = tiltOf();
     offTarget.subVectors(robot.position, target);
     const across = offTarget.dot(screenRight);
     const up = offTarget.dot(screenUp) * tilt;
@@ -3376,6 +3627,28 @@ async function start() {
   const still = new THREE.Vector3();
 
   const update = (dt, time) => {
+    if (lockTarget) {
+      const dx = dummyFocus.x - robot.position.x;
+      const dz = dummyFocus.z - robot.position.z;
+      const reach = dx * dx + dz * dz;
+      const far = reach > LOCK_REACH * LOCK_REACH;
+      if (reach > 0.0001) camYawGoal = Math.atan2(dx, dz) + Math.PI;
+      /* While the yaw is still catching up, an off-screen dummy is not out of bounds yet. */
+      const yawGap = Math.abs(Math.atan2(Math.sin(camYawGoal - camYaw), Math.cos(camYawGoal - camYaw)));
+      playerChest.set(robot.position.x, robot.position.y + 1.2, robot.position.z);
+      const outside = !far && yawGap <= LOCK_YAW_SKIP && (!inCamera(playerChest) || !inCamera(dummyFocus));
+      if (far || outside) {
+        lockLost += dt;
+        if (lockLost >= 0.2) lockTarget = null;
+      } else {
+        lockLost = 0;
+      }
+    }
+    dummyRing.visible = Boolean(lockTarget);
+    if (!introLive) {
+      camYaw = dampAngle(camYaw, camYawGoal, lockTarget ? 10 : 14, dt);
+    }
+    applyCamAxes();
     clock = time;
     const input = introLive ? still : inputVector();
     const before = robot.position.clone();
@@ -3452,8 +3725,24 @@ async function start() {
 
     /* Standing still, he turns three-quarters toward the camera and looks up, so his face reads from above */
     state.still = moving ? 0 : state.still + dt;
-    const faceCam = bot.mixer && robot.visible && state.still > 0.9 && !state.path.length && !root.classList.contains("world-intro");
-    if (state.holdYaw != null) state.yaw = Math.atan2(camOffset.x, camOffset.z) + state.holdYaw;
+    const faceCam = !lockTarget && bot.mixer && robot.visible && state.still > 0.9 && !state.path.length && !root.classList.contains("world-intro");
+    if (lockTarget && !introLive) {
+      /* Same turn as Pixel Pass: a yaw quaternion toward the dummy, then rotate towards it at 720°/s.
+         This three build has slerp but not Quaternion.rotateTowards, so the step is applied here. */
+      const dx = dummyFocus.x - robot.position.x;
+      const dz = dummyFocus.z - robot.position.z;
+      if (dx * dx + dz * dz > 0.0001) {
+        /* Yaw-only quaternion step. A raw slerp is unstable when the turn is exactly 180°, which is the spawn facing. */
+        const targetYaw = Math.atan2(dx, dz);
+        let delta = Math.atan2(Math.sin(targetYaw - robot.rotation.y), Math.cos(targetYaw - robot.rotation.y));
+        if (Math.abs(delta) > Math.PI - 0.001) delta = (delta < 0 ? -1 : 1) * (Math.PI - 0.001);
+        const step = THREE.MathUtils.degToRad(720) * dt;
+        const yaw = Math.abs(delta) <= step ? targetYaw : robot.rotation.y + Math.sign(delta) * step;
+        /* The euler holds the yaw. Writing the quaternion gets folded back past ±90° by three's XYZ sync. */
+        robot.rotation.y = yaw;
+      }
+      state.yaw = robot.rotation.y;
+    } else if (state.holdYaw != null) state.yaw = Math.atan2(camOffset.x, camOffset.z) + state.holdYaw;
     else if (faceCam) {
       const camYaw = Math.atan2(camOffset.x, camOffset.z);
       let rel = state.yaw - camYaw;
@@ -3461,9 +3750,11 @@ async function start() {
       state.yaw = camYaw + THREE.MathUtils.clamp(rel, -0.4, 0.4);
     }
     state.faceUp = THREE.MathUtils.damp(state.faceUp, faceCam ? 1 : 0, 3, dt);
-    let turn = state.yaw - robot.rotation.y;
-    turn = Math.atan2(Math.sin(turn), Math.cos(turn));
-    robot.rotation.y += turn * Math.min(1, dt * (faceCam ? 4 : 12));
+    if (!(lockTarget && !introLive)) {
+      let turn = state.yaw - robot.rotation.y;
+      turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+      robot.rotation.y += turn * Math.min(1, dt * (faceCam ? 4 : 12));
+    }
 
     const rest = 1 - state.walk;
     const breathe = calm ? 0 : Math.sin(time * 2.2) * rest;
@@ -3472,15 +3763,104 @@ async function start() {
     const wave = calm ? 0 : Math.sin(time * 3) * 0.06 * pose.raise;
 
     if (bot.mixer) {
-      /* Mixamo idle and run clips, blended by speed; intro poses and the camera look are layered on top */
-      const { actions, bones } = bot;
-      actions.idle.setEffectiveWeight(1 - state.walk);
-      actions.run.setEffectiveWeight(state.walk);
-      actions.run.setEffectiveTimeScale(1.2 * state.pace);
+      /* Free roam is idle against run. Lock-on uses the eight-way quaternion clips, in Niko's facing frame. */
+      const { actions } = bot;
+      const locked = lockTarget && bot.lockMoves;
+      if (locked) {
+        const face = robot.rotation.y;
+        const localX = input.x * Math.cos(face) + input.z * -Math.sin(face);
+        const localZ = input.x * Math.sin(face) + input.z * Math.cos(face);
+        let sx = 0;
+        let sy = 0;
+        if (localX * localX + localZ * localZ > 0.001) {
+          const snapped = Math.round(Math.atan2(localX, localZ) / (Math.PI / 4)) * (Math.PI / 4);
+          sx = Math.sin(snapped);
+          sy = Math.cos(snapped);
+          if (Math.abs(Math.abs(sx) - Math.SQRT1_2) < 0.02) sx = Math.sign(sx) * Math.SQRT1_2;
+          if (Math.abs(Math.abs(sy) - Math.SQRT1_2) < 0.02) sy = Math.sign(sy) * Math.SQRT1_2;
+        }
+        lockDir.x = THREE.MathUtils.damp(lockDir.x, sx, 10, dt);
+        lockDir.y = THREE.MathUtils.damp(lockDir.y, sy, 10, dt);
+        /* A key press is the walk strafe. The run clips fold the forearms about 150° off idle, so they
+           snapped the hands in on the first press. Walk stays within the idle arms. */
+        const starting = input.lengthSq() > 0.0001 && lockSpeed < 0.05;
+        const targetSpeed = input.lengthSq() < 0.0001 ? 0 : 0.5;
+        if (starting) {
+          let lead = null;
+          let leadDot = -1;
+          for (const move of bot.lockMoves) {
+            if (move.gait !== "walk") continue;
+            const align = move.x * sx + move.y * sy;
+            if (align > leadDot) {
+              leadDot = align;
+              lead = move;
+            }
+          }
+          if (lead) {
+            const clip = lead.action.getClip();
+            const names = ["LeftArm", "RightArm", "LeftForeArm", "RightForeArm", "LeftHand", "RightHand"];
+            let bestU = 0;
+            let best = -1;
+            for (let step = 0; step < 12; step += 1) {
+              const u = step / 12;
+              let total = 0;
+              let count = 0;
+              for (const name of names) {
+                const track = clip.tracks.find((item) => item.name === `${name}.quaternion`);
+                const bone = bot.bones[name];
+                if (!track || !bone) continue;
+                const times = track.times;
+                const values = track.values;
+                const last = times.length - 1;
+                const time = u * times[last];
+                let index = 0;
+                while (index < last && times[index + 1] < time) index += 1;
+                const next = Math.min(index + 1, last);
+                const pick = next !== index && time - times[index] > times[next] - time ? next : index;
+                const offset = pick * 4;
+                let dot = values[offset] * bone.quaternion.x + values[offset + 1] * bone.quaternion.y + values[offset + 2] * bone.quaternion.z + values[offset + 3] * bone.quaternion.w;
+                if (dot < 0) dot = -dot;
+                total += dot;
+                count += 1;
+              }
+              const score = count ? total / count : 0;
+              if (score > best) {
+                best = score;
+                bestU = u;
+              }
+            }
+            lockPhase = bestU;
+          }
+        }
+        lockSpeed = THREE.MathUtils.damp(lockSpeed, targetSpeed, 5, dt);
+        const walkT = Math.min(1, lockSpeed / 0.5);
+        const runT = 0;
+        actions.idle.setEffectiveWeight(1 - walkT);
+        actions.run.setEffectiveWeight(0);
+        if (!starting && lockSpeed > 0.04) lockPhase = (lockPhase + dt * 0.9) % 1;
+        for (const gait of ["walk", "run"]) {
+          const group = bot.lockMoves.filter((move) => move.gait === gait);
+          const dots = group.map((move) => Math.max(0, move.x * lockDir.x + move.y * lockDir.y));
+          const sum = dots.reduce((total, dot) => total + dot, 0) || 1;
+          const gaitWeight = gait === "run" ? runT : walkT;
+          group.forEach((move, index) => {
+            move.action.setEffectiveWeight((dots[index] / sum) * gaitWeight);
+            move.action.setEffectiveTimeScale(0);
+            move.action.time = lockPhase * move.action.getClip().duration;
+          });
+        }
+      } else {
+        actions.idle.setEffectiveWeight(1 - state.walk);
+        actions.run.setEffectiveWeight(state.walk);
+        actions.run.setEffectiveTimeScale(1.2 * state.pace);
+        bot.lockMoves?.forEach((move) => move.action.setEffectiveWeight(0));
+        lockSpeed = 0;
+      }
       bot.mixer.update(calm ? 0 : dt);
       /* These offsets were measured on the old skeleton, whose bones rested at identity. The Y Bot rig already
          carries Mixamo's bone axes, so the same turns point the limbs the wrong way. */
       if (!bot.ownPose) {
+        const { bones } = bot;
         const spread = 0.2 + pose.crouch * 0.45;
         bones.LeftArm.quaternion.premultiply(overlayQ.setFromAxisAngle(AXIS_Z, spread));
         bones.RightArm.quaternion.premultiply(overlayQ.setFromAxisAngle(AXIS_Z, -spread));
@@ -3646,16 +4026,61 @@ async function start() {
     /* Camera follows Niko over the island */
 
     lookTarget.set(THREE.MathUtils.clamp(robot.position.x, -38, 38), robot.position.y, THREE.MathUtils.clamp(robot.position.z, -38, 38));
+    if (lockTarget) lookTarget.lerpVectors(lookTarget, dummyFocus, 0.5);
     keepInFrame(lookTarget);
+    const speed = dt > 0 ? travelled.length() / dt : 0;
+    const follow = THREE.MathUtils.lerp(6, 18, THREE.MathUtils.clamp(speed / 8, 0, 1));
     if (calm || !started) {
       camLook.copy(lookTarget);
+      screenShift.set(0, 0, 0);
     } else {
-      camLook.x = THREE.MathUtils.damp(camLook.x, lookTarget.x, 4, dt);
-      camLook.y = THREE.MathUtils.damp(camLook.y, lookTarget.y, 3, dt);
-      camLook.z = THREE.MathUtils.damp(camLook.z, lookTarget.z, 4, dt);
+      camLook.x = THREE.MathUtils.damp(camLook.x, lookTarget.x, follow, dt);
+      camLook.y = THREE.MathUtils.damp(camLook.y, lookTarget.y, follow, dt);
+      camLook.z = THREE.MathUtils.damp(camLook.z, lookTarget.z, follow, dt);
+      screenShiftGoal.set(0, 0, 0);
+      if (cursor.on && !introLive && state.faceView == null) {
+        const halfW = (camera.right - camera.left) / 2 / Math.max(0.001, camera.zoom);
+        const halfH = viewHeight / 2 / Math.max(0.001, camera.zoom);
+        const biasX = THREE.MathUtils.clamp((cursor.x - 0.5) * 2, -1, 1);
+        const biasY = THREE.MathUtils.clamp((0.5 - cursor.y) * 2, -1, 1);
+        const lookStrength = lockTarget ? 0.35 : 1;
+        screenShiftGoal.addScaledVector(screenRight, biasX * 0.7 * halfW * lookStrength);
+        screenShiftGoal.addScaledVector(screenUp, biasY * 0.5 * halfH * lookStrength);
+        /* Lock-on look cannot shove Niko or the dummy past the padded screen edge. */
+        if (lockTarget && screenShiftGoal.lengthSq() > 0.0001) {
+          const fits = (scale) => {
+            savedCamPos.copy(camera.position);
+            savedCamQuat.copy(camera.quaternion);
+            trialAnchor.copy(lookTarget).addScaledVector(screenShiftGoal, scale);
+            camera.position.copy(trialAnchor).add(camOffset);
+            camera.lookAt(trialAnchor);
+            camera.updateMatrixWorld();
+            playerChest.set(robot.position.x, robot.position.y + 1.2, robot.position.z);
+            const safe = inCamera(playerChest) && inCamera(dummyFocus);
+            camera.position.copy(savedCamPos);
+            camera.quaternion.copy(savedCamQuat);
+            camera.updateMatrixWorld();
+            return safe;
+          };
+          if (!fits(1)) {
+            let low = 0;
+            let high = 1;
+            for (let i = 0; i < 6; i += 1) {
+              const mid = (low + high) / 2;
+              if (fits(mid)) low = mid;
+              else high = mid;
+            }
+            screenShiftGoal.multiplyScalar(low);
+          }
+        }
+      }
+      screenShift.x = THREE.MathUtils.damp(screenShift.x, screenShiftGoal.x, 15, dt);
+      screenShift.y = THREE.MathUtils.damp(screenShift.y, screenShiftGoal.y, 15, dt);
+      screenShift.z = THREE.MathUtils.damp(screenShift.z, screenShiftGoal.z, 15, dt);
     }
-    camera.position.copy(camLook).add(camOffset);
-    camera.lookAt(camLook);
+    viewAnchor.copy(camLook).add(screenShift);
+    camera.position.copy(viewAnchor).add(camOffset);
+    camera.lookAt(viewAnchor);
     if (state.faceView != null && bot.head) {
       /* Review only: a level camera on his face, faceView radians around from the front (0 = like the reference render) */
       const around = robot.rotation.y + state.faceView;
@@ -4338,6 +4763,28 @@ async function start() {
       wind: () => wind?.peek(),
       walkable: (x, z) => island.nav.walkable(x, z),
       position: () => robot.position.toArray(),
+      /* Orbit yaw (radians). Omit it to read the live yaw. */
+      yaw: (angle) => {
+        if (angle == null) return camYaw;
+        camYaw = camYawGoal = angle;
+        applyCamAxes();
+        return camYaw;
+      },
+      /* Screen point of the training dummy's chest, and lock-on. target(x, y) aims there; target() reads whether it is locked. */
+      dummyScreen: () => {
+        const p = dummyFocus.clone().project(camera);
+        const box = renderer.domElement.getBoundingClientRect();
+        return { x: box.left + ((p.x + 1) / 2) * box.width, y: box.top + ((1 - p.y) / 2) * box.height };
+      },
+      target: (x, y) => (x == null ? Boolean(lockTarget) : tryLock(x, y)),
+      /* Look-down angle in degrees. angle(30) is shallower, angle(60) is steeper. Omit it to read the live angle.
+         He stays in the centre. ?angle= sets the same value on load. */
+      angle: (degrees) => {
+        if (degrees == null) return +THREE.MathUtils.radToDeg(camPitch).toFixed(2);
+        camPitch = THREE.MathUtils.clamp(THREE.MathUtils.degToRad(degrees), 0.18, 1.4);
+        applyCamAxes();
+        return +THREE.MathUtils.radToDeg(camPitch).toFixed(2);
+      },
       route: () => state.path.map((p) => p.toArray().map((n) => +n.toFixed(2))),
       bakeShadows: () => bakeShadows(),
     },
