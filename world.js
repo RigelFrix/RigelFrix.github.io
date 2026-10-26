@@ -3812,7 +3812,6 @@ async function start() {
       const { actions } = bot;
       const locked = lockTarget && bot.lockMoves;
       if (locked) {
-        lockBackYaw = 0;
         const face = robot.rotation.y;
         /* Same lateral sign as the movement. Negating it played the strafe that steps the other way. */
         const localX = input.x * Math.cos(face) + input.z * -Math.sin(face);
@@ -3820,7 +3819,6 @@ async function start() {
         const moving = localX * localX + localZ * localZ > 0.001;
         let aimX = 0;
         let aimY = 1;
-        let lockSeek = false;
         let aim = lockAngle;
         if (moving) aim = Math.atan2(localX, localZ);
         aimX = Math.sin(aim);
@@ -3828,12 +3826,9 @@ async function start() {
         const turn = Math.atan2(Math.sin(aim - lockAngle), Math.cos(aim - lockAngle));
         /* Magnitude stays up while a direction is held, so a clip is always playing. Idle takes whatever is left. */
         lockMag = THREE.MathUtils.damp(lockMag, moving ? 1 : 0, moving ? 10 : 6, dt);
-        /* A left-right flip is 180°. Sweeping the circle plays every clip in between, and the opposed pair averages into the T-pose. Jump, and let idle cover that one blend. */
-        if (moving && Math.abs(turn) > 1.8) {
-          lockAngle = aim;
-          lockMag = 0.15;
-          lockSeek = true;
-        } else if (moving) lockAngle += turn * (1 - Math.exp(-14 * dt));
+        /* A left-right flip is 180°. Sweeping the circle plays every clip in between. Jump the aim and let the clip weights crossfade. */
+        if (moving && Math.abs(turn) > 1.8) lockAngle = aim;
+        else if (moving) lockAngle += turn * (1 - Math.exp(-14 * dt));
         const sx = Math.sin(lockAngle);
         const sy = Math.cos(lockAngle);
         lockDir.x = sx * lockMag;
@@ -3841,7 +3836,7 @@ async function start() {
         /* Lock-on plays the run set. The walk clips stay at weight 0. */
         const starting = moving && lockMag < 0.05;
         const targetSpeed = moving ? 0.5 : 0;
-        if (starting || lockSeek) {
+        if (starting) {
           let lead = null;
           let leadDot = -1;
           for (const move of bot.lockMoves) {
@@ -3921,31 +3916,37 @@ async function start() {
           return weights;
         };
         let posed = 0;
+        let backGoal = 0;
         for (const gait of ["walk", "run"]) {
           const group = bot.lockMoves.filter((move) => move.gait === gait);
           const weights = gait === "run" ? sectorWeights(group) : group.map(() => 0);
           if (gait === "run" && Math.hypot(lockDir.x, lockDir.y) > 0.05) {
             const aim = Math.atan2(lockDir.x, lockDir.y);
             const fromBack = Math.atan2(Math.sin(aim - Math.PI), Math.cos(aim - Math.PI));
-            /* Back-left and back-right play the straight backward clip. The hips yaw onto that diagonal and the chest yaws back toward the target. */
-            if (Math.abs(fromBack) > 0.15 && Math.abs(fromBack) < Math.PI / 3) {
+            const absBack = Math.abs(fromBack);
+            const outer = Math.PI / 3;
+            /* Back-left and back-right ease onto the straight backward clip. The hips yaw onto that diagonal and the chest yaws back toward the target. */
+            if (absBack < outer) {
               const back = group.findIndex((move) => move.name === "runB");
-              if (back >= 0) {
-                weights.fill(0);
-                weights[back] = 1;
-                lockBackYaw = fromBack;
+              const u = absBack <= 0.15 ? 1 : (outer - absBack) / (outer - 0.15);
+              const smooth = u * u * (3 - 2 * u);
+              if (back >= 0 && smooth > 0) {
+                for (let i = 0; i < weights.length; i += 1) weights[i] *= 1 - smooth;
+                weights[back] += smooth;
+                backGoal = fromBack * smooth;
               }
             }
           }
           const gaitWeight = gait === "run" ? runT : 0;
           group.forEach((move, index) => {
-            const weight = weights[index] * gaitWeight;
+            const weight = THREE.MathUtils.damp(move.action.getEffectiveWeight(), weights[index] * gaitWeight, 8, dt);
             move.action.setEffectiveWeight(weight);
             move.action.setEffectiveTimeScale(0);
             move.action.time = lockPhase * move.action.getClip().duration;
             posed += weight;
           });
         }
+        lockBackYaw = THREE.MathUtils.damp(lockBackYaw, backGoal, 8, dt);
         /* Whatever the run clips don't cover stays on idle. A gap here is the bind pose. */
         actions.idle.setEffectiveWeight(Math.max(0, 1 - posed));
       } else {
