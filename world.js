@@ -1915,6 +1915,9 @@ async function start() {
   let lockLost = 0;
   let lockSpeed = 0;
   let lockPhase = 0;
+  let lockAngle = 0;
+  let lockMag = 0;
+  let lockBackYaw = 0;
   const lockDir = { x: 0, y: 0 };
   const LOCK_REACH = 18;
   const LOCK_PAD = 0.08;
@@ -2561,6 +2564,25 @@ async function start() {
       node.quaternion.copy(quaternion);
     });
     const retargeted = (name, source) => retargetMixamo(name, source, model, bones);
+    /* Unity hip curves are meters. The Mixamo FBX skeleton is centimeters. */
+    const curvesClip = (entry) => {
+      const tracks = [];
+      for (const bone of entry.bones) {
+        const nodeName = sourceName[bone.name];
+        if (!nodeName) continue;
+        const flat = bone.q;
+        /* Unity writes these arm binds as (x, -y, -z, w) relative to this FBX. Played raw, each wrist crosses to the other side and the hand meshes swap on the way back to idle. */
+        const values = /Shoulder|Arm|Hand/.test(bone.name)
+          ? flat.map((value, index) => (index % 4 === 1 || index % 4 === 2 ? -value : value))
+          : flat;
+        tracks.push(new THREE.QuaternionKeyframeTrack(`${nodeName}.quaternion`, new Float32Array(bone.times), new Float32Array(values)));
+        if (bone.pos) {
+          const pos = bone.pos.map((value) => value * 100);
+          tracks.push(new THREE.VectorKeyframeTrack(`${nodeName}.position`, new Float32Array(bone.posTimes), new Float32Array(pos)));
+        }
+      }
+      return new THREE.AnimationClip(entry.name, entry.duration, tracks);
+    };
     for (const [name, source] of [["idle", idleSource], ["run", parseFbx(nikoRunFbx)]]) {
       actions[name] = mixer.clipAction(retargeted(name, source));
       actions[name].play();
@@ -2580,7 +2602,7 @@ async function start() {
       const offset = (useNext ? next : index) * 4;
       return [values[offset], values[offset + 1], values[offset + 2], values[offset + 3]];
     };
-    const matchHemisphere = (clip, reference, samples = 8) => {
+    const matchHemisphere = (clip, reference, samples = 8, referenceAt = null) => {
       for (const track of clip.tracks) {
         if (!track.name.endsWith(".quaternion")) continue;
         const ref = reference.tracks.find((item) => item.name === track.name);
@@ -2590,7 +2612,7 @@ async function start() {
         for (let step = 0; step < samples; step += 1) {
           const u = samples === 1 ? 0 : step / samples;
           const here = quatAt(track, u);
-          const there = quatAt(ref, u);
+          const there = quatAt(ref, referenceAt == null ? u : referenceAt);
           const dot = here[0] * there[0] + here[1] * there[1] + here[2] * there[2] + here[3] * there[3];
           if (dot < 0) neg += 1;
           else pos += 1;
@@ -2605,33 +2627,28 @@ async function start() {
     const lockMoves = [];
     for (const entry of lockonClips.clips) {
       restorePose();
-      const tracks = [];
-      for (const bone of entry.bones) {
-        const nodeName = sourceName[bone.name];
-        if (!nodeName) continue;
-        tracks.push(new THREE.QuaternionKeyframeTrack(`${nodeName}.quaternion`, new Float32Array(bone.times), new Float32Array(bone.q)));
-        /* Unity stored these hip curves in meters. The Mixamo FBX skeleton is in centimeters, so the raw
-           values (~0.9) were applied against a rest of ~100 and dropped Niko through the floor. */
-        if (bone.pos) {
-          const pos = bone.pos.map((value) => value * 100);
-          tracks.push(new THREE.VectorKeyframeTrack(`${nodeName}.position`, new Float32Array(bone.posTimes), new Float32Array(pos)));
-        }
-      }
-      idleSource.animations = [new THREE.AnimationClip(entry.name, entry.duration, tracks)];
+      idleSource.animations = [curvesClip(entry)];
       const action = mixer.clipAction(retargeted(entry.name, idleSource));
       action.play();
       action.setEffectiveWeight(0);
       action.setEffectiveTimeScale(0);
       lockMoves.push({ name: entry.name, gait: entry.gait, x: entry.x, y: entry.y, action });
     }
-    const lockReference = lockMoves[0]?.action.getClip();
-    if (lockReference) {
-      matchHemisphere(lockReference, actions.idle.getClip(), 1);
-      lockMoves.forEach((move) => {
-        const clip = move.action.getClip();
-        if (clip !== lockReference) matchHemisphere(clip, lockReference);
-      });
-    }
+    const quatMap = (clip) => {
+      const map = {};
+      for (const track of clip.tracks) {
+        if (track.name.endsWith(".quaternion")) map[track.name.slice(0, -11)] = track;
+      }
+      return map;
+    };
+    const idleClip = actions.idle.getClip();
+    /* Every direction is stored in idle's hemisphere. A per-clip sign flip is what made the hands
+       trade places while the run blend fell back to idle. */
+    lockMoves.forEach((move) => matchHemisphere(move.action.getClip(), idleClip, 8, 0));
+    const idleQuats = quatMap(idleClip);
+    lockMoves.forEach((move) => {
+      move.quats = quatMap(move.action.getClip());
+    });
     mixer.update(0);
 
     const sphere = (bone, offset, r) => ({ bone: bones[bone], offset: new THREE.Vector3(...offset), r });
@@ -2666,6 +2683,7 @@ async function start() {
       mixer,
       actions,
       lockMoves,
+      idleQuats,
       cloak,
       sockets,
       parts,
@@ -2938,8 +2956,35 @@ async function start() {
     pace: 1,
   };
   const AXIS_Z = new THREE.Vector3(0, 0, 1);
+  const AXIS_Y = new THREE.Vector3(0, 1, 0);
+  const faceRight = new THREE.Vector3();
   const RAISED_ARM = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -0.35, 1.25));
   const overlayQ = new THREE.Quaternion();
+  const posedQ = new THREE.Quaternion();
+  const keyA = new THREE.Quaternion();
+  const keyB = new THREE.Quaternion();
+  const sampleTrack = (track, time, out) => {
+    const times = track.times;
+    const values = track.values;
+    const last = times.length - 1;
+    const span = times[last] || 1;
+    let t = time % span;
+    if (t < 0) t += span;
+    let index = 0;
+    while (index < last && times[index + 1] <= t) index += 1;
+    if (index >= last) {
+      const offset = last * 4;
+      out.set(values[offset], values[offset + 1], values[offset + 2], values[offset + 3]);
+      return;
+    }
+    const gap = times[index + 1] - times[index];
+    const u = gap > 1e-8 ? (t - times[index]) / gap : 0;
+    const a = index * 4;
+    const b = a + 4;
+    keyA.set(values[a], values[a + 1], values[a + 2], values[a + 3]);
+    keyB.set(values[b], values[b + 1], values[b + 2], values[b + 3]);
+    out.copy(keyA).slerp(keyB, u);
+  };
   const breeze = new THREE.Vector3();
 
   /* Stops and props push Niko out softly; the walk grid keeps him off cliffs, out of the sea and off the stream */
@@ -3763,34 +3808,45 @@ async function start() {
     const wave = calm ? 0 : Math.sin(time * 3) * 0.06 * pose.raise;
 
     if (bot.mixer) {
-      /* Free roam is idle against run. Lock-on uses the eight-way quaternion clips, in Niko's facing frame. */
+      /* Free roam is idle against run. Lock-on plays the run directions in Niko's facing frame. */
       const { actions } = bot;
       const locked = lockTarget && bot.lockMoves;
       if (locked) {
+        lockBackYaw = 0;
         const face = robot.rotation.y;
+        /* Same lateral sign as the movement. Negating it played the strafe that steps the other way. */
         const localX = input.x * Math.cos(face) + input.z * -Math.sin(face);
         const localZ = input.x * Math.sin(face) + input.z * Math.cos(face);
-        let sx = 0;
-        let sy = 0;
-        if (localX * localX + localZ * localZ > 0.001) {
-          const snapped = Math.round(Math.atan2(localX, localZ) / (Math.PI / 4)) * (Math.PI / 4);
-          sx = Math.sin(snapped);
-          sy = Math.cos(snapped);
-          if (Math.abs(Math.abs(sx) - Math.SQRT1_2) < 0.02) sx = Math.sign(sx) * Math.SQRT1_2;
-          if (Math.abs(Math.abs(sy) - Math.SQRT1_2) < 0.02) sy = Math.sign(sy) * Math.SQRT1_2;
-        }
-        lockDir.x = THREE.MathUtils.damp(lockDir.x, sx, 10, dt);
-        lockDir.y = THREE.MathUtils.damp(lockDir.y, sy, 10, dt);
-        /* A key press is the walk strafe. The run clips fold the forearms about 150° off idle, so they
-           snapped the hands in on the first press. Walk stays within the idle arms. */
-        const starting = input.lengthSq() > 0.0001 && lockSpeed < 0.05;
-        const targetSpeed = input.lengthSq() < 0.0001 ? 0 : 0.5;
-        if (starting) {
+        const moving = localX * localX + localZ * localZ > 0.001;
+        let aimX = 0;
+        let aimY = 1;
+        let lockSeek = false;
+        let aim = lockAngle;
+        if (moving) aim = Math.atan2(localX, localZ);
+        aimX = Math.sin(aim);
+        aimY = Math.cos(aim);
+        const turn = Math.atan2(Math.sin(aim - lockAngle), Math.cos(aim - lockAngle));
+        /* Magnitude stays up while a direction is held, so a clip is always playing. Idle takes whatever is left. */
+        lockMag = THREE.MathUtils.damp(lockMag, moving ? 1 : 0, moving ? 10 : 6, dt);
+        /* A left-right flip is 180°. Sweeping the circle plays every clip in between, and the opposed pair averages into the T-pose. Jump, and let idle cover that one blend. */
+        if (moving && Math.abs(turn) > 1.8) {
+          lockAngle = aim;
+          lockMag = 0.15;
+          lockSeek = true;
+        } else if (moving) lockAngle += turn * (1 - Math.exp(-14 * dt));
+        const sx = Math.sin(lockAngle);
+        const sy = Math.cos(lockAngle);
+        lockDir.x = sx * lockMag;
+        lockDir.y = sy * lockMag;
+        /* Lock-on plays the run set. The walk clips stay at weight 0. */
+        const starting = moving && lockMag < 0.05;
+        const targetSpeed = moving ? 0.5 : 0;
+        if (starting || lockSeek) {
           let lead = null;
           let leadDot = -1;
           for (const move of bot.lockMoves) {
-            if (move.gait !== "walk") continue;
-            const align = move.x * sx + move.y * sy;
+            if (move.gait !== "run") continue;
+            const align = move.x * aimX + move.y * aimY;
             if (align > leadDot) {
               leadDot = align;
               lead = move;
@@ -3833,30 +3889,167 @@ async function start() {
           }
         }
         lockSpeed = THREE.MathUtils.damp(lockSpeed, targetSpeed, 5, dt);
-        const walkT = Math.min(1, lockSpeed / 0.5);
-        const runT = 0;
-        actions.idle.setEffectiveWeight(1 - walkT);
+        const runT = lockMag;
         actions.run.setEffectiveWeight(0);
-        if (!starting && lockSpeed > 0.04) lockPhase = (lockPhase + dt * 0.9) % 1;
+        /* 0.7s run cycle at its authored speed. */
+        if (!starting && lockSpeed > 0.04) lockPhase = (lockPhase + dt * 1.45) % 1;
+        /* Only the two clips on either side of the stick. A dot-product blend also mixed in the
+           opposite diagonal, so forward played the walk plus both jog diagonals at once. */
+        const sectorWeights = (group) => {
+          const weights = group.map(() => 0);
+          if (Math.hypot(lockDir.x, lockDir.y) < 0.02 || group.length === 0) return weights;
+          const angle = Math.atan2(lockDir.x, lockDir.y);
+          const samples = group.map((move, index) => ({ index, angle: Math.atan2(move.x, move.y) })).sort((a, b) => a.angle - b.angle);
+          const count = samples.length;
+          if (count === 1) {
+            weights[samples[0].index] = 1;
+            return weights;
+          }
+          for (let i = 0; i < count; i += 1) {
+            const a0 = samples[i].angle;
+            let span = samples[(i + 1) % count].angle - a0;
+            if (span <= 0) span += Math.PI * 2;
+            let rel = Math.atan2(Math.sin(angle - a0), Math.cos(angle - a0));
+            if (rel < 0) rel += Math.PI * 2;
+            if (rel <= span + 1e-4) {
+              const t = span < 1e-4 ? 0 : Math.min(1, rel / span);
+              weights[samples[i].index] = 1 - t;
+              weights[samples[(i + 1) % count].index] += t;
+              break;
+            }
+          }
+          return weights;
+        };
+        let posed = 0;
         for (const gait of ["walk", "run"]) {
           const group = bot.lockMoves.filter((move) => move.gait === gait);
-          const dots = group.map((move) => Math.max(0, move.x * lockDir.x + move.y * lockDir.y));
-          const sum = dots.reduce((total, dot) => total + dot, 0) || 1;
-          const gaitWeight = gait === "run" ? runT : walkT;
+          const weights = gait === "run" ? sectorWeights(group) : group.map(() => 0);
+          if (gait === "run" && Math.hypot(lockDir.x, lockDir.y) > 0.05) {
+            const aim = Math.atan2(lockDir.x, lockDir.y);
+            const fromBack = Math.atan2(Math.sin(aim - Math.PI), Math.cos(aim - Math.PI));
+            /* Back-left and back-right play the straight backward clip. The hips yaw onto that diagonal and the chest yaws back toward the target. */
+            if (Math.abs(fromBack) > 0.15 && Math.abs(fromBack) < Math.PI / 3) {
+              const back = group.findIndex((move) => move.name === "runB");
+              if (back >= 0) {
+                weights.fill(0);
+                weights[back] = 1;
+                lockBackYaw = fromBack;
+              }
+            }
+          }
+          const gaitWeight = gait === "run" ? runT : 0;
           group.forEach((move, index) => {
-            move.action.setEffectiveWeight((dots[index] / sum) * gaitWeight);
+            const weight = weights[index] * gaitWeight;
+            move.action.setEffectiveWeight(weight);
             move.action.setEffectiveTimeScale(0);
             move.action.time = lockPhase * move.action.getClip().duration;
+            posed += weight;
           });
         }
+        /* Whatever the run clips don't cover stays on idle. A gap here is the bind pose. */
+        actions.idle.setEffectiveWeight(Math.max(0, 1 - posed));
       } else {
         actions.idle.setEffectiveWeight(1 - state.walk);
         actions.run.setEffectiveWeight(state.walk);
         actions.run.setEffectiveTimeScale(1.2 * state.pace);
         bot.lockMoves?.forEach((move) => move.action.setEffectiveWeight(0));
         lockSpeed = 0;
+        lockMag = 0;
+        lockBackYaw = 0;
       }
       bot.mixer.update(calm ? 0 : dt);
+      /* The mixer averages quaternion components. Shoulders are converted above so the wrists stay on their own sides; this still takes the short arc for the arms on the way back to idle. */
+      if (lockTarget && bot.idleQuats) {
+        const idleWeight = actions.idle.getEffectiveWeight();
+        let sources = idleWeight > 0.02 ? 1 : 0;
+        for (const move of bot.lockMoves) {
+          if (move.gait === "run" && move.action.getEffectiveWeight() > 0.02) sources += 1;
+        }
+        const armNames = sources > 1
+          ? Object.keys(bot.idleQuats).filter((name) => /Hand|Arm|Shoulder/.test(name) && bot.bones[name])
+          : [];
+        for (const name of armNames) {
+          let sx = 0;
+          let sy = 0;
+          let sz = 0;
+          let sw = 0;
+          let fx = 0;
+          let fy = 0;
+          let fz = 0;
+          let fw = 1;
+          let has = false;
+          const add = (q, weight) => {
+            if (!(weight > 0.0001)) return;
+            let x = q.x;
+            let y = q.y;
+            let z = q.z;
+            let w = q.w;
+            if (!has) {
+              fx = x;
+              fy = y;
+              fz = z;
+              fw = w;
+              has = true;
+            } else if (x * fx + y * fy + z * fz + w * fw < 0) {
+              x = -x;
+              y = -y;
+              z = -z;
+              w = -w;
+            }
+            sx += x * weight;
+            sy += y * weight;
+            sz += z * weight;
+            sw += w * weight;
+          };
+          sampleTrack(bot.idleQuats[name], actions.idle.time, posedQ);
+          add(posedQ, idleWeight);
+          for (const move of bot.lockMoves) {
+            if (move.gait !== "run") continue;
+            const weight = move.action.getEffectiveWeight();
+            const track = move.quats?.[name];
+            if (!track || !(weight > 0.0001)) continue;
+            sampleTrack(track, move.action.time, posedQ);
+            add(posedQ, weight);
+          }
+          const len = Math.hypot(sx, sy, sz, sw);
+          if (len > 0.25) bot.bones[name].quaternion.set(sx / len, sy / len, sz / len, sw / len);
+        }
+      }
+      /* Diagonal back: legs follow the backward clip along the diagonal, chest stays on the target. */
+      if (lockTarget && Math.abs(lockBackYaw) > 0.02 && bot.bones?.Hips && bot.bones?.Spine2) {
+        const yawWorld = (bone, radians) => {
+          const parent = bone.parent;
+          if (!parent) return;
+          bone.updateWorldMatrix(true, false);
+          const world = bone.getWorldQuaternion(posedQ);
+          keyA.setFromAxisAngle(AXIS_Y, radians);
+          world.premultiply(keyA);
+          parent.getWorldQuaternion(keyB);
+          bone.quaternion.copy(keyB.invert()).multiply(world);
+        };
+        yawWorld(bot.bones.Hips, lockBackYaw);
+        yawWorld(bot.bones.Spine2, -lockBackYaw);
+      }
+      /* Standing still, pitch the chest and head up toward the camera. Mixamo's local axes are not the old rig's, so this is a world-axis pitch around his right. */
+      if (bot.ownPose && state.faceUp > 0.01 && bot.bones.Head && bot.model) {
+        bot.model.updateWorldMatrix(true, false);
+        const e = bot.model.matrixWorld.elements;
+        faceRight.set(e[8], e[9], e[10]).normalize();
+        const pitchWorld = (bone, radians) => {
+          const parent = bone.parent;
+          if (!parent) return;
+          bone.updateWorldMatrix(true, false);
+          const world = bone.getWorldQuaternion(posedQ);
+          keyA.setFromAxisAngle(faceRight, radians);
+          world.premultiply(keyA);
+          parent.getWorldQuaternion(keyB);
+          bone.quaternion.copy(keyB.invert()).multiply(world);
+        };
+        const lift = -state.faceUp;
+        if (bot.bones.Spine2) pitchWorld(bot.bones.Spine2, lift * 0.1);
+        if (bot.bones.Neck) pitchWorld(bot.bones.Neck, lift * 0.16);
+        pitchWorld(bot.bones.Head, lift * 0.34);
+      }
       /* These offsets were measured on the old skeleton, whose bones rested at identity. The Y Bot rig already
          carries Mixamo's bone axes, so the same turns point the limbs the wrong way. */
       if (!bot.ownPose) {
@@ -4777,6 +4970,8 @@ async function start() {
         return { x: box.left + ((p.x + 1) / 2) * box.width, y: box.top + ((1 - p.y) / 2) * box.height };
       },
       target: (x, y) => (x == null ? Boolean(lockTarget) : tryLock(x, y)),
+      /* Live lock-on clip weights, so a direction can be checked without guessing from the pose. */
+      lockClips: () => bot.lockMoves?.map((move) => ({ name: move.name, gait: move.gait, weight: +move.action.getEffectiveWeight().toFixed(3) })) ?? [],
       /* Look-down angle in degrees. angle(30) is shallower, angle(60) is steeper. Omit it to read the live angle.
          He stays in the centre. ?angle= sets the same value on load. */
       angle: (degrees) => {
