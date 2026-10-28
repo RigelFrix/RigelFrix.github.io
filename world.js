@@ -7,7 +7,7 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { FBXLoader } from "./.impeccable/fbx/addons/loaders/FBXLoader.js";
 import nikoBody from "./assets/niko/low-poly-humanoid-v6-clean.glb";
 import nikoHair from "./assets/niko/hair-short.glb";
-import nikoIdleFbx from "./assets/Happy Idle.fbx";
+import nikoIdleFbx from "./assets/niko/Idle.fbx";
 import nikoRunFbx from "./assets/Running (1).fbx";
 import lockonClips from "./assets/niko/lockon.json";
 import nikoEyesUrl from "./assets/niko-eyes.png";
@@ -3925,10 +3925,12 @@ async function start() {
             const fromBack = Math.atan2(Math.sin(aim - Math.PI), Math.cos(aim - Math.PI));
             const absBack = Math.abs(fromBack);
             const outer = Math.PI / 3;
-            /* Back-left and back-right ease onto the straight backward clip. The hips yaw onto that diagonal and the chest yaws back toward the target. */
+            /* Back-left and back-right play the straight backward clip. The hips yaw onto that diagonal
+               and the chest yaws back toward the target. Pure left and right keep their strafe clips. */
             if (absBack < outer) {
               const back = group.findIndex((move) => move.name === "runB");
-              const u = absBack <= 0.15 ? 1 : (outer - absBack) / (outer - 0.15);
+              const edge = 0.12;
+              const u = absBack <= outer - edge ? 1 : (outer - absBack) / edge;
               const smooth = u * u * (3 - 2 * u);
               if (back >= 0 && smooth > 0) {
                 for (let i = 0; i < weights.length; i += 1) weights[i] *= 1 - smooth;
