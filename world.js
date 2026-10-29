@@ -10,8 +10,10 @@ import nikoHair from "./assets/niko/hair-short.glb";
 import nikoIdleFbx from "./assets/niko/Idle.fbx";
 import nikoRunFbx from "./assets/Running (1).fbx";
 import lockonClips from "./assets/niko/lockon.json";
+import xiphosGlb from "./assets/models/xiphos-sword.glb";
+import longswordGlb from "./assets/models/longsword.glb";
 import nikoEyesUrl from "./assets/niko-eyes.png";
-import { atmos, buildIsland, CLOUD_GLSL, CLOUD_SHADE, cloudCover, cloudShade, cloudSun, cloudTime, cloudUniforms, ISLE, lampGain, lamped, makeCloudMap, makeRamp, waterLight, occlude, seeThrough, rainAmt, windMul, windTime, weatherFog, weatherFogColor, weatherWet } from "./world-island.js";
+import { atmos, buildIsland, CLOUD_GLSL, CLOUD_SHADE, cloudCover, cloudLightStyle, cloudShade, cloudSun, cloudTime, cloudUniforms, ISLE, lampGain, lamped, makeCloudMap, makeRamp, waterLight, occlude, seeThrough, rainAmt, windMul, windTime, weatherFog, weatherFogColor, weatherWet } from "./world-island.js";
 import { lay, toXZ } from "./world-map.js";
 import { windLines } from "./world-wind.js";
 import { createClimate } from "./world-climate.js";
@@ -20,6 +22,7 @@ import { makeRays } from "./world-rays.js";
 
 const root = document.documentElement;
 const host = document.getElementById("world");
+cloudLightStyle.value = new URLSearchParams(location.search).get("lighting") === "cloudsteps";
 
 window.PortfolioWorld = { active: root.classList.contains("world") };
 
@@ -582,9 +585,10 @@ async function start() {
   /* Deep enough for low evening light; the sides are fitted to the view in fitShadow */
   Object.assign(sun.shadow.camera, { left: -50, right: 50, top: 50, bottom: -50, near: 1, far: 200 });
   sun.shadow.camera.updateProjectionMatrix();
-  sun.shadow.bias = -0.0004;
-  /* A small push keeps faceted rocks from shadowing themselves. Larger values open a bright gap under every mesh. */
-  sun.shadow.normalBias = 0.012;
+  /* Keep depth bias at zero too; the negative offset reintroduced visible shadow detachment. */
+  sun.shadow.bias = 0;
+  /* Normal bias offsets each receiver along its normal and visibly lifts shadows off feet and prop bases. */
+  sun.shadow.normalBias = 0;
   sun.shadow.radius = 1.35;
   /* One directional light, the way a Unity sun works: it redraws every frame so Niko casts a shadow and the
      island's shadows fall on him. bakeShadows still forces a redraw when the fit or the sun moves. */
@@ -1480,15 +1484,16 @@ async function start() {
     /* Legs: baggy shorts, cream socks, chunky boots with a folded cuff */
     const legs = [-1, 1].map((side) => {
       const hip = new THREE.Group();
-      hip.position.set(0.095 * side, 0.6, 0);
+      hip.position.set(0.085 * side, 0.6, 0.01);
       body.add(hip);
-      part(hip, lathe([[0.085, 0.04], [0.112, -0.06], [0.108, -0.18], [0.072, -0.24]], 7, 0.006), both(NIKO.pants));
-      part(hip, tube(0.058, 0.062, 0.06, 7), mat(NIKO.sock), 0, -0.27, 0);
-      part(hip, tube(0.084, 0.082, 0.05, 7, 0.004), mat(NIKO.brownLight), 0, -0.32, 0);
-      part(hip, tube(0.07, 0.075, 0.17, 7), mat(NIKO.brown), 0, -0.42, 0);
+      const knee = part(hip, lathe([[0.085, 0.04], [0.112, -0.06], [0.108, -0.18], [0.072, -0.24]], 7, 0.006), both(NIKO.pants));
+      knee.scale.set(1.04, 1, 0.94);
+      part(hip, tube(0.058, 0.062, 0.06, 7), mat(NIKO.sock), 0, -0.27, 0.02);
+      part(hip, tube(0.084, 0.082, 0.05, 7, 0.004), mat(NIKO.brownLight), 0, -0.32, 0.015);
+      part(hip, tube(0.07, 0.075, 0.17, 7), mat(NIKO.brown), 0, -0.42, 0.01);
       part(hip, block(0.13, 0.1, 0.2, 0.03), mat(NIKO.brown), 0, -0.53, 0.035);
       part(hip, block(0.14, 0.035, 0.21, 0.012), mat(NIKO.brownDeep), 0, -0.58, 0.035);
-      part(hip, tube(0.078, 0.078, 0.025, 7), mat(NIKO.brownDeep), 0, -0.4, 0);
+      part(hip, tube(0.078, 0.078, 0.025, 7), mat(NIKO.brownDeep), 0, -0.4, 0.02);
       return hip;
     });
 
@@ -1599,12 +1604,16 @@ async function start() {
       let z = sk.getZ(i);
       if (y < 0) {
         const t = -y / 0.4;
-        x *= 1 - 0.3 * t ** 1.5;
-        z *= 1 - 0.12 * t;
-        if (z > 0) z += 0.03 * t;
-        y *= 1.1;
+        x *= 1 - 0.28 * t ** 1.5;
+        z *= 1 - 0.08 * t;
+        if (z > 0) z += 0.025 * t;
+        y *= 1.08;
       }
-      sk.setXYZ(i, x, y + 0.33, z * 0.95);
+      const faceBias = Math.max(0, y + 0.1);
+      x *= 1 - 0.12 * faceBias;
+      z *= 1 + 0.08 * faceBias;
+      if (z > 0) z += 0.04 * Math.max(0, y + 0.22);
+      sk.setXYZ(i, x, y + 0.32, z * 0.96);
     }
     skull.computeVertexNormals();
     /* Anime face shading: front normals lean toward one forward direction so the face lights as a single painted plane */
@@ -1789,7 +1798,9 @@ async function start() {
     head.add(hair);
     const C = new THREE.Vector3(0, 0.43, -0.1);
     const R = new THREE.Vector3(0.44 * 1.08, 0.44 * 0.9, 0.44 * 1.02);
-    part(hair, ball(0.44, 10, 8, 0.02), mat(NIKO.hair), C.x, C.y, C.z).scale.set(1.08, 0.9, 1.02);
+    const cap = part(hair, ball(0.44, 10, 8, 0.02), mat(NIKO.hair), C.x, C.y, C.z);
+    cap.scale.set(1.12, 0.84, 1.1);
+    cap.position.set(C.x, C.y + 0.04, C.z - 0.02);
     const strand = (base, dir, out, len, r, color) => {
       const d = new THREE.Vector3(...dir).normalize();
       const n = new THREE.Vector3(...out);
@@ -1846,7 +1857,7 @@ async function start() {
     inked.forEach((mesh) => addInk(mesh, ink));
 
     scene.add(robot);
-    return { robot, body, legs, arms, head, eyes, antenna, bulb, bulbGlow, cape, cloth, clothBase, hair, lantern, buddy, buddyStar, faceMat, faceOpen, faceShut, paintFace };
+    return { robot, body, head, eyes, antenna, bulb, bulbGlow, cape, cloth, clothBase, hair, lantern, buddy, buddyStar, faceMat, faceOpen, faceShut, paintFace };
   };
 
   const bot = buildRobot();
@@ -1911,6 +1922,137 @@ async function start() {
   dummyRing.visible = false;
   dummy.add(dummyRing);
   const dummyFocus = new THREE.Vector3(dummyAt.x, dummyAt.y + 1.45, dummyAt.z);
+
+  const makeSwordPickup = ({ model, name, size, handName, offset }) => {
+    const at = landing.clone();
+    at.x += offset[0];
+    at.z += offset[1];
+    if (!island.nav.walkable(at.x, at.z)) {
+      const near = island.nav.nearest(at.x, at.z);
+      if (near) at.copy(near);
+    }
+    at.y = island.groundAt(at.x, at.z);
+
+    const object = new THREE.Group();
+    object.name = name;
+    object.position.set(at.x, at.y + 0.66 * size, at.z);
+    object.rotation.set(0.14, 0.6, Math.PI + 0.1);
+    object.scale.setScalar(size);
+    scene.add(object);
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.46, 0.56, 28),
+      new THREE.MeshBasicMaterial({ color: "#ffc93c", transparent: true, opacity: 0.6, depthWrite: false, toneMapped: false }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(at.x, at.y + 0.05, at.z);
+    scene.add(ring);
+
+    const grip = {
+      held: false,
+      flying: 0,
+      position: new THREE.Vector3(),
+      quaternion: new THREE.Quaternion(),
+      scale: 1,
+      fromPosition: new THREE.Vector3(),
+      fromQuaternion: new THREE.Quaternion(),
+      fromScale: size,
+    };
+    const load = async () => {
+      const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
+      const gltf = await new GLTFLoader().parseAsync(model.buffer.slice(model.byteOffset, model.byteOffset + model.byteLength), "");
+      gltf.scene.traverse((node) => {
+        if (!node.isMesh) return;
+        node.material = softMapped(node.material.map);
+        node.castShadow = true;
+        node.receiveShadow = true;
+      });
+      object.add(gltf.scene);
+      bakeShadows();
+    };
+    load().catch((error) => console.warn(`${name} model failed`, error));
+
+    const fitGrip = () => {
+      const bones = bot.bones;
+      const hand = bones?.[handName];
+      const index = bones?.[`${handName}Index1`]?.position;
+      const pinky = bones?.[`${handName}Pinky1`]?.position;
+      const middle = bones?.[`${handName}Middle1`]?.position;
+      if (!hand || !index || !pinky || !middle) return false;
+      const knuckles = index.clone().sub(pinky).normalize();
+      const fingers = middle.clone().addScaledVector(knuckles, -middle.dot(knuckles)).normalize();
+      const palm = new THREE.Vector3().crossVectors(knuckles, fingers).normalize();
+      const thumb = bones[`${handName}Thumb1`]?.position;
+      if (thumb && thumb.dot(palm) < 0) palm.negate();
+      const dip = THREE.MathUtils.degToRad(35);
+      const along = knuckles.multiplyScalar(Math.cos(dip)).addScaledVector(fingers, Math.sin(dip));
+      const across = new THREE.Vector3().crossVectors(along, palm);
+      grip.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(across, along, palm));
+      const handScale = hand.getWorldScale(new THREE.Vector3()).x;
+      grip.scale = size / handScale;
+      grip.position.copy(middle).multiplyScalar(0.75)
+        .addScaledVector(palm, 0.03 / handScale)
+        .addScaledVector(new THREE.Vector3(0, 0.1, 0).applyQuaternion(grip.quaternion), -grip.scale);
+      return true;
+    };
+    const equip = () => {
+      bot.bones[handName].add(object);
+      object.position.copy(grip.position);
+      object.quaternion.copy(grip.quaternion);
+      object.scale.setScalar(grip.scale);
+      grip.flying = 0;
+      grip.held = true;
+      ring.visible = false;
+    };
+    const target = new THREE.Matrix4();
+    const to = { position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), scale: new THREE.Vector3() };
+    const update = (dt, time) => {
+      if (grip.held) return;
+      ring.material.opacity = 0.4 + Math.sin(time * 3) * 0.2;
+      if (!grip.flying) {
+        if (introLive || !object.children.length) return;
+        if (Math.hypot(robot.position.x - at.x, robot.position.z - at.z) > 1.1 || !fitGrip()) return;
+        grip.fromPosition.copy(object.position);
+        grip.fromQuaternion.copy(object.quaternion);
+        grip.fromScale = object.scale.x;
+        grip.flying = 0.0001;
+        ring.visible = false;
+      }
+      grip.flying = Math.min(1, grip.flying + dt / 0.4);
+      if (grip.flying >= 1) {
+        equip();
+        return;
+      }
+      const ease = grip.flying * grip.flying * (3 - 2 * grip.flying);
+      const hand = bot.bones[handName];
+      hand.updateWorldMatrix(true, false);
+      target.compose(grip.position, grip.quaternion, to.scale.setScalar(grip.scale));
+      target.premultiply(hand.matrixWorld).decompose(to.position, to.quaternion, to.scale);
+      object.position.lerpVectors(grip.fromPosition, to.position, ease);
+      object.position.y += Math.sin(ease * Math.PI) * 0.6;
+      object.quaternion.slerpQuaternions(grip.fromQuaternion, to.quaternion, ease);
+      object.scale.setScalar(THREE.MathUtils.lerp(grip.fromScale, to.scale.x, ease));
+    };
+    const debug = (give) => {
+      if (give && !grip.held && fitGrip()) equip();
+      return { held: grip.held, at: at.toArray().map((n) => +n.toFixed(2)) };
+    };
+    return { update, debug };
+  };
+  const swordPickup = makeSwordPickup({
+    model: xiphosGlb,
+    name: "Xiphos",
+    size: 1.15,
+    handName: "RightHand",
+    offset: [-Math.SQRT1_2 * 1.2, Math.SQRT1_2 * 2.8],
+  });
+  const longswordPickup = makeSwordPickup({
+    model: longswordGlb,
+    name: "Longsword",
+    size: 0.97,
+    handName: "LeftHand",
+    offset: [Math.SQRT1_2 * 1.3, -Math.SQRT1_2 * 1.3],
+  });
   let lockTarget = null;
   let lockLost = 0;
   let lockSpeed = 0;
@@ -1947,7 +2089,6 @@ async function start() {
   bot.buddy.position.copy(buddyAt);
   bot.hairRest = 0;
   bot.hairLag = 0.25;
-  bot.knees = [];
 
   bot.waist = 1.0;
   bot.grow = 1;
@@ -2304,6 +2445,11 @@ async function start() {
     const times = new Float32Array(frames);
     const quats = Object.fromEntries(names.map((name) => [name, new Float32Array(frames * 4)]));
     const hips = new Float32Array(frames * 3);
+    /* The target rig retargets the idle stance wider than intended; keep the correction in these clip keys. */
+    const idleLegCorrections = clipName === "idle" ? {
+      LeftUpLeg: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.06),
+      RightUpLeg: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.06),
+    } : {};
     for (let frame = 0; frame < frames; frame += 1) {
       const time = (srcClip.duration * frame) / (frames - 1);
       times[frame] = time;
@@ -2319,6 +2465,7 @@ async function start() {
         const local = parent && posed[parent.name]
           ? posed[parent.name].clone().invert().multiply(posed[name])
           : posed[name].clone();
+        if (idleLegCorrections[name]) local.multiply(idleLegCorrections[name]);
         /* q and -q are the same pose. Keep each key on the short arc from the previous one so the
            hands don't spin a full turn between frames, or when two directions are blended. */
         if (frame > 0) {
@@ -2687,9 +2834,6 @@ async function start() {
       cloak,
       sockets,
       parts,
-      legs: [bones.RightUpLeg, bones.LeftUpLeg],
-      knees: [bones.RightLeg, bones.LeftLeg],
-      arms: [bones.RightArm, bones.LeftArm],
       head: bones.Head,
       antenna: bones.Ahoge || spare(),
       hair: bones.Hair || spare(),
@@ -2700,7 +2844,6 @@ async function start() {
       cloth: null,
       waist: 1.1,
       grow: model.scale.y / 1.95,
-      ownPose: true,
       bulbGlow,
       faceMat,
       faceOpen,
@@ -2955,11 +3098,8 @@ async function start() {
     faceUp: 0,
     pace: 1,
   };
-  const AXIS_Z = new THREE.Vector3(0, 0, 1);
-  const AXIS_Y = new THREE.Vector3(0, 1, 0);
   const faceRight = new THREE.Vector3();
-  const RAISED_ARM = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -0.35, 1.25));
-  const overlayQ = new THREE.Quaternion();
+  const worldUp = new THREE.Vector3(0, 1, 0);
   const posedQ = new THREE.Quaternion();
   const keyA = new THREE.Quaternion();
   const keyB = new THREE.Quaternion();
@@ -3214,15 +3354,16 @@ async function start() {
   };
 
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
-  host.addEventListener("pointermove", (event) => {
+  window.addEventListener("pointermove", (event) => {
     if (event.pointerType !== "mouse") return;
     const rect = host.getBoundingClientRect();
     cursor.x = (event.clientX - rect.left) / Math.max(1, rect.width);
     cursor.y = (event.clientY - rect.top) / Math.max(1, rect.height);
-    cursor.on = true;
+    cursor.on = event.clientX >= rect.left && event.clientX <= rect.right
+      && event.clientY >= rect.top && event.clientY <= rect.bottom;
   });
-  host.addEventListener("pointerleave", () => {
-    cursor.on = false;
+  window.addEventListener("pointerout", (event) => {
+    if (!event.relatedTarget) cursor.on = false;
   });
   window.addEventListener("blur", () => {
     cursor.on = false;
@@ -3766,7 +3907,6 @@ async function start() {
     state.phase += dt * 10 * state.walk * state.pace;
     const step = Math.sin(state.phase);
     const swing = step * 0.7 * state.walk;
-    const bob = Math.abs(Math.cos(state.phase)) * state.walk;
 
     /* Standing still, he turns three-quarters toward the camera and looks up, so his face reads from above */
     state.still = moving ? 0 : state.still + dt;
@@ -3800,12 +3940,6 @@ async function start() {
       turn = Math.atan2(Math.sin(turn), Math.cos(turn));
       robot.rotation.y += turn * Math.min(1, dt * (faceCam ? 4 : 12));
     }
-
-    const rest = 1 - state.walk;
-    const breathe = calm ? 0 : Math.sin(time * 2.2) * rest;
-    const sway = calm ? 0 : Math.sin(time * 1.6) * 0.06 * rest;
-    const look = calm ? 0 : (Math.sin(time * 0.53) * 0.7 + Math.sin(time * 1.31) * 0.3) * 0.22 * rest;
-    const wave = calm ? 0 : Math.sin(time * 3) * 0.06 * pose.raise;
 
     if (bot.mixer) {
       /* Free roam is idle against run. Lock-on plays the run directions in Niko's facing frame. */
@@ -3925,8 +4059,7 @@ async function start() {
             const fromBack = Math.atan2(Math.sin(aim - Math.PI), Math.cos(aim - Math.PI));
             const absBack = Math.abs(fromBack);
             const outer = Math.PI / 3;
-            /* Back-left and back-right play the straight backward clip. The hips yaw onto that diagonal
-               and the chest yaws back toward the target. Pure left and right keep their strafe clips. */
+            /* Diagonal backward movement uses the backward clip, with the hips turned into the strafe. */
             if (absBack < outer) {
               const back = group.findIndex((move) => move.name === "runB");
               const edge = 0.12;
@@ -4018,14 +4151,14 @@ async function start() {
           if (len > 0.25) bot.bones[name].quaternion.set(sx / len, sy / len, sz / len, sw / len);
         }
       }
-      /* Diagonal back: legs follow the backward clip along the diagonal, chest stays on the target. */
+      /* Diagonal backward: turn the hips into the backward run while keeping the chest on the target. */
       if (lockTarget && Math.abs(lockBackYaw) > 0.02 && bot.bones?.Hips && bot.bones?.Spine2) {
         const yawWorld = (bone, radians) => {
           const parent = bone.parent;
           if (!parent) return;
           bone.updateWorldMatrix(true, false);
           const world = bone.getWorldQuaternion(posedQ);
-          keyA.setFromAxisAngle(AXIS_Y, radians);
+          keyA.setFromAxisAngle(worldUp, radians);
           world.premultiply(keyA);
           parent.getWorldQuaternion(keyB);
           bone.quaternion.copy(keyB.invert()).multiply(world);
@@ -4034,7 +4167,7 @@ async function start() {
         yawWorld(bot.bones.Spine2, -lockBackYaw);
       }
       /* Standing still, pitch the chest and head up toward the camera. Mixamo's local axes are not the old rig's, so this is a world-axis pitch around his right. */
-      if (bot.ownPose && state.faceUp > 0.01 && bot.bones.Head && bot.model) {
+      if (state.faceUp > 0.01 && bot.bones.Head && bot.model) {
         bot.model.updateWorldMatrix(true, false);
         const e = bot.model.matrixWorld.elements;
         faceRight.set(e[8], e[9], e[10]).normalize();
@@ -4048,59 +4181,23 @@ async function start() {
           parent.getWorldQuaternion(keyB);
           bone.quaternion.copy(keyB.invert()).multiply(world);
         };
-        const lift = -state.faceUp;
+        const lift = state.faceUp;
         if (bot.bones.Spine2) pitchWorld(bot.bones.Spine2, lift * 0.1);
         if (bot.bones.Neck) pitchWorld(bot.bones.Neck, lift * 0.16);
         pitchWorld(bot.bones.Head, lift * 0.34);
       }
-      /* These offsets were measured on the old skeleton, whose bones rested at identity. The Y Bot rig already
-         carries Mixamo's bone axes, so the same turns point the limbs the wrong way. */
-      if (!bot.ownPose) {
-        const { bones } = bot;
-        const spread = 0.2 + pose.crouch * 0.45;
-        bones.LeftArm.quaternion.premultiply(overlayQ.setFromAxisAngle(AXIS_Z, spread));
-        bones.RightArm.quaternion.premultiply(overlayQ.setFromAxisAngle(AXIS_Z, -spread));
-        if (pose.raise > 0.001) {
-          bones.LeftArm.quaternion.slerp(RAISED_ARM, pose.raise);
-          bones.LeftForeArm.quaternion.slerp(overlayQ.identity(), pose.raise);
-          bones.LeftHand.rotateZ(wave * 4);
-        }
-        if (pose.crouch > 0.001) {
-          bot.legs.forEach((leg) => leg.rotateX(-pose.crouch * 0.9));
-          bot.knees.forEach((knee) => knee.rotateX(pose.crouch * 1.5));
-          bones.LeftFoot.rotateX(-pose.crouch * 0.6);
-          bones.RightFoot.rotateX(-pose.crouch * 0.6);
-        }
-        bones.Spine2.rotateX(-state.faceUp * 0.08);
-        bones.Neck.rotateX(-state.faceUp * 0.18);
-        bones.Head.rotateY(look * (0.7 - state.faceUp * 0.45));
-        bones.Head.rotateX(-pose.tilt * 0.16 - 0.1 - state.faceUp * 0.38);
-        bones.Head.rotateZ(pose.tilt * 0.2);
-      }
     } else {
-      bot.legs.forEach((leg, i) => {
-        const side = i ? 1 : -1;
-        leg.rotation.x = swing * -side * 1.1;
-        leg.rotation.z = side * pose.crouch * 0.28;
-      });
-      bot.arms[0].rotation.x = -swing * 0.8 + pose.crouch * 0.7;
-      bot.arms[0].rotation.z = -0.16 - sway - pose.crouch * 0.5 - pose.raise * 0.3;
-      bot.arms[1].rotation.x = swing * 0.9 + pose.crouch * 0.7 - pose.raise * 2.75;
-      bot.arms[1].rotation.z = 0.16 + sway + pose.raise * 0.5 + pose.crouch * 0.5 + wave;
-      bot.head.rotation.z = Math.sin(state.phase * 0.5) * 0.05 * state.walk + sway * 0.5 + pose.tilt * 0.2;
-      bot.head.rotation.x = -pose.tilt * 0.16 - state.walk * 0.08 + bob * 0.04;
-      bot.head.rotation.y = look;
+      bot.head.rotation.x = state.faceUp * 0.2;
     }
 
     /* The flip turns around the waist, not the feet */
     state.hop = Math.min(1, state.hop + dt / 0.38);
     const hop = state.hop < 1 ? Math.sin(state.hop * Math.PI) * 0.45 : 0;
     const waist = bot.waist;
-    const bounce = bot.mixer ? 0 : bob * 0.08 + breathe * 0.012;
-    bot.body.position.y = bounce + hop + pose.lift - pose.crouch * 0.16 * bot.grow + waist * (1 - Math.cos(pose.flip));
+    bot.body.position.y = hop + pose.lift - pose.crouch * 0.16 * bot.grow + waist * (1 - Math.cos(pose.flip));
     bot.body.position.z = -waist * Math.sin(pose.flip);
-    bot.body.rotation.x = state.walk * (bot.mixer ? 0.03 : 0.1) + pose.flip;
-    bot.body.rotation.z = bot.mixer ? 0 : step * 0.05 * state.walk;
+    bot.body.rotation.x = pose.flip;
+    bot.body.rotation.z = 0;
     bot.body.rotation.y = pose.spin;
     bot.antenna.rotation.z = calm ? 0 : Math.sin(time * 3.1) * 0.12 + swing * 0.2;
     bot.antenna.rotation.x = -state.walk * 0.35;
@@ -4147,6 +4244,9 @@ async function start() {
         bot.cloak.update(dt, NIKO_SCALE * robot.scale.y, breeze);
       }
     }
+
+    swordPickup.update(dt, time);
+    longswordPickup.update(dt, time);
 
     /* The star companion floats by his shoulder and rises above his hand when he raises it */
     const g = bot.grow;
@@ -4241,7 +4341,7 @@ async function start() {
         const biasY = THREE.MathUtils.clamp((0.5 - cursor.y) * 2, -1, 1);
         const lookStrength = lockTarget ? 0.35 : 1;
         screenShiftGoal.addScaledVector(screenRight, biasX * 0.7 * halfW * lookStrength);
-        screenShiftGoal.addScaledVector(screenUp, biasY * 0.5 * halfH * lookStrength);
+        screenShiftGoal.addScaledVector(screenUp, biasY * 1.1 * halfH * lookStrength);
         /* Lock-on look cannot shove Niko or the dummy past the padded screen edge. */
         if (lockTarget && screenShiftGoal.lengthSq() > 0.0001) {
           const fits = (scale) => {
@@ -4973,6 +5073,9 @@ async function start() {
         return { x: box.left + ((p.x + 1) / 2) * box.width, y: box.top + ((1 - p.y) / 2) * box.height };
       },
       target: (x, y) => (x == null ? Boolean(lockTarget) : tryLock(x, y)),
+      /* Read either sword's placement, or pass true to equip it immediately. */
+      sword: (give) => swordPickup.debug(give),
+      longsword: (give) => longswordPickup.debug(give),
       /* Live lock-on clip weights, so a direction can be checked without guessing from the pose. */
       lockClips: () => bot.lockMoves?.map((move) => ({ name: move.name, gait: move.gait, weight: +move.action.getEffectiveWeight().toFixed(3) })) ?? [],
       /* Look-down angle in degrees. angle(30) is shallower, angle(60) is steeper. Omit it to read the live angle.

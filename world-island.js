@@ -1134,6 +1134,7 @@ export const atmosTime = { value: 0 };
 export const cloudTime = { value: 0 };
 export const cloudCover = { value: 0.6 };
 export const cloudShade = { value: 0.7 };
+export const cloudLightStyle = { value: false };
 /* Sun direction xz / y: the cloud layer sits at CLOUD_HEIGHT and its shadow falls along the sun, so cloud patches on
    the ground and the beams through the air (world-rays.js) line up, and both slide as the sun crosses the sky */
 export const cloudSun = { value: new THREE.Vector2() };
@@ -1205,14 +1206,25 @@ export const makeCloudMap = (renderer, size = 512) => {
   map.update(0, 0, 100);
   return map;
 };
-/* A cloud blocks the sun, not the sky: take most of the direct light away and cool what is left. Multiplying the
-   final colour did nothing on sunlit sand, which is already brighter than white before the screen clips it. */
-export const CLOUD_SHADE = (pos, amount = "1.0") =>
-  [
+/* Cloud shade changes direct light while ambient fill keeps the shadow side readable. The cloud-step variant keeps
+   this world's palette and quantizes only that direct-light transmission for a more graphic, painted cloud pass. */
+export const CLOUD_SHADE = (pos, amount = "1.0") => {
+  if (cloudLightStyle.value) {
+    return [
+      `{ float cloudK = cloudAt3(${pos}) * cloudShade * ${amount};`,
+      "  float cloudTransmission = clamp(1.0 - cloudK * 0.78, 0.0, 1.0);",
+      "  float cloudBand = max(0.42, ceil(cloudTransmission * 3.0) / 3.0);",
+      "  outgoingLight -= reflectedLight.directDiffuse * (1.0 - cloudBand);",
+      "  outgoingLight *= mix(vec3(1.0), CLOUD_TINT, cloudK * 0.35); }",
+    ].join("\n");
+  }
+  /* The default remains the existing soft cloud shade. */
+  return [
     `{ float cloudK = cloudAt3(${pos}) * cloudShade * ${amount};`,
     "  outgoingLight -= reflectedLight.directDiffuse * cloudK * 0.78;",
     "  outgoingLight *= mix(vec3(1.0), CLOUD_TINT, cloudK * 0.35); }",
   ].join("\n");
+};
 export const cloudUniforms = (shader) => Object.assign(shader.uniforms, { cloudTime, cloudCover, cloudShade, cloudSun, cloudMap: cloudMapTex, cloudMapArea });
 export const atmos = (material) => {
   const previous = material.onBeforeCompile;
