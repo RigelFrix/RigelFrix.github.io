@@ -19,6 +19,7 @@ import { windLines } from "./world-wind.js";
 import { createClimate } from "./world-climate.js";
 import { makeRain } from "./world-rain.js";
 import { makeRays } from "./world-rays.js";
+import { createWerewolfBoss } from "./world-boss.js";
 
 const root = document.documentElement;
 const host = document.getElementById("world");
@@ -2053,6 +2054,24 @@ async function start() {
     handName: "LeftHand",
     offset: [Math.SQRT1_2 * 1.3, -Math.SQRT1_2 * 1.3],
   });
+  /* Sample Boss handler (world-boss.js, world-boss-anim.js, world-smear.js) */
+  const werewolfBoss = createWerewolfBoss({
+    scene,
+    island,
+    landing,
+    robot,
+    colliders,
+    decal,
+    halo,
+    glow,
+    softMapped,
+    bakeShadows,
+    isIntroLive: () => introLive,
+    addShake: (amt) => {
+      shake = Math.max(shake, amt);
+    },
+  });
+
   let lockTarget = null;
   let lockLost = 0;
   let lockSpeed = 0;
@@ -3374,7 +3393,11 @@ async function start() {
     const rect = canvas.getBoundingClientRect();
     pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     raycaster.setFromCamera(pointer, camera);
-    lockTarget = raycaster.intersectObject(dummy, true).length ? dummy : null;
+    const hitBoss = werewolfBoss?.group && raycaster.intersectObject(werewolfBoss.group, true).length;
+    const hitDummy = raycaster.intersectObject(dummy, true).length;
+    if (hitBoss) lockTarget = werewolfBoss.group;
+    else if (hitDummy) lockTarget = dummy;
+    else lockTarget = null;
     lockLost = 0;
     return Boolean(lockTarget);
   };
@@ -3813,16 +3836,19 @@ async function start() {
   const still = new THREE.Vector3();
 
   const update = (dt, time) => {
+    const isBossLocked = lockTarget && lockTarget === werewolfBoss?.group;
+    const targetFocus = isBossLocked ? werewolfBoss.getFocus() : dummyFocus;
+    werewolfBoss?.setTargeted?.(isBossLocked);
     if (lockTarget) {
-      const dx = dummyFocus.x - robot.position.x;
-      const dz = dummyFocus.z - robot.position.z;
+      const dx = targetFocus.x - robot.position.x;
+      const dz = targetFocus.z - robot.position.z;
       const reach = dx * dx + dz * dz;
       const far = reach > LOCK_REACH * LOCK_REACH;
       if (reach > 0.0001) camYawGoal = Math.atan2(dx, dz) + Math.PI;
       /* While the yaw is still catching up, an off-screen dummy is not out of bounds yet. */
       const yawGap = Math.abs(Math.atan2(Math.sin(camYawGoal - camYaw), Math.cos(camYawGoal - camYaw)));
       playerChest.set(robot.position.x, robot.position.y + 1.2, robot.position.z);
-      const outside = !far && yawGap <= LOCK_YAW_SKIP && (!inCamera(playerChest) || !inCamera(dummyFocus));
+      const outside = !far && yawGap <= LOCK_YAW_SKIP && (!inCamera(playerChest) || !inCamera(targetFocus));
       if (far || outside) {
         lockLost += dt;
         if (lockLost >= 0.2) lockTarget = null;
@@ -3830,7 +3856,7 @@ async function start() {
         lockLost = 0;
       }
     }
-    dummyRing.visible = Boolean(lockTarget);
+    dummyRing.visible = Boolean(lockTarget && lockTarget === dummy);
     if (!introLive) {
       camYaw = dampAngle(camYaw, camYawGoal, lockTarget ? 10 : 14, dt);
     }
@@ -3914,8 +3940,8 @@ async function start() {
     if (lockTarget && !introLive) {
       /* Same turn as Pixel Pass: a yaw quaternion toward the dummy, then rotate towards it at 720°/s.
          This three build has slerp but not Quaternion.rotateTowards, so the step is applied here. */
-      const dx = dummyFocus.x - robot.position.x;
-      const dz = dummyFocus.z - robot.position.z;
+      const dx = targetFocus.x - robot.position.x;
+      const dz = targetFocus.z - robot.position.z;
       if (dx * dx + dz * dz > 0.0001) {
         /* Yaw-only quaternion step. A raw slerp is unstable when the turn is exactly 180°, which is the spawn facing. */
         const targetYaw = Math.atan2(dx, dz);
@@ -4247,6 +4273,7 @@ async function start() {
 
     swordPickup.update(dt, time);
     longswordPickup.update(dt, time);
+    werewolfBoss.update(dt, time);
 
     /* The star companion floats by his shoulder and rises above his hand when he raises it */
     const g = bot.grow;
@@ -4322,7 +4349,7 @@ async function start() {
     /* Camera follows Niko over the island */
 
     lookTarget.set(THREE.MathUtils.clamp(robot.position.x, -38, 38), robot.position.y, THREE.MathUtils.clamp(robot.position.z, -38, 38));
-    if (lockTarget) lookTarget.lerpVectors(lookTarget, dummyFocus, 0.5);
+    if (lockTarget) lookTarget.lerpVectors(lookTarget, targetFocus, 0.5);
     keepInFrame(lookTarget);
     const speed = dt > 0 ? travelled.length() / dt : 0;
     const follow = THREE.MathUtils.lerp(6, 18, THREE.MathUtils.clamp(speed / 8, 0, 1));
@@ -4352,7 +4379,7 @@ async function start() {
             camera.lookAt(trialAnchor);
             camera.updateMatrixWorld();
             playerChest.set(robot.position.x, robot.position.y + 1.2, robot.position.z);
-            const safe = inCamera(playerChest) && inCamera(dummyFocus);
+            const safe = inCamera(playerChest) && inCamera(targetFocus);
             camera.position.copy(savedCamPos);
             camera.quaternion.copy(savedCamQuat);
             camera.updateMatrixWorld();
@@ -5076,6 +5103,7 @@ async function start() {
       /* Read either sword's placement, or pass true to equip it immediately. */
       sword: (give) => swordPickup.debug(give),
       longsword: (give) => longswordPickup.debug(give),
+      boss: (options) => werewolfBoss.debug(options),
       /* Live lock-on clip weights, so a direction can be checked without guessing from the pose. */
       lockClips: () => bot.lockMoves?.map((move) => ({ name: move.name, gait: move.gait, weight: +move.action.getEffectiveWeight().toFixed(3) })) ?? [],
       /* Look-down angle in degrees. angle(30) is shallower, angle(60) is steeper. Omit it to read the live angle.
