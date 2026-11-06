@@ -4,14 +4,14 @@
      lag_transform = lag_transform.interpolate_with(global_transform, weight * delta)
      float t = pow(texture(noise, UV * 5.0).x, 6.5) * 2.0;
      MODELVIEW_MATRIX = MODEL_MATRIX + (lag_transform - MODEL_MATRIX) * t;
-   Adapted for Three.js SkinnedMesh (`assets/models/boss.glb`):
-   - Maintains lagging bone transforms (`uLagBoneTexture`) and mid-arc bone transforms (`uMidBoneTexture`)
-     that smoothly slerp toward the current skeleton pose (`lagQuat.slerp(currQuat, 1 - exp(-weight * dt))`).
-   - Evaluates continuous 3D gradient noise on the vertex's bind-pose position (`restPos`) so the smear
+   Adapted for Three.js SkinnedMesh (supports Werewolf Boss and Niko):
+   - Maintains lagging bone transforms (uLagBoneTexture) and mid-arc bone transforms (uMidBoneTexture)
+     that smoothly slerp toward the current skeleton pose (lagQuat.slerp(currQuat, 1 - exp(-weight * dt))).
+   - Evaluates continuous 3D gradient noise on the vertex's bind-pose position (restPos) so the smear
      is 100% seam-free and watertight across UV islands.
-   - Interpolates each vertex along the curved Quadratic Bezier swing arc `(posCurr -> posMid -> posLag)`
-     by `t = pow(noise, power) * stretch`, so the smear forms cleanly out of the right claw/arm mesh during
-     the swing and settles smoothly back into the mesh as `lag_transform` catches up. */
+   - Interpolates each vertex along the curved Quadratic Bezier swing arc (posCurr -> posMid -> posLag)
+     by t = pow(noise, power) * stretch, so the smear forms cleanly out of the arm mesh during
+     the swing and settles smoothly back into the mesh as lag_transform catches up. */
 
 import * as THREE from "three";
 
@@ -23,6 +23,7 @@ const SMEAR_SKINNING_PARS_GLSL = /* glsl */ `
   uniform float uSmearNoisePower;
   uniform float uSmearStretch;
   uniform float uSmearArmSide;
+  uniform float uBoneArmWeights[80];
 
   mat4 getSmearBoneMatrix( highp sampler2D tex, const in float i ) {
     int size = textureSize( tex, 0 ).x;
@@ -36,27 +37,11 @@ const SMEAR_SKINNING_PARS_GLSL = /* glsl */ `
     return mat4( v1, v2, v3, v4 );
   }
 
-  /* Bone indices in assets/models/boss.glb:
-     10 = RightShoulder, 11 = RightArm, 12 = RightForeArm, 13 = RightHand */
   float getArmBoneMask( const in float idx ) {
     int b = int( idx + 0.5 );
-    if ( uSmearArmSide > 0.5 ) {
-      if ( b == 13 ) return 1.0;
-      if ( b == 12 ) return 0.86;
-      if ( b == 11 ) return 0.44;
-      if ( b == 10 ) return 0.12;
-      return 0.0;
-    } else if ( uSmearArmSide < -0.5 ) {
-      if ( b == 9 ) return 1.0;
-      if ( b == 8 ) return 0.86;
-      if ( b == 7 ) return 0.44;
-      if ( b == 6 ) return 0.12;
-      return 0.0;
+    if ( b >= 0 && b < 80 ) {
+      return uBoneArmWeights[b];
     }
-    if ( b == 9 || b == 13 ) return 1.0;
-    if ( b == 8 || b == 12 ) return 0.86;
-    if ( b == 7 || b == 11 ) return 0.44;
-    if ( b == 6 || b == 10 ) return 0.12;
     return 0.0;
   }
 
@@ -95,7 +80,6 @@ const SMEAR_SKINNING_PARS_GLSL = /* glsl */ `
   float smearFbm( vec3 p ) {
     float v = 0.5 + 0.5 * smearGradNoise3D( p );
     v = 0.68 * v + 0.32 * ( 0.5 + 0.5 * smearGradNoise3D( p * 2.07 + vec3( 13.7, 29.3, 7.1 ) ) );
-    /* Normalize noise range so valleys sit at 0.0 and ridges reach 1.0 before pow(n, power) */
     return smoothstep( 0.22, 0.76, v );
   }
 #endif
@@ -113,15 +97,13 @@ const SMEAR_SKINNING_VERTEX_GLSL = /* glsl */ `
     boneMatW * skinWeight.w;
   vec4 skinned = currSkinMat * skinVertex;
 
-  /* Smooth right-arm & claw mask from skin weights (bones 10..13) + bind-pose distal gradient */
+  /* Smooth arm & claw mask from skin weights */
   float boneArmMask =
     getArmBoneMask( skinIndex.x ) * skinWeight.x +
     getArmBoneMask( skinIndex.y ) * skinWeight.y +
     getArmBoneMask( skinIndex.z ) * skinWeight.z +
     getArmBoneMask( skinIndex.w ) * skinWeight.w;
-  float distalBoost = 0.60 + 0.40 * ( 1.0 - smoothstep( 0.22, 0.66, restPos.y ) );
-  float handMask = clamp( boneArmMask * distalBoost, 0.0, 1.0 );
-  if ( ( uSmearArmSide > 0.5 && restPos.x > 0.05 ) || ( uSmearArmSide < -0.5 && restPos.x < -0.05 ) ) handMask = 0.0;
+  float handMask = clamp( boneArmMask, 0.0, 1.0 );
 
   if ( uSmearStretch > 0.001 && handMask > 0.001 ) {
     mat4 midMatX = getSmearBoneMatrix( uMidBoneTexture, skinIndex.x );
@@ -150,21 +132,11 @@ const SMEAR_SKINNING_VERTEX_GLSL = /* glsl */ `
     float wakeLen = length( wakeVec );
     if ( wakeLen > 0.0005 ) {
       vec3 wakeDir = wakeVec / wakeLen;
-      /* Cross-sectional outward normal around the A-pose right arm/claw centerline,
-         rotated by currSkinMat so the trailing half of the claw/forearm stretches back
-         along the swing arc while the leading front face stays crisp and intact. */
-      float yFrac = clamp( ( restPos.y - 0.20 ) / 0.52, 0.0, 1.0 );
-      float armSign = restPos.x >= 0.0 ? 1.0 : -1.0;
-      float armCenterX = armSign * mix( 0.382, 0.24, yFrac );
-      float armCenterZ = mix( 0.072, -0.03, clamp( ( restPos.y - 0.28 ) / 0.28, 0.0, 1.0 ) );
-      vec3 cylNormalBind = normalize( vec3( ( restPos.x - armCenterX ) * 0.65, 0.0, restPos.z - armCenterZ ) );
-      vec3 cylNormalWS = normalize( mat3( currSkinMat ) * cylNormalBind );
-      float trailAlign = smoothstep( -0.38, 0.35, dot( cylNormalWS, wakeDir ) );
+      vec3 normWS = normalize( mat3( currSkinMat ) * normal );
+      float trailAlign = smoothstep( -0.42, 0.38, dot( normWS, wakeDir ) );
 
       /* Godot mesh-smearing formula:
-         float t = pow(texture(noise, UV * 5.0).x, 6.5) * 2.0;
-         Evaluated on 3D bind-pose restPos with a cohesive trailing base plus fine longitudinal streaks
-         so the smear forms a smooth, unified arc on the claw/forearm and settles cleanly onto the mesh. */
+         float t = pow(texture(noise, UV * 5.0).x, 6.5) * 2.0; */
       vec3 noisePos = vec3(
         restPos.x * uSmearNoiseScale * 1.35,
         restPos.y * uSmearNoiseScale * 0.55,
@@ -175,8 +147,7 @@ const SMEAR_SKINNING_VERTEX_GLSL = /* glsl */ `
       float t = streakProfile * uSmearStretch * handMask * trailAlign;
       t = clamp( t, 0.0, 1.32 );
 
-      /* Quadratic Bezier interpolation through skinned (t=0), skinnedMid (t=0.5), skinnedLag (t=1.0)
-         so the smear curves smoothly along the circular swing arc of the arm and claw! */
+      /* Quadratic Bezier interpolation through skinned (t=0), skinnedMid (t=0.5), skinnedLag (t=1.0) */
       vec3 ctrl = 2.0 * skinnedMid.xyz - 0.5 * ( skinned.xyz + skinnedLag.xyz );
       float u = 1.0 - t;
       vec3 arcWS = u * u * skinned.xyz + 2.0 * u * t * ctrl + t * t * skinnedLag.xyz;
@@ -190,13 +161,13 @@ const SMEAR_SKINNING_VERTEX_GLSL = /* glsl */ `
 
 export function createSmearHandler(options = {}) {
   const config = {
-    weight: options.weight ?? 8.0, /* Godot lag_transform interpolation weight */
+    weight: options.weight ?? 8.0,
     noiseScale: options.noiseScale ?? 34.0,
     noisePower: options.noisePower ?? 2.4,
     stretch: options.stretch ?? 1.45,
+    sheenColor: options.sheenColor ?? "#ff5511",
   };
 
-  /* Fallback 16x16 DataTextures until the skeleton is bound */
   const makeBoneTex = (size) => {
     const data = new Float32Array(size * size * 4);
     const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.FloatType);
@@ -212,7 +183,9 @@ export function createSmearHandler(options = {}) {
     uSmearNoiseScale: { value: config.noiseScale },
     uSmearNoisePower: { value: config.noisePower },
     uSmearStretch: { value: 0 },
-    uSmearArmSide: { value: 0.0 }, /* 1.0 = right arm only, -1.0 = left arm only, 0.0 = both */
+    uSmearArmSide: { value: 0.0 }, /* 1.0 = right arm, -1.0 = left arm, 0.0 = both */
+    uBoneArmWeights: { value: new Float32Array(80) },
+    uSmearSheenColor: { value: new THREE.Color(config.sheenColor) },
   };
 
   const depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
@@ -240,14 +213,13 @@ export function createSmearHandler(options = {}) {
           `${SMEAR_SKINNING_VERTEX_GLSL}\nvSmearT = smearTVal;`,
         );
       shader.fragmentShader = shader.fragmentShader
-        .replace("#include <common>", "#include <common>\nvarying float vSmearT;")
+        .replace("#include <common>", "#include <common>\nvarying float vSmearT;\nuniform vec3 uSmearSheenColor;")
         .replace(
           "#include <opaque_fragment>",
           [
             "if (vSmearT > 0.01) {",
-            "  /* Subtle ember ridge highlight so the volcanic claw's mesh-smear spikes read clearly */",
             "  float ridge = smoothstep(0.08, 0.78, vSmearT);",
-            "  outgoingLight = mix(outgoingLight, outgoingLight * 1.14 + vec3(0.28, 0.09, 0.02), ridge * 0.68);",
+            "  outgoingLight = mix(outgoingLight, outgoingLight * 1.15 + uSmearSheenColor, ridge * 0.72);",
             "}",
             "#include <opaque_fragment>",
           ].join("\n"),
@@ -260,6 +232,9 @@ export function createSmearHandler(options = {}) {
   let boundSkeleton = null;
   let boundRoot = null;
   let boneWeights = [];
+  let armBoneWeightsRight = new Float32Array(80);
+  let armBoneWeightsLeft = new Float32Array(80);
+  let armBoneWeightsBoth = new Float32Array(80);
   let currPos = [];
   let currQuat = [];
   let currScale = [];
@@ -268,6 +243,7 @@ export function createSmearHandler(options = {}) {
   let lagScale = [];
   let initialized = false;
   let handBoneIdx = -1;
+  let leftHandBoneIdx = -1;
   let lastLagDistance = 0;
   const tmpOffsetMat = new THREE.Matrix4();
   const tmpCurrHandWS = new THREE.Vector3();
@@ -285,6 +261,9 @@ export function createSmearHandler(options = {}) {
 
     const count = skeleton.bones.length;
     boneWeights = new Array(count).fill(100);
+    armBoneWeightsRight = new Float32Array(80);
+    armBoneWeightsLeft = new Float32Array(80);
+    armBoneWeightsBoth = new Float32Array(80);
     currPos = new Array(count);
     currQuat = new Array(count);
     currScale = new Array(count);
@@ -292,6 +271,7 @@ export function createSmearHandler(options = {}) {
     lagQuat = new Array(count);
     lagScale = new Array(count);
     handBoneIdx = -1;
+    leftHandBoneIdx = -1;
 
     for (let i = 0; i < count; i += 1) {
       const b = skeleton.bones[i];
@@ -302,15 +282,33 @@ export function createSmearHandler(options = {}) {
       lagPos[i] = b.position.clone();
       lagQuat[i] = b.quaternion.clone();
       lagScale[i] = b.scale.clone();
-      if (name === "RightHand") handBoneIdx = i;
 
-      /* Only the right arm chain + upper spine twist lag behind; legs/hips/left arm stay at 0 */
+      if (/RightHand$/.test(name)) handBoneIdx = i;
+      if (/LeftHand$/.test(name)) leftHandBoneIdx = i;
+
+      let w = 0;
+      if (/Hand/.test(name)) w = 1.0;
+      else if (/ForeArm/.test(name)) w = 0.88;
+      else if (/Arm/.test(name)) w = 0.55;
+      else if (/Shoulder/.test(name)) w = 0.20;
+
+      if (i < 80) {
+        if (/^Right/.test(name)) {
+          armBoneWeightsRight[i] = w;
+          armBoneWeightsBoth[i] = w;
+        } else if (/^Left/.test(name)) {
+          armBoneWeightsLeft[i] = w;
+          armBoneWeightsBoth[i] = w;
+        }
+      }
+
+      /* Only the right/left arm chain + upper spine twist lag behind */
       if (/^(Right|Left)(Shoulder|Arm|ForeArm|Hand)/.test(name)) {
-        boneWeights[i] = 1.0; /* uses config.weight directly */
+        boneWeights[i] = 1.0;
       } else if (name === "Spine1" || name === "Spine2") {
-        boneWeights[i] = 1.85; /* subtle upper-torso arc follow */
+        boneWeights[i] = 1.85;
       } else {
-        boneWeights[i] = 0; /* 0 means snap immediately to current pose */
+        boneWeights[i] = 0;
       }
     }
     initialized = false;
@@ -325,10 +323,12 @@ export function createSmearHandler(options = {}) {
     }
   };
 
-  const reset = () => {
+  const reset = (side = null) => {
     if (!boundSkeleton) return;
     const bones = boundSkeleton.bones;
     for (let i = 0; i < bones.length; i += 1) {
+      if (side === "right" && armBoneWeightsLeft[i] > 0) continue;
+      if (side === "left" && armBoneWeightsRight[i] > 0) continue;
       currPos[i].copy(bones[i].position);
       currQuat[i].copy(bones[i].quaternion);
       currScale[i].copy(bones[i].scale);
@@ -341,13 +341,13 @@ export function createSmearHandler(options = {}) {
     writeBoneMatricesTo(lagBuf.data);
     midBuf.tex.needsUpdate = true;
     lagBuf.tex.needsUpdate = true;
-    uniforms.uSmearStretch.value = 0;
-    lastLagDistance = 0;
+    if (!side) {
+      uniforms.uSmearStretch.value = 0;
+      lastLagDistance = 0;
+    }
     initialized = true;
   };
 
-  /* Advance lag_transform = lag_transform.interpolate_with(global_transform, weight * dt)
-     and populate uMidBoneTexture (slerp 0.5) and uLagBoneTexture (slerp 1.0). */
   const stepLag = (dt, weightOverride = null, stretchScale = 1.0, armSide = 0.0) => {
     if (!boundSkeleton || !boundRoot) return;
     if (stretchScale <= 0.001) {
@@ -360,14 +360,22 @@ export function createSmearHandler(options = {}) {
     }
     uniforms.uSmearStretch.value = config.stretch * stretchScale;
     uniforms.uSmearArmSide.value = armSide;
+    if (armSide > 0.5) {
+      uniforms.uBoneArmWeights.value.set(armBoneWeightsRight);
+    } else if (armSide < -0.5) {
+      uniforms.uBoneArmWeights.value.set(armBoneWeightsLeft);
+    } else {
+      uniforms.uBoneArmWeights.value.set(armBoneWeightsBoth);
+    }
+
     const baseWeight = weightOverride ?? config.weight;
     for (let i = 0; i < bones.length; i += 1) {
       currPos[i].copy(bones[i].position);
       currQuat[i].copy(bones[i].quaternion);
       currScale[i].copy(bones[i].scale);
       const mult = boneWeights[i];
-      const isRightArmBone = i >= 10 && i <= 13;
-      const isLeftArmBone = i >= 6 && i <= 9;
+      const isRightArmBone = armBoneWeightsRight[i] > 0;
+      const isLeftArmBone = armBoneWeightsLeft[i] > 0;
       const isIgnoredArm = (armSide > 0.5 && isLeftArmBone) || (armSide < -0.5 && isRightArmBone);
       if (mult <= 0 || dt <= 0 || isIgnoredArm) {
         lagPos[i].copy(currPos[i]);
@@ -381,8 +389,9 @@ export function createSmearHandler(options = {}) {
       }
     }
 
-    if (handBoneIdx >= 0) {
-      bones[handBoneIdx].getWorldPosition(tmpCurrHandWS);
+    const checkIdx = armSide < -0.5 ? (leftHandBoneIdx >= 0 ? leftHandBoneIdx : handBoneIdx) : handBoneIdx;
+    if (checkIdx >= 0) {
+      bones[checkIdx].getWorldPosition(tmpCurrHandWS);
     }
 
     /* 1. Compute uLagBoneTexture at lagQuat */
@@ -394,8 +403,8 @@ export function createSmearHandler(options = {}) {
     boundRoot.updateMatrixWorld(true);
     writeBoneMatricesTo(lagBuf.data);
     lagBuf.tex.needsUpdate = true;
-    if (handBoneIdx >= 0) {
-      bones[handBoneIdx].getWorldPosition(tmpLagHandWS);
+    if (checkIdx >= 0) {
+      bones[checkIdx].getWorldPosition(tmpLagHandWS);
       lastLagDistance = tmpCurrHandWS.distanceTo(tmpLagHandWS);
     }
 
@@ -426,5 +435,17 @@ export function createSmearHandler(options = {}) {
     reset,
     stepLag,
     getLagDistance: () => +lastLagDistance.toFixed(3),
+    getHandMotion: () => {
+      const wake = new THREE.Vector3().subVectors(tmpLagHandWS, tmpCurrHandWS);
+      const dist = wake.length();
+      const wakeDir = dist > 1e-4 ? wake.clone().normalize() : new THREE.Vector3(0, 0, 1);
+      return {
+        currPos: tmpCurrHandWS.clone(),
+        lagPos: tmpLagHandWS.clone(),
+        wakeDir,
+        throwDir: wakeDir.clone().negate(),
+        distance: lastLagDistance,
+      };
+    },
   };
 }

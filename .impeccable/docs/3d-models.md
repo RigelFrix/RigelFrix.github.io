@@ -183,6 +183,23 @@ All in `useNikoModel` (`world.js`):
   same object as `bot.bones.<name>`. Screenshot descriptions have invented T-poses before.
 - `python mesh-audit.py` on the shipped file.
 
+### 4.7 Blender authoring rig
+
+- The game body GLB remains the source of truth. To make an animation-ready Blender copy, run
+  `blender --background --python .impeccable/tools/niko-control-rig.py` with the Mixamo Rig add-on installed.
+- **For Blender, open `assets/niko/low-poly-humanoid-v6-control-rig.blend`, not the source GLB.** The source GLB has
+  65 skin joints but no animation clips. Blender's GLB importer creates a separate, unskinned `Icosphere` helper in
+  `glTF_not_exported`; the body is the other mesh with an Armature modifier, not that helper. The build script renames
+  the body `Niko`, removes the helper, and generates the rig with animation baking disabled.
+- If creating a rig manually from the raw GLB, select its armature and **turn off `Apply Animation`** in the Mixamo
+  dialog. The add-on defaults this on; with no animation clips, it creates the controls and then errors trying to select
+  an animation slot that does not exist. Rebuilding the rig from the prepared `.blend` is unnecessary.
+- This creates `assets/niko/low-poly-humanoid-v6-control-rig.blend` without overwriting an existing file. It includes the
+  imported Niko body, the game's separate `hair-short.glb` fitted to the skull and weighted to `Head`, and the Mixamo
+  control rig with IK arm and leg controls. The source GLBs are unchanged. The painted eye decal remains a game-time
+  overlay and is not included in this Blender authoring file.
+- The file is for Blender animation authoring; exporting an animation and wiring it into the game are separate steps.
+
 ## 5. Tool index (`.impeccable/tools`)
 
 | Tool | Use |
@@ -193,6 +210,7 @@ All in `useNikoModel` (`world.js`):
 | `glb-shots.mjs`, `pose-shot.mjs` | Character GLB shots (clips, hands, face) |
 | `glb-dump.mjs` | Dump a GLB's nodes, materials and textures |
 | `tex-pad.py`, `mesh-clean.mjs`, `mesh-audit.py` | Body cleanup and audit |
+| `niko-control-rig.py` | Build a Blender 5 Mixamo control rig for Niko, including head-weighted hair |
 | `sword-check.mjs [base] [prefix]` | In-game pickup and grip shots |
 | `longsword-check.mjs [base] [prefix]` | Longsword pickup and left-hand grip check |
 | `export-kit.mjs` | Exports island pieces to `assets/kit/` for the three.js editor |
