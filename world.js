@@ -5,11 +5,12 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { FBXLoader } from "./.impeccable/fbx/addons/loaders/FBXLoader.js";
-import nikoBody from "./assets/niko/low-poly-humanoid-v6-clean.glb";
+import nikoBody from "./assets/niko/niko-final-clean.glb";
 import nikoHair from "./assets/niko/hair-short.glb";
 import nikoIdleFbx from "./assets/niko/Idle.fbx";
 import nikoRunFbx from "./assets/Running (1).fbx";
 import lockonClips from "./assets/niko/lockon.json";
+import punchClipData from "./assets/niko/punch.json";
 import xiphosGlb from "./assets/models/xiphos-sword.glb";
 import longswordGlb from "./assets/models/longsword.glb";
 import nikoEyesUrl from "./assets/niko-eyes.png";
@@ -20,6 +21,8 @@ import { createClimate } from "./world-climate.js";
 import { makeRain } from "./world-rain.js";
 import { makeRays } from "./world-rays.js";
 import { createWerewolfBoss } from "./world-boss.js";
+import { createSmearHandler } from "./world-smear.js";
+import { createPunchSmoke } from "./world-punch-smoke.js";
 
 const root = document.documentElement;
 const host = document.getElementById("world");
@@ -2541,6 +2544,9 @@ async function start() {
       }
     };
     for (const [slot, file] of Object.entries(loaded)) claim(slot, file);
+    if (parts.body?.[0]) {
+      nikoSmear.bindSkeleton(parts.body[0].skeleton, model);
+    }
     /* hair-short.glb is a Sketchfab cap: a tiny axis-swap scale and a large offset live on parent nodes,
        and its front points +Z. Bake that world matrix, yaw it onto the nose, then shrink it to this skull.
        Scale and position stay on the mesh (HAIR_FIT) so they can be nudged live. */
@@ -2668,9 +2674,10 @@ async function start() {
     /* No outline on the bang edges around the eye cut-outs: at game size they framed the eyes like goggles */
     const aroundEyes = (x, y, z) => z > 0.06 && y > 0.26 && y < 0.355 && Math.abs(x) < 0.11;
     meshes.forEach((mesh) => {
-      if (mesh.material?.map) {
+            if (mesh.material?.map) {
         const map = mesh.material.map;
-        mesh.material = withCharLight(lamped(withRim(new THREE.MeshToonMaterial({ map, gradientMap: ramp }))));
+        const baseMat = withCharLight(lamped(withRim(new THREE.MeshToonMaterial({ map, gradientMap: ramp }))));
+        mesh.material = mesh.userData.slot === "body" ? nikoSmear.enhanceMaterial(baseMat) : baseMat;
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         mesh.frustumCulled = false;
@@ -2731,14 +2738,14 @@ async function start() {
     });
     const retargeted = (name, source) => retargetMixamo(name, source, model, bones);
     /* Unity hip curves are meters. The Mixamo FBX skeleton is centimeters. */
-    const curvesClip = (entry) => {
+    const curvesClip = (entry, isUnity = false) => {
       const tracks = [];
       for (const bone of entry.bones) {
         const nodeName = sourceName[bone.name];
         if (!nodeName) continue;
         const flat = bone.q;
         /* Unity writes these arm binds as (x, -y, -z, w) relative to this FBX. Played raw, each wrist crosses to the other side and the hand meshes swap on the way back to idle. */
-        const values = /Shoulder|Arm|Hand/.test(bone.name)
+        const values = isUnity && /Shoulder|Arm|Hand/.test(bone.name)
           ? flat.map((value, index) => (index % 4 === 1 || index % 4 === 2 ? -value : value))
           : flat;
         tracks.push(new THREE.QuaternionKeyframeTrack(`${nodeName}.quaternion`, new Float32Array(bone.times), new Float32Array(values)));
@@ -2793,13 +2800,32 @@ async function start() {
     const lockMoves = [];
     for (const entry of lockonClips.clips) {
       restorePose();
-      idleSource.animations = [curvesClip(entry)];
+      idleSource.animations = [curvesClip(entry, true)];
       const action = mixer.clipAction(retargeted(entry.name, idleSource));
       action.play();
       action.setEffectiveWeight(0);
       action.setEffectiveTimeScale(0);
       lockMoves.push({ name: entry.name, gait: entry.gait, x: entry.x, y: entry.y, action });
     }
+    restorePose();
+    idleSource.animations = [curvesClip(punchClipData, false)];
+    const punchAction = mixer.clipAction(retargeted("punch", idleSource));
+    punchAction.setLoop(THREE.LoopOnce, 1);
+    punchAction.clampWhenFinished = false;
+    punchAction.setEffectiveWeight(0);
+    punchAction.setEffectiveTimeScale(1.5);
+    punchAction.play();
+    actions.punch = punchAction;
+    if (bones.LeftHand) {
+      const helper = new THREE.Mesh(
+        new THREE.BoxGeometry(0.35, 0.35, 0.35),
+        new THREE.MeshBasicMaterial({ color: 0xff2222, wireframe: true, visible: false })
+      );
+      helper.name = "LeftHandHitboxHelper";
+      bones.LeftHand.add(helper);
+      punchHitbox.helper = helper;
+    }
+    bot.punchHitbox = punchHitbox;
     const quatMap = (clip) => {
       const map = {};
       for (const track of clip.tracks) {
@@ -2811,6 +2837,7 @@ async function start() {
     /* Every direction is stored in idle's hemisphere. A per-clip sign flip is what made the hands
        trade places while the run blend fell back to idle. */
     lockMoves.forEach((move) => matchHemisphere(move.action.getClip(), idleClip, 8, 0));
+    matchHemisphere(actions.punch.getClip(), idleClip, 8, 0);
     const idleQuats = quatMap(idleClip);
     lockMoves.forEach((move) => {
       move.quats = quatMap(move.action.getClip());
@@ -3116,6 +3143,49 @@ async function start() {
     still: 0,
     faceUp: 0,
     pace: 1,
+    punching: false,
+    punchTimer: 0,
+    punchHitboxActive: false,
+  };
+  const punchHitbox = {
+    active: false,
+    frame: -1,
+    position: new THREE.Vector3(),
+    box: new THREE.Box3(),
+    sphere: new THREE.Sphere(),
+    size: new THREE.Vector3(0.35, 0.35, 0.35),
+    radius: 0.22,
+    helper: null,
+  };
+
+  /* Niko left arm mesh-smearing handler */
+  const nikoSmear = createSmearHandler({
+    weight: 6.8,
+    noiseScale: 30.0,
+    noisePower: 2.3,
+    stretch: 1.65,
+    sheenColor: "#ffe17d",
+  });
+
+  /* Niko left fist natural anime smoke & vapor VFX */
+  const nikoPunchSmoke = createPunchSmoke({ scene, robot });
+
+  const triggerPunch = () => {
+    if (!bot.actions?.punch) return;
+    if (state.punching) return;
+    state.punching = true;
+    state.punchTimer = 0;
+    state.punchHitboxActive = false;
+    punchHitbox.active = false;
+    punchHitbox.frame = -1;
+    nikoPunchSmoke.hide();
+    state.path = [];
+    state.pending = null;
+    bot.actions.punch.reset();
+    bot.actions.punch.setLoop(THREE.LoopOnce, 1);
+    bot.actions.punch.clampWhenFinished = false;
+    bot.actions.punch.setEffectiveTimeScale(1.5);
+    bot.actions.punch.play();
   };
   const faceRight = new THREE.Vector3();
   const worldUp = new THREE.Vector3(0, 1, 0);
@@ -3172,6 +3242,7 @@ async function start() {
   };
 
   const goTo = (point, obj = null) => {
+    if (state.punching) return;
     const path = island.nav.path(robot.position, point);
     if (!path?.length) {
       if (obj && robot.position.distanceTo(obj.spot) < 2) {
@@ -3215,6 +3286,7 @@ async function start() {
   };
 
   function goToObject(obj) {
+    if (state.punching) return;
     if (robot.position.distanceTo(obj.spot) < 0.35) {
       state.path = [];
       state.pending = obj;
@@ -3594,7 +3666,10 @@ async function start() {
       return;
     }
 
-    if (key === "g") {
+    if (key === "f") {
+      event.preventDefault();
+      triggerPunch();
+    } else if (key === "g") {
       event.preventDefault();
       const rect = canvas.getBoundingClientRect();
       const x = cursor.on ? rect.left + cursor.x * rect.width : rect.left + rect.width / 2;
@@ -3862,7 +3937,7 @@ async function start() {
     }
     applyCamAxes();
     clock = time;
-    const input = introLive ? still : inputVector();
+    const input = (introLive || state.punching) ? still : inputVector();
     const before = robot.position.clone();
     let moving = false;
 
@@ -3935,9 +4010,9 @@ async function start() {
     const swing = step * 0.7 * state.walk;
 
     /* Standing still, he turns three-quarters toward the camera and looks up, so his face reads from above */
-    state.still = moving ? 0 : state.still + dt;
-    const faceCam = !lockTarget && bot.mixer && robot.visible && state.still > 0.9 && !state.path.length && !root.classList.contains("world-intro");
-    if (lockTarget && !introLive) {
+    state.still = (moving || state.punching) ? 0 : state.still + dt;
+    const faceCam = !lockTarget && !state.punching && bot.mixer && robot.visible && state.still > 0.9 && !state.path.length && !root.classList.contains("world-intro");
+    if (lockTarget && !introLive && !state.punching) {
       /* Same turn as Pixel Pass: a yaw quaternion toward the dummy, then rotate towards it at 720°/s.
          This three build has slerp but not Quaternion.rotateTowards, so the step is applied here. */
       const dx = targetFocus.x - robot.position.x;
@@ -3970,6 +4045,85 @@ async function start() {
     if (bot.mixer) {
       /* Free roam is idle against run. Lock-on plays the run directions in Niko's facing frame. */
       const { actions } = bot;
+      let punchWeight = 0;
+      if (state.punching && actions.punch) {
+        state.punchTimer += dt * 1.5;
+        const dur = actions.punch.getClip().duration;
+
+        // Forward movement propulsion (scaled for 1.5x speed):
+        // Keyframes 0-14 (0 - 0.467s): charging steps forward into jump
+        // Keyframes 14-36 (0.467 - 1.20s): aerial flying knee leap forward
+        // Keyframes 45-56 (1.50 - 1.85s): diving fist slam forward
+        let leapSpeed = 0;
+        if (state.punchTimer <= 0.467) {
+          leapSpeed = 4.2;
+        } else if (state.punchTimer <= 1.20) {
+          leapSpeed = 3.6;
+        } else if (state.punchTimer >= 1.50 && state.punchTimer <= 1.85) {
+          leapSpeed = 2.8;
+        }
+
+        if (leapSpeed > 0) {
+          const forward = new THREE.Vector3(Math.sin(robot.rotation.y), 0, Math.cos(robot.rotation.y));
+          const leapBefore = robot.position.clone();
+          robot.position.addScaledVector(forward, leapSpeed * dt);
+          resolveCollisions(robot.position);
+          stepTo(leapBefore, robot.position);
+        }
+
+        // Left hand hitbox: active only during keyframes 37-40 of the animation
+        const punchFrame = Math.floor(state.punchTimer * 30);
+        const hitboxActive = punchFrame >= 37 && punchFrame <= 40;
+        punchHitbox.active = hitboxActive;
+        punchHitbox.frame = punchFrame;
+        state.punchHitboxActive = hitboxActive;
+        if (hitboxActive && bot.bones?.LeftHand) {
+          bot.bones.LeftHand.getWorldPosition(punchHitbox.position);
+          punchHitbox.sphere.center.copy(punchHitbox.position);
+          punchHitbox.sphere.radius = punchHitbox.radius;
+          punchHitbox.box.setFromCenterAndSize(punchHitbox.position, punchHitbox.size);
+        }
+
+        // Full arm smear effect on Niko's left arm when swinging at frames 33-42:
+        const smearActive = punchFrame >= 33 && punchFrame <= 42;
+        if (smearActive) {
+          let smearScale = 1.0;
+          if (punchFrame < 36) {
+            smearScale = THREE.MathUtils.clamp((punchFrame - 33) / 3.0, 0.4, 1.0);
+          } else if (punchFrame > 40) {
+            smearScale = THREE.MathUtils.clamp((42 - punchFrame) / 2.0, 0.3, 1.0);
+          }
+          nikoSmear.stepLag(dt, 7.5, smearScale, -1.0);
+        } else {
+          nikoSmear.reset();
+        }
+
+        // Natural Anime Smoke & Vapor ejecting from punch hitbox on impact:
+        nikoPunchSmoke.update(punchFrame, bot.bones?.LeftHand, punchHitbox, dt, robot);
+
+        if (state.punchTimer >= dur) {
+          state.punching = false;
+          state.punchTimer = 0;
+          state.punchHitboxActive = false;
+          punchHitbox.active = false;
+          punchHitbox.frame = -1;
+          nikoSmear.reset();
+          actions.punch.setEffectiveWeight(0);
+          actions.punch.stop();
+          punchWeight = 0;
+        } else {
+          const timeLeft = dur - state.punchTimer;
+          punchWeight = timeLeft < 0.12 ? Math.max(0, timeLeft / 0.12) : 1.0;
+          actions.punch.setEffectiveWeight(punchWeight);
+        }
+      } else if (actions.punch) {
+        actions.punch.setEffectiveWeight(0);
+        state.punchHitboxActive = false;
+        punchHitbox.active = false;
+        punchHitbox.frame = -1;
+        nikoSmear.reset();
+        nikoPunchSmoke.update(-1, null, null, dt, robot);
+      }
       const locked = lockTarget && bot.lockMoves;
       if (locked) {
         const face = robot.rotation.y;
@@ -4101,7 +4255,7 @@ async function start() {
           const gaitWeight = gait === "run" ? runT : 0;
           group.forEach((move, index) => {
             const weight = THREE.MathUtils.damp(move.action.getEffectiveWeight(), weights[index] * gaitWeight, 8, dt);
-            move.action.setEffectiveWeight(weight);
+            move.action.setEffectiveWeight(weight * (1 - punchWeight));
             move.action.setEffectiveTimeScale(0);
             move.action.time = lockPhase * move.action.getClip().duration;
             posed += weight;
@@ -4109,10 +4263,10 @@ async function start() {
         }
         lockBackYaw = THREE.MathUtils.damp(lockBackYaw, backGoal, 8, dt);
         /* Whatever the run clips don't cover stays on idle. A gap here is the bind pose. */
-        actions.idle.setEffectiveWeight(Math.max(0, 1 - posed));
+        actions.idle.setEffectiveWeight(Math.max(0, 1 - posed) * (1 - punchWeight));
       } else {
-        actions.idle.setEffectiveWeight(1 - state.walk);
-        actions.run.setEffectiveWeight(state.walk);
+        actions.idle.setEffectiveWeight((1 - state.walk) * (1 - punchWeight));
+        actions.run.setEffectiveWeight(state.walk * (1 - punchWeight));
         actions.run.setEffectiveTimeScale(1.2 * state.pace);
         bot.lockMoves?.forEach((move) => move.action.setEffectiveWeight(0));
         lockSpeed = 0;
@@ -4121,7 +4275,7 @@ async function start() {
       }
       bot.mixer.update(calm ? 0 : dt);
       /* The mixer averages quaternion components. Shoulders are converted above so the wrists stay on their own sides; this still takes the short arc for the arms on the way back to idle. */
-      if (lockTarget && bot.idleQuats) {
+      if (!state.punching && lockTarget && bot.idleQuats) {
         const idleWeight = actions.idle.getEffectiveWeight();
         let sources = idleWeight > 0.02 ? 1 : 0;
         for (const move of bot.lockMoves) {
@@ -4210,7 +4364,7 @@ async function start() {
         const lift = state.faceUp;
         if (bot.bones.Spine2) pitchWorld(bot.bones.Spine2, lift * 0.1);
         if (bot.bones.Neck) pitchWorld(bot.bones.Neck, lift * 0.16);
-        pitchWorld(bot.bones.Head, lift * 0.34);
+                pitchWorld(bot.bones.Head, lift * 0.34);
       }
     } else {
       bot.head.rotation.x = state.faceUp * 0.2;
@@ -5001,6 +5155,7 @@ async function start() {
 
   window.PortfolioWorld = {
     active: true,
+    triggerPunch,
     walkTo: (id) => {
       const obj = byId.get(id);
       finishIntro();
@@ -5086,6 +5241,27 @@ async function start() {
       wind: () => wind?.peek(),
       walkable: (x, z) => island.nav.walkable(x, z),
       position: () => robot.position.toArray(),
+      state: () => state,
+      nikoSmear: () => ({
+        lagDistance: nikoSmear.getLagDistance(),
+        active: nikoSmear.uniforms.uSmearStretch.value > 0,
+        stretch: +nikoSmear.uniforms.uSmearStretch.value.toFixed(3),
+        armSide: nikoSmear.uniforms.uSmearArmSide.value,
+      }),
+      punchSmoke: () => ({
+        active: nikoPunchSmoke.isActive(),
+        puffCount: nikoPunchSmoke.getPuffCount(),
+      }),
+      punchHitbox: () => ({
+        active: punchHitbox.active,
+        frame: punchHitbox.frame,
+        position: punchHitbox.position.toArray(),
+        box: { min: punchHitbox.box.min.toArray(), max: punchHitbox.box.max.toArray() },
+        radius: punchHitbox.radius,
+        show: (v = true) => {
+          if (punchHitbox.helper) punchHitbox.helper.material.visible = v;
+        },
+      }),
       /* Orbit yaw (radians). Omit it to read the live yaw. */
       yaw: (angle) => {
         if (angle == null) return camYaw;
