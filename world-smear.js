@@ -159,13 +159,20 @@ const SMEAR_SKINNING_VERTEX_GLSL = /* glsl */ `
 #endif
 `;
 
+const parseSheenColor = (c) => {
+  if (c instanceof THREE.Color) return c.clone();
+  if (Array.isArray(c)) return new THREE.Color(c[0], c[1], c[2]);
+  if (typeof c === "string") return new THREE.Color(c);
+  return new THREE.Color(0.28, 0.09, 0.02);
+};
+
 export function createSmearHandler(options = {}) {
   const config = {
     weight: options.weight ?? 8.0,
     noiseScale: options.noiseScale ?? 34.0,
     noisePower: options.noisePower ?? 2.4,
     stretch: options.stretch ?? 1.45,
-    sheenColor: options.sheenColor ?? "#ff5511",
+    sheenColor: options.sheenColor ?? new THREE.Color(0.28, 0.09, 0.02),
   };
 
   const makeBoneTex = (size) => {
@@ -185,7 +192,7 @@ export function createSmearHandler(options = {}) {
     uSmearStretch: { value: 0 },
     uSmearArmSide: { value: 0.0 }, /* 1.0 = right arm, -1.0 = left arm, 0.0 = both */
     uBoneArmWeights: { value: new Float32Array(80) },
-    uSmearSheenColor: { value: new THREE.Color(config.sheenColor) },
+    uSmearSheenColor: { value: parseSheenColor(config.sheenColor) },
   };
 
   const depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
@@ -219,7 +226,8 @@ export function createSmearHandler(options = {}) {
           [
             "if (vSmearT > 0.01) {",
             "  float ridge = smoothstep(0.08, 0.78, vSmearT);",
-            "  outgoingLight = mix(outgoingLight, outgoingLight * 1.15 + uSmearSheenColor, ridge * 0.72);",
+            "  /* Subtle ember ridge highlight from original repo (vec3(0.28, 0.09, 0.02)) */",
+            "  outgoingLight = mix(outgoingLight, outgoingLight * 1.14 + uSmearSheenColor, ridge * 0.68);",
             "}",
             "#include <opaque_fragment>",
           ].join("\n"),
@@ -435,6 +443,10 @@ export function createSmearHandler(options = {}) {
     reset,
     stepLag,
     getLagDistance: () => +lastLagDistance.toFixed(3),
+    setSheenColor: (color) => {
+      uniforms.uSmearSheenColor.value.set(color);
+    },
+    getSheenColor: () => "#" + uniforms.uSmearSheenColor.value.getHexString(),
     getHandMotion: () => {
       const wake = new THREE.Vector3().subVectors(tmpLagHandWS, tmpCurrHandWS);
       const dist = wake.length();

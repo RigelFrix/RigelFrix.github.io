@@ -11,6 +11,10 @@ import nikoIdleFbx from "./assets/niko/Idle.fbx";
 import nikoRunFbx from "./assets/Running (1).fbx";
 import lockonClips from "./assets/niko/lockon.json";
 import punchClipData from "./assets/niko/punch.json";
+import onePunchClipData from "./assets/niko/one-punch.json";
+import cascadeurIdleData from "./assets/niko/cascadeur-idle.json";
+import cascadeurRunData from "./assets/niko/cascadeur-run.json";
+import cascadeurStopData from "./assets/niko/cascadeur-stop.json";
 import xiphosGlb from "./assets/models/xiphos-sword.glb";
 import longswordGlb from "./assets/models/longsword.glb";
 import nikoEyesUrl from "./assets/niko-eyes.png";
@@ -22,7 +26,7 @@ import { makeRain } from "./world-rain.js";
 import { makeRays } from "./world-rays.js";
 import { createWerewolfBoss } from "./world-boss.js";
 import { createSmearHandler } from "./world-smear.js";
-import { createPunchSmoke } from "./world-punch-smoke.js";
+import { buildDevMap } from "./world-dev-map.js";
 
 const root = document.documentElement;
 const host = document.getElementById("world");
@@ -61,6 +65,8 @@ async function start() {
 
   const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const coarse = window.matchMedia("(pointer: coarse)").matches;
+  const devParam = new URLSearchParams(location.search);
+  const isDevMap = devParam.get("map") === "dev" || devParam.get("dev") === "1" || devParam.has("dev") || devParam.has("devmap");
   const liteParam = new URLSearchParams(location.search).get("lite");
   const MAX_RATIO = 2;
   /* Lowest resolution the frame-time guard may fall back to (only while frames stay under ~30 fps at 1x) */
@@ -75,6 +81,12 @@ async function start() {
   });
   const ROBOT_R = 0.45;
   const SPEED = 4.6;
+  let SPRINT_SPEED = 10.5;
+  let SPRINT_ANIM_SCALE = 0.72;
+  const fpsParam = devParam.get("animefps") || devParam.get("fps");
+  let SPRINT_ANIME_FPS = fpsParam != null ? parseInt(fpsParam, 10) : 0;
+  let sprintAnimPhase = 0;
+  let jogAnimPhase = 0;
 
   const canvas = document.getElementById("world-canvas");
   const labelsEl = document.getElementById("world-labels");
@@ -984,24 +996,26 @@ async function start() {
 
   /* The island: terrain, water, stream, ruins, camp, dock and plants (world-island.js). Stops keep clear space. */
 
-  const island = buildIsland({
-    scene,
-    withRim,
-    coarse,
-    clear: defs
-      .filter((def) => def.action)
-      .flatMap((def) => {
-        const facing = THREE.MathUtils.degToRad(def.facing || 0);
-        return [
-          { x: def.x, z: def.z, r: 2.6 },
-          { x: def.x + Math.sin(facing) * 2.2, z: def.z + Math.cos(facing) * 2.2, r: 2.2 },
-        ];
-      }),
-  });
-  const wind = calm ? null : windLines({ scene, groundAt: island.groundAt, count: coarse ? 4 : 6 });
+  const island = isDevMap
+    ? buildDevMap({ scene, withRim, ramp, colliders: [] })
+    : buildIsland({
+        scene,
+        withRim,
+        coarse,
+        clear: defs
+          .filter((def) => def.action)
+          .flatMap((def) => {
+            const facing = THREE.MathUtils.degToRad(def.facing || 0);
+            return [
+              { x: def.x, z: def.z, r: 2.6 },
+              { x: def.x + Math.sin(facing) * 2.2, z: def.z + Math.cos(facing) * 2.2, r: 2.2 },
+            ];
+          }),
+      });
+  const wind = (calm || isDevMap) ? null : windLines({ scene, groundAt: island.groundAt, count: coarse ? 4 : 6 });
   const windPixels = new THREE.Vector2();
-  const rain = calm || lite ? null : makeRain({ scene, lite: coarse });
-  const rays = calm ? null : makeRays({ scene, groundAt: island.groundAt, sun, shadowSize: SHADOW_SIZE, lite: lite || coarse });
+  const rain = (calm || lite || isDevMap) ? null : makeRain({ scene, lite: coarse });
+  const rays = (calm || isDevMap) ? null : makeRays({ scene, groundAt: island.groundAt, sun, shadowSize: SHADOW_SIZE, lite: lite || coarse });
   const rayTint = new THREE.Color();
   /* Fully lit air at strength 1 lifts the shade about this much (screen blend, so it never passes white) */
   const VOLUME_BASE = 0.035;
@@ -1189,64 +1203,71 @@ async function start() {
   const colliders = [];
   let cabinetOrder = 0;
 
-  defs.forEach((def) => {
-    const build = builders[def.kind] || builders.pedestal;
-    const built = build(def, def.kind === "monolith" ? cabinetOrder++ : 0);
-    const group = built.group;
-    const facing = THREE.MathUtils.degToRad(def.facing || 0);
-    const floor = island.groundAt(def.x, def.z);
-    group.position.set(def.x, floor, def.z);
-    group.rotation.set(0, facing, THREE.MathUtils.degToRad(def.lean || 0), "YXZ");
-
-    if (def.scale && !def.model) {
-      group.scale.setScalar(def.scale);
+  if (isDevMap) {
+    // Register all dev map obstacles into colliders array
+    if (island.colliders) {
+      colliders.push(...island.colliders);
     }
+  } else {
+    defs.forEach((def) => {
+      const build = builders[def.kind] || builders.pedestal;
+      const built = build(def, def.kind === "monolith" ? cabinetOrder++ : 0);
+      const group = built.group;
+      const facing = THREE.MathUtils.degToRad(def.facing || 0);
+      const floor = island.groundAt(def.x, def.z);
+      group.position.set(def.x, floor, def.z);
+      group.rotation.set(0, facing, THREE.MathUtils.degToRad(def.lean || 0), "YXZ");
 
-    scene.add(group);
-    mergeStatic(group);
-
-    const radius = def.radius || built.radius || 0.8;
-    colliders.push({ x: def.x, z: def.z, r: radius });
-    decal(scene, { color: "#2a3a2a", size: radius * 2.9, x: def.x, z: def.z, y: floor + 0.03, opacity: 0.3 });
-
-    if (!def.action) {
-      if (def.model) {
-        loadModel({ def, group });
+      if (def.scale && !def.model) {
+        group.scale.setScalar(def.scale);
       }
-      return;
-    }
 
-    const reach = built.reach || radius + 0.8;
-    const forward = new THREE.Vector3(Math.sin(facing), 0, Math.cos(facing));
-    const obj = {
-      def,
-      group,
-      radius,
-      react: built.react,
-      spot: new THREE.Vector3(def.x, floor, def.z).addScaledVector(forward, reach),
-      labelAt: new THREE.Vector3(def.x, floor + (built.labelY || 2.6), def.z),
-      hover: 0,
-      plate: null,
-    };
-    group.userData.worldObject = obj;
+      scene.add(group);
+      mergeStatic(group);
 
-    const plate = document.createElement("button");
-    plate.type = "button";
-    plate.className = "world-plate";
-    plate.textContent = def.label;
-    plate.setAttribute("aria-label", `Walk to ${def.label}`);
-    plate.style.setProperty("--i", objects.length);
-    plate.addEventListener("click", () => goToObject(obj));
-    labelsEl.append(plate);
-    obj.plate = plate;
+      const radius = def.radius || built.radius || 0.8;
+      colliders.push({ x: def.x, z: def.z, r: radius });
+      decal(scene, { color: "#2a3a2a", size: radius * 2.9, x: def.x, z: def.z, y: floor + 0.03, opacity: 0.3 });
 
-    objects.push(obj);
-    byId.set(def.id, obj);
+      if (!def.action) {
+        if (def.model) {
+          loadModel({ def, group });
+        }
+        return;
+      }
 
-    if (def.model) {
-      loadModel(obj);
-    }
-  });
+      const reach = built.reach || radius + 0.8;
+      const forward = new THREE.Vector3(Math.sin(facing), 0, Math.cos(facing));
+      const obj = {
+        def,
+        group,
+        radius,
+        react: built.react,
+        spot: new THREE.Vector3(def.x, floor, def.z).addScaledVector(forward, reach),
+        labelAt: new THREE.Vector3(def.x, floor + (built.labelY || 2.6), def.z),
+        hover: 0,
+        plate: null,
+      };
+      group.userData.worldObject = obj;
+
+      const plate = document.createElement("button");
+      plate.type = "button";
+      plate.className = "world-plate";
+      plate.textContent = def.label;
+      plate.setAttribute("aria-label", `Walk to ${def.label}`);
+      plate.style.setProperty("--i", objects.length);
+      plate.addEventListener("click", () => goToObject(obj));
+      labelsEl.append(plate);
+      obj.plate = plate;
+
+      objects.push(obj);
+      byId.set(def.id, obj);
+
+      if (def.model) {
+        loadModel(obj);
+      }
+    });
+  }
 
   async function loadModel(obj) {
     if (fromDisk) {
@@ -1869,6 +1890,26 @@ async function start() {
   /* Rigel crash-lands on the beach by the dock, the start of the island */
   const landing = island.spot("landing");
   robot.position.copy(landing);
+
+  if (isDevMap) {
+    root.classList.add("world-dev-mode");
+    const badge = document.createElement("div");
+    badge.className = "dev-gym-badge";
+    badge.innerHTML = `
+      <div class="dev-gym-header">
+        <span class="dev-tag">DEV ARENA</span>
+        <span class="dev-size">180m &times; 180m</span>
+      </div>
+      <div class="dev-gym-shortcuts">
+        <span><b>[WASD]</b> Move (Hold <b>Shift</b> to Sprint)</span>
+        <span><b>[G]</b> One-Punch</span>
+        <span><b>[F]</b> Flying Knee</span>
+        <span><b>[T / M-Click]</b> Lock-On Target</span>
+        <span><b>[Right-Drag]</b> Orbit Camera</span>
+      </div>
+    `;
+    host.appendChild(badge);
+  }
   robot.rotation.y = Math.PI / 4;
 
   /* Training dummy on the spawn court, in front of the camera and facing Niko.
@@ -2756,11 +2797,29 @@ async function start() {
       }
       return new THREE.AnimationClip(entry.name, entry.duration, tracks);
     };
-    for (const [name, source] of [["idle", idleSource], ["run", parseFbx(nikoRunFbx)]]) {
-      actions[name] = mixer.clipAction(retargeted(name, source));
-      actions[name].play();
-      actions[name].setEffectiveWeight(name === "idle" ? 1 : 0);
-    }
+    const directClip = (entry) => {
+      const tracks = [];
+      for (const bone of entry.bones) {
+        if (!bones[bone.name]) continue;
+        tracks.push(new THREE.QuaternionKeyframeTrack(`${bone.name}.quaternion`, new Float32Array(bone.times), new Float32Array(bone.q)));
+        if (bone.pos) {
+          tracks.push(new THREE.VectorKeyframeTrack(`${bone.name}.position`, new Float32Array(bone.posTimes), new Float32Array(bone.pos)));
+        }
+        if (bone.scale) {
+          tracks.push(new THREE.VectorKeyframeTrack(`${bone.name}.scale`, new Float32Array(bone.scaleTimes || bone.times), new Float32Array(bone.scale)));
+        }
+      }
+      return new THREE.AnimationClip(entry.name, entry.duration, tracks);
+    };
+
+    actions.run = mixer.clipAction(retargeted("run", parseFbx(nikoRunFbx)));
+    actions.run.play();
+    actions.run.setEffectiveWeight(0);
+
+    const cascadeurIdleAction = mixer.clipAction(directClip(cascadeurIdleData));
+    cascadeurIdleAction.play();
+    cascadeurIdleAction.setEffectiveWeight(1);
+    actions.idle = cascadeurIdleAction;
     /* The mixer blends quaternion tracks by their components. Two clips of the same hand pose still
        twist through a full turn if one track is stored as q and the other as -q. */
     const quatAt = (track, u) => {
@@ -2816,6 +2875,26 @@ async function start() {
     punchAction.setEffectiveTimeScale(1.5);
     punchAction.play();
     actions.punch = punchAction;
+
+    const onePunchAction = mixer.clipAction(directClip(onePunchClipData));
+    onePunchAction.setLoop(THREE.LoopOnce, 1);
+    onePunchAction.clampWhenFinished = false;
+    onePunchAction.setEffectiveWeight(0);
+    onePunchAction.setEffectiveTimeScale(1.0);
+    onePunchAction.play();
+    actions.onePunch = onePunchAction;
+
+    const sprintAction = mixer.clipAction(directClip(cascadeurRunData));
+    sprintAction.setEffectiveWeight(0);
+    sprintAction.play();
+    actions.sprint = sprintAction;
+
+    const stopAction = mixer.clipAction(directClip(cascadeurStopData));
+    stopAction.setLoop(THREE.LoopOnce, 1);
+    stopAction.clampWhenFinished = true;
+    stopAction.setEffectiveWeight(0);
+    stopAction.play();
+    actions.stop = stopAction;
     if (bones.LeftHand) {
       const helper = new THREE.Mesh(
         new THREE.BoxGeometry(0.35, 0.35, 0.35),
@@ -2824,6 +2903,15 @@ async function start() {
       helper.name = "LeftHandHitboxHelper";
       bones.LeftHand.add(helper);
       punchHitbox.helper = helper;
+    }
+    if (bones.RightHand) {
+      const rHelper = new THREE.Mesh(
+        new THREE.BoxGeometry(0.35, 0.35, 0.35),
+        new THREE.MeshBasicMaterial({ color: 0x22ff22, wireframe: true, visible: false })
+      );
+      rHelper.name = "RightHandHitboxHelper";
+      bones.RightHand.add(rHelper);
+      punchHitbox.rightHelper = rHelper;
     }
     bot.punchHitbox = punchHitbox;
     const quatMap = (clip) => {
@@ -2837,7 +2925,11 @@ async function start() {
     /* Every direction is stored in idle's hemisphere. A per-clip sign flip is what made the hands
        trade places while the run blend fell back to idle. */
     lockMoves.forEach((move) => matchHemisphere(move.action.getClip(), idleClip, 8, 0));
+    matchHemisphere(actions.run.getClip(), idleClip, 8, 0);
+    if (actions.sprint) matchHemisphere(actions.sprint.getClip(), idleClip, 8, 0);
+    if (actions.stop) matchHemisphere(actions.stop.getClip(), idleClip, 8, 0);
     matchHemisphere(actions.punch.getClip(), idleClip, 8, 0);
+    matchHemisphere(actions.onePunch.getClip(), idleClip, 8, 0);
     const idleQuats = quatMap(idleClip);
     lockMoves.forEach((move) => {
       move.quats = quatMap(move.action.getClip());
@@ -3129,6 +3221,16 @@ async function start() {
 
   /* Movement */
 
+  const ONE_PUNCH_STEP_DIST = 1.05;
+  const ONE_PUNCH_STEP_CURVE = [
+    0.0000, 0.0000, 0.0006, 0.0026, 0.0067, 0.0134,
+    0.0236, 0.0374, 0.0552, 0.0769, 0.1030, 0.1420,
+    0.2168, 0.3243, 0.4430, 0.5632, 0.6887, 0.8053,
+    0.9050, 0.9847, 1.0000, 0.9669, 0.9131, 0.8477,
+    0.7648, 0.6633, 0.5689, 0.5007, 0.4366, 0.3686,
+    0.3142, 0.2487, 0.1727, 0.0806, 0.0442, 0.0000
+  ];
+
   const state = {
     path: [],
     pending: null,
@@ -3143,8 +3245,19 @@ async function start() {
     still: 0,
     faceUp: 0,
     pace: 1,
+    sprint: 0,
+    sprintMul: 1,
+    wasSprinting: false,
+    stopping: false,
+    stopTimer: 0,
+    stopSpeed: 0,
+    stopDir: new THREE.Vector3(),
+    wasMoving: false,
     punching: false,
+    punchType: null,
     punchTimer: 0,
+    punchOrigin: null,
+    punchForward: null,
     punchHitboxActive: false,
   };
   const punchHitbox = {
@@ -3167,18 +3280,16 @@ async function start() {
     sheenColor: "#ffe17d",
   });
 
-  /* Niko left fist natural anime smoke & vapor VFX */
-  const nikoPunchSmoke = createPunchSmoke({ scene, robot });
 
   const triggerPunch = () => {
     if (!bot.actions?.punch) return;
     if (state.punching) return;
     state.punching = true;
+    state.punchType = "flyingKnee";
     state.punchTimer = 0;
     state.punchHitboxActive = false;
     punchHitbox.active = false;
     punchHitbox.frame = -1;
-    nikoPunchSmoke.hide();
     state.path = [];
     state.pending = null;
     bot.actions.punch.reset();
@@ -3186,6 +3297,26 @@ async function start() {
     bot.actions.punch.clampWhenFinished = false;
     bot.actions.punch.setEffectiveTimeScale(1.5);
     bot.actions.punch.play();
+  };
+
+  const triggerOnePunch = () => {
+    if (!bot.actions?.onePunch) return;
+    if (state.punching) return;
+    state.punching = true;
+    state.punchType = "onePunch";
+    state.punchTimer = 0;
+    state.punchOrigin = robot.position.clone();
+    state.punchForward = new THREE.Vector3(Math.sin(robot.rotation.y), 0, Math.cos(robot.rotation.y)).normalize();
+    state.punchHitboxActive = false;
+    punchHitbox.active = false;
+    punchHitbox.frame = -1;
+    state.path = [];
+    state.pending = null;
+    bot.actions.onePunch.reset();
+    bot.actions.onePunch.setLoop(THREE.LoopOnce, 1);
+    bot.actions.onePunch.clampWhenFinished = false;
+    bot.actions.onePunch.setEffectiveTimeScale(1.0);
+    bot.actions.onePunch.play();
   };
   const faceRight = new THREE.Vector3();
   const worldUp = new THREE.Vector3(0, 1, 0);
@@ -3594,13 +3725,7 @@ async function start() {
     }
 
     press = null;
-    const hit = castAt(event.clientX, event.clientY);
-
-    if (hit.obj) {
-      goToObject(hit.obj);
-    } else if (hit.point) {
-      goTo(hit.point);
-    }
+    /* Click movement system removed: clicking on the game canvas does not move Niko */
   });
 
   if (!coarse) {
@@ -3671,6 +3796,9 @@ async function start() {
       triggerPunch();
     } else if (key === "g") {
       event.preventDefault();
+      triggerOnePunch();
+    } else if (key === "t") {
+      event.preventDefault();
       const rect = canvas.getBoundingClientRect();
       const x = cursor.on ? rect.left + cursor.x * rect.width : rect.left + rect.width / 2;
       const y = cursor.on ? rect.top + cursor.y * rect.height : rect.top + rect.height / 2;
@@ -3678,6 +3806,8 @@ async function start() {
     } else if (moveKeys[key] && (idle || !key.startsWith("arrow"))) {
       event.preventDefault();
       state.keys.add(key);
+    } else if (key === "shift" || key === "shiftleft" || key === "shiftright" || event.shiftKey) {
+      state.keys.add("shift");
     } else if (key === "e" || ((key === "enter" || key === " ") && idle)) {
       if (state.near) {
         event.preventDefault();
@@ -3686,7 +3816,14 @@ async function start() {
     }
   });
 
-  window.addEventListener("keyup", (event) => state.keys.delete(event.key.toLowerCase()));
+  window.addEventListener("keyup", (event) => {
+    state.keys.delete(event.key.toLowerCase());
+    if (event.key === "Shift" || event.key.toLowerCase() === "shift" || !event.shiftKey) {
+      state.keys.delete("shift");
+      state.keys.delete("shiftleft");
+      state.keys.delete("shiftright");
+    }
+  });
   window.addEventListener("blur", () => {
     state.keys.clear();
     press = null;
@@ -3764,8 +3901,11 @@ async function start() {
     let y = 0;
 
     state.keys.forEach((key) => {
-      x += moveKeys[key][0];
-      y += moveKeys[key][1];
+      const v = moveKeys[key];
+      if (v) {
+        x += v[0];
+        y += v[1];
+      }
     });
 
     const pad = readPad();
@@ -3941,15 +4081,29 @@ async function start() {
     const before = robot.position.clone();
     let moving = false;
 
+    const isSprint = (state.keys.has("shift") || state.keys.has("shiftleft") || state.keys.has("shiftright")) && input.lengthSq() > 0.0001;
+    const targetSprint = isSprint ? 1.0 : 0.0;
+    state.sprint = THREE.MathUtils.damp(state.sprint, targetSprint, 10, dt);
+    const sprintRatio = SPRINT_SPEED / SPEED;
+    state.sprintMul = 1.0 + state.sprint * (sprintRatio - 1.0);
+
     if (input.lengthSq() > 0.0001) {
       state.path = [];
       state.pending = null;
-      robot.position.addScaledVector(input, SPEED * dt);
+      robot.position.addScaledVector(input, SPEED * state.sprintMul * dt);
       resolveCollisions(robot.position);
       stepTo(before, robot.position);
       state.yaw = Math.atan2(input.x, input.z);
       state.pace = THREE.MathUtils.damp(state.pace, input.length(), 10, dt);
       moving = true;
+      if (isSprint && state.sprint > 0.3) {
+        state.wasSprinting = true;
+      }
+      if (state.stopping) {
+        state.stopping = false;
+        state.stopTimer = 0;
+        if (bot.actions?.stop) bot.actions.stop.setEffectiveWeight(0);
+      }
     } else if (state.path.length) {
       state.pace = THREE.MathUtils.damp(state.pace, 1, 10, dt);
       const target = state.path[0];
@@ -3968,6 +4122,37 @@ async function start() {
         robot.position.z += (dz / dist) * step;
         state.yaw = Math.atan2(dx, dz);
         moving = true;
+      }
+    } else {
+      // Stopping animation ONLY triggers when stopping from sprint mode (WASD + Shift):
+      if (state.wasMoving && state.wasSprinting && !state.stopping && !state.punching && !lockTarget) {
+        state.stopping = true;
+        state.stopTimer = 0;
+        state.stopSpeed = SPEED * state.sprintMul;
+        state.stopDir.set(Math.sin(state.yaw), 0, Math.cos(state.yaw));
+        if (bot.actions?.stop) {
+          bot.actions.stop.reset();
+          bot.actions.stop.play();
+        }
+      }
+      state.wasSprinting = false;
+      state.pace = THREE.MathUtils.damp(state.pace, 0, 10, dt);
+    }
+    state.wasMoving = moving;
+
+    if (state.stopping) {
+      state.stopTimer += dt;
+      const stopDur = bot.actions?.stop ? bot.actions.stop.getClip().duration : 0.4833;
+      if (state.stopTimer < 0.22) {
+        const decel = Math.pow(Math.max(0, 1 - state.stopTimer / 0.22), 2);
+        const skidStep = state.stopSpeed * decel * dt * 0.35;
+        robot.position.addScaledVector(state.stopDir, skidStep);
+        resolveCollisions(robot.position);
+        stepTo(before, robot.position);
+      }
+      if (state.stopTimer >= stopDur) {
+        state.stopping = false;
+        state.stopTimer = 0;
       }
     }
 
@@ -4005,7 +4190,7 @@ async function start() {
     /* Robot animation */
 
     state.walk = THREE.MathUtils.damp(state.walk, moving ? 1 : 0, 10, dt);
-    state.phase += dt * 10 * state.walk * state.pace;
+    state.phase += dt * 10 * state.walk * state.pace * (1.0 + state.sprint * 0.35);
     const step = Math.sin(state.phase);
     const swing = step * 0.7 * state.walk;
 
@@ -4046,83 +4231,167 @@ async function start() {
       /* Free roam is idle against run. Lock-on plays the run directions in Niko's facing frame. */
       const { actions } = bot;
       let punchWeight = 0;
-      if (state.punching && actions.punch) {
-        state.punchTimer += dt * 1.5;
-        const dur = actions.punch.getClip().duration;
+      if (state.punching) {
+        if (state.punchType === "onePunch" && actions.onePunch) {
+          state.punchTimer += dt * 1.0;
+          const dur = actions.onePunch.getClip().duration;
+          const punchFrame = Math.floor(state.punchTimer * 30);
 
-        // Forward movement propulsion (scaled for 1.5x speed):
-        // Keyframes 0-14 (0 - 0.467s): charging steps forward into jump
-        // Keyframes 14-36 (0.467 - 1.20s): aerial flying knee leap forward
-        // Keyframes 45-56 (1.50 - 1.85s): diving fist slam forward
-        let leapSpeed = 0;
-        if (state.punchTimer <= 0.467) {
-          leapSpeed = 4.2;
-        } else if (state.punchTimer <= 1.20) {
-          leapSpeed = 3.6;
-        } else if (state.punchTimer >= 1.50 && state.punchTimer <= 1.85) {
-          leapSpeed = 2.8;
-        }
+          // Forward step from frame 1 to 22, hold at apex (22-24), return to original position from frame 24 to 35:
+          if (state.punchOrigin && state.punchForward) {
+            const frameFloat = THREE.MathUtils.clamp((state.punchTimer / dur) * 35, 0, 35);
+            const f0 = Math.floor(frameFloat);
+            const f1 = Math.min(35, f0 + 1);
+            const frac = frameFloat - f0;
+            const curveVal = ONE_PUNCH_STEP_CURVE[f0] * (1 - frac) + ONE_PUNCH_STEP_CURVE[f1] * frac;
+            const disp = ONE_PUNCH_STEP_DIST * curveVal;
 
-        if (leapSpeed > 0) {
-          const forward = new THREE.Vector3(Math.sin(robot.rotation.y), 0, Math.cos(robot.rotation.y));
-          const leapBefore = robot.position.clone();
-          robot.position.addScaledVector(forward, leapSpeed * dt);
-          resolveCollisions(robot.position);
-          stepTo(leapBefore, robot.position);
-        }
-
-        // Left hand hitbox: active only during keyframes 37-40 of the animation
-        const punchFrame = Math.floor(state.punchTimer * 30);
-        const hitboxActive = punchFrame >= 37 && punchFrame <= 40;
-        punchHitbox.active = hitboxActive;
-        punchHitbox.frame = punchFrame;
-        state.punchHitboxActive = hitboxActive;
-        if (hitboxActive && bot.bones?.LeftHand) {
-          bot.bones.LeftHand.getWorldPosition(punchHitbox.position);
-          punchHitbox.sphere.center.copy(punchHitbox.position);
-          punchHitbox.sphere.radius = punchHitbox.radius;
-          punchHitbox.box.setFromCenterAndSize(punchHitbox.position, punchHitbox.size);
-        }
-
-        // Full arm smear effect on Niko's left arm when swinging at frames 33-42:
-        const smearActive = punchFrame >= 33 && punchFrame <= 42;
-        if (smearActive) {
-          let smearScale = 1.0;
-          if (punchFrame < 36) {
-            smearScale = THREE.MathUtils.clamp((punchFrame - 33) / 3.0, 0.4, 1.0);
-          } else if (punchFrame > 40) {
-            smearScale = THREE.MathUtils.clamp((42 - punchFrame) / 2.0, 0.3, 1.0);
+            const leapBefore = robot.position.clone();
+            const targetPos = state.punchOrigin.clone().addScaledVector(state.punchForward, disp);
+            targetPos.y = island.groundAt(targetPos.x, targetPos.z);
+            resolveCollisions(targetPos);
+            stepTo(leapBefore, targetPos);
+            robot.position.copy(targetPos);
           }
-          nikoSmear.stepLag(dt, 7.5, smearScale, -1.0);
-        } else {
-          nikoSmear.reset();
-        }
 
-        // Natural Anime Smoke & Vapor ejecting from punch hitbox on impact:
-        nikoPunchSmoke.update(punchFrame, bot.bones?.LeftHand, punchHitbox, dt, robot);
+          // RightHand hitbox active during impact window: frames 16-22
+          const hitboxActive = punchFrame >= 16 && punchFrame <= 22;
+          punchHitbox.active = hitboxActive;
+          punchHitbox.frame = punchFrame;
+          state.punchHitboxActive = hitboxActive;
+          if (hitboxActive && bot.bones?.RightHand) {
+            bot.bones.RightHand.getWorldPosition(punchHitbox.position);
+            punchHitbox.sphere.center.copy(punchHitbox.position);
+            const handScaleY = bot.bones.RightHand.scale.y;
+            const radiusMult = Math.max(1.0, handScaleY * 0.75);
+            punchHitbox.sphere.radius = punchHitbox.radius * radiusMult;
+            punchHitbox.box.setFromCenterAndSize(punchHitbox.position, punchHitbox.size.clone().multiplyScalar(radiusMult));
+          }
 
-        if (state.punchTimer >= dur) {
-          state.punching = false;
-          state.punchTimer = 0;
-          state.punchHitboxActive = false;
-          punchHitbox.active = false;
-          punchHitbox.frame = -1;
-          nikoSmear.reset();
-          actions.punch.setEffectiveWeight(0);
-          actions.punch.stop();
-          punchWeight = 0;
-        } else {
-          const timeLeft = dur - state.punchTimer;
-          punchWeight = timeLeft < 0.12 ? Math.max(0, timeLeft / 0.12) : 1.0;
-          actions.punch.setEffectiveWeight(punchWeight);
+          // Right arm mesh-smearing effect during punch extension (frames 14-22):
+          const smearActive = punchFrame >= 14 && punchFrame <= 22;
+          if (smearActive) {
+            let smearScale = 1.0;
+            if (punchFrame < 17) {
+              smearScale = THREE.MathUtils.clamp((punchFrame - 14) / 3.0, 0.4, 1.0);
+            } else if (punchFrame > 19) {
+              smearScale = THREE.MathUtils.clamp((22 - punchFrame) / 3.0, 0.3, 1.0);
+            }
+            nikoSmear.stepLag(dt, 7.5, smearScale, 1.0); // 1.0 = Right arm
+          } else {
+            nikoSmear.reset();
+          }
+
+          if (state.punchTimer >= dur) {
+            if (state.punchOrigin) {
+              robot.position.copy(state.punchOrigin);
+              robot.position.y = island.groundAt(robot.position.x, robot.position.z);
+            }
+            state.punching = false;
+            state.punchType = null;
+            state.punchTimer = 0;
+            state.punchOrigin = null;
+            state.punchForward = null;
+            state.punchHitboxActive = false;
+            punchHitbox.active = false;
+            punchHitbox.frame = -1;
+            nikoSmear.reset();
+            actions.onePunch.setEffectiveWeight(0);
+            actions.onePunch.stop();
+            if (bot.bones?.RightHand) bot.bones.RightHand.scale.set(1, 1, 1);
+            if (bot.bones?.LeftFoot) bot.bones.LeftFoot.scale.set(1, 1, 1);
+            punchWeight = 0;
+          } else {
+            const timeLeft = dur - state.punchTimer;
+            punchWeight = timeLeft < 0.12 ? Math.max(0, timeLeft / 0.12) : 1.0;
+            actions.onePunch.setEffectiveWeight(punchWeight);
+          }
+        } else if (actions.punch) {
+          state.punchTimer += dt * 1.5;
+          const dur = actions.punch.getClip().duration;
+
+          // Forward movement propulsion (scaled for 1.5x speed):
+          let leapSpeed = 0;
+          if (state.punchTimer <= 0.467) {
+            leapSpeed = 4.2;
+          } else if (state.punchTimer <= 1.20) {
+            leapSpeed = 3.6;
+          } else if (state.punchTimer >= 1.50 && state.punchTimer <= 1.85) {
+            leapSpeed = 2.8;
+          }
+
+          if (leapSpeed > 0) {
+            const forward = new THREE.Vector3(Math.sin(robot.rotation.y), 0, Math.cos(robot.rotation.y));
+            const leapBefore = robot.position.clone();
+            robot.position.addScaledVector(forward, leapSpeed * dt);
+            resolveCollisions(robot.position);
+            stepTo(leapBefore, robot.position);
+          }
+
+          // Left hand hitbox: active only during keyframes 37-40 of the animation
+          const punchFrame = Math.floor(state.punchTimer * 30);
+          const hitboxActive = punchFrame >= 37 && punchFrame <= 40;
+          punchHitbox.active = hitboxActive;
+          punchHitbox.frame = punchFrame;
+          state.punchHitboxActive = hitboxActive;
+          if (hitboxActive && bot.bones?.LeftHand) {
+            bot.bones.LeftHand.getWorldPosition(punchHitbox.position);
+            punchHitbox.sphere.center.copy(punchHitbox.position);
+            punchHitbox.sphere.radius = punchHitbox.radius;
+            punchHitbox.box.setFromCenterAndSize(punchHitbox.position, punchHitbox.size);
+          }
+
+          // Full arm smear effect on Niko's left arm when swinging at frames 33-42:
+          const smearActive = punchFrame >= 33 && punchFrame <= 42;
+          if (smearActive) {
+            let smearScale = 1.0;
+            if (punchFrame < 36) {
+              smearScale = THREE.MathUtils.clamp((punchFrame - 33) / 3.0, 0.4, 1.0);
+            } else if (punchFrame > 40) {
+              smearScale = THREE.MathUtils.clamp((42 - punchFrame) / 2.0, 0.3, 1.0);
+            }
+            nikoSmear.stepLag(dt, 7.5, smearScale, -1.0);
+          } else {
+            nikoSmear.reset();
+          }
+
+          if (state.punchTimer >= dur) {
+            state.punching = false;
+            state.punchType = null;
+            state.punchTimer = 0;
+            state.punchHitboxActive = false;
+            punchHitbox.active = false;
+            punchHitbox.frame = -1;
+            nikoSmear.reset();
+            actions.punch.setEffectiveWeight(0);
+            actions.punch.stop();
+            punchWeight = 0;
+          } else {
+            const timeLeft = dur - state.punchTimer;
+            punchWeight = timeLeft < 0.12 ? Math.max(0, timeLeft / 0.12) : 1.0;
+            actions.punch.setEffectiveWeight(punchWeight);
+          }
         }
-      } else if (actions.punch) {
-        actions.punch.setEffectiveWeight(0);
+      } else {
+        if (actions.punch) actions.punch.setEffectiveWeight(0);
+        if (actions.onePunch) {
+          actions.onePunch.setEffectiveWeight(0);
+          if (bot.bones?.RightHand) bot.bones.RightHand.scale.set(1, 1, 1);
+          if (bot.bones?.LeftFoot) bot.bones.LeftFoot.scale.set(1, 1, 1);
+        }
+        if (actions.sprint && !state.walk) {
+          actions.sprint.setEffectiveWeight(0);
+        }
+        if (state.punchOrigin) {
+          robot.position.copy(state.punchOrigin);
+          robot.position.y = island.groundAt(robot.position.x, robot.position.z);
+          state.punchOrigin = null;
+          state.punchForward = null;
+        }
         state.punchHitboxActive = false;
         punchHitbox.active = false;
         punchHitbox.frame = -1;
         nikoSmear.reset();
-        nikoPunchSmoke.update(-1, null, null, dt, robot);
       }
       const locked = lockTarget && bot.lockMoves;
       if (locked) {
@@ -4200,8 +4469,9 @@ async function start() {
         lockSpeed = THREE.MathUtils.damp(lockSpeed, targetSpeed, 5, dt);
         const runT = lockMag;
         actions.run.setEffectiveWeight(0);
+        if (actions.sprint) actions.sprint.setEffectiveWeight(0);
         /* 0.7s run cycle at its authored speed. */
-        if (!starting && lockSpeed > 0.04) lockPhase = (lockPhase + dt * 1.45) % 1;
+        if (!starting && lockSpeed > 0.04) lockPhase = (lockPhase + dt * 1.45 * state.sprintMul) % 1;
         /* Only the two clips on either side of the stick. A dot-product blend also mixed in the
            opposite diagonal, so forward played the walk plus both jog diagonals at once. */
         const sectorWeights = (group) => {
@@ -4253,11 +4523,18 @@ async function start() {
             }
           }
           const gaitWeight = gait === "run" ? runT : 0;
+          const lockCycleSec = 0.7 / (state.sprintMul || 1);
+          const lockSteps = SPRINT_ANIME_FPS > 0
+            ? Math.max(4, Math.round((lockCycleSec * SPRINT_ANIME_FPS) / 2) * 2)
+            : 0;
+          const steppedLockPhase = lockSteps > 0
+            ? Math.floor(lockPhase * lockSteps) / lockSteps
+            : lockPhase;
           group.forEach((move, index) => {
             const weight = THREE.MathUtils.damp(move.action.getEffectiveWeight(), weights[index] * gaitWeight, 8, dt);
             move.action.setEffectiveWeight(weight * (1 - punchWeight));
             move.action.setEffectiveTimeScale(0);
-            move.action.time = lockPhase * move.action.getClip().duration;
+            move.action.time = steppedLockPhase * move.action.getClip().duration;
             posed += weight;
           });
         }
@@ -4265,9 +4542,58 @@ async function start() {
         /* Whatever the run clips don't cover stays on idle. A gap here is the bind pose. */
         actions.idle.setEffectiveWeight(Math.max(0, 1 - posed) * (1 - punchWeight));
       } else {
-        actions.idle.setEffectiveWeight((1 - state.walk) * (1 - punchWeight));
-        actions.run.setEffectiveWeight(state.walk * (1 - punchWeight));
-        actions.run.setEffectiveTimeScale(1.2 * state.pace);
+        const sprintT = THREE.MathUtils.clamp(state.sprint, 0, 1);
+        const jogWeight = (1 - sprintT) * state.walk * (1 - punchWeight);
+        const sprintWeight = sprintT * state.walk * (1 - punchWeight);
+
+        const stopDur = actions.stop ? actions.stop.getClip().duration : 0.4833;
+        let stopWeight = 0;
+        if (state.stopping) {
+          const t = state.stopTimer / stopDur;
+          stopWeight = t < 0.7 ? 1.0 : Math.max(0, 1.0 - (t - 0.7) / 0.3);
+          stopWeight *= (1 - punchWeight);
+        }
+
+        const idleWeight = Math.max(0, (1 - Math.max(state.walk, stopWeight)) * (1 - punchWeight));
+        actions.idle.setEffectiveWeight(idleWeight);
+        actions.run.setEffectiveWeight(jogWeight * (1 - stopWeight));
+
+        if (moving && state.pace > 0.001) {
+          if (actions.sprint) {
+            const sprintDur = actions.sprint.getClip().duration;
+            sprintAnimPhase = (sprintAnimPhase + dt * (SPRINT_ANIM_SCALE / sprintDur) * state.pace) % 1.0;
+          }
+          const jogDur = actions.run.getClip().duration;
+          jogAnimPhase = (jogAnimPhase + dt * (1.15 / jogDur) * state.pace) % 1.0;
+        }
+
+        // Evaluate clip playback times (stepped anime frame rate or continuous)
+        const evalClipTime = (phase, dur, scale, fps) => {
+          if (fps > 0) {
+            const cycle = dur / scale;
+            const steps = Math.max(4, Math.round((cycle * fps) / 2) * 2);
+            return (Math.floor(phase * steps) / steps) * dur;
+          }
+          return phase * dur;
+        };
+
+        if (actions.stop) {
+          actions.stop.setEffectiveWeight(stopWeight);
+          const stopPhase = Math.min(1.0, state.stopTimer / stopDur);
+          actions.stop.time = evalClipTime(stopPhase, stopDur, 1.0, SPRINT_ANIME_FPS);
+          actions.stop.setEffectiveTimeScale(0);
+        }
+
+        if (actions.sprint) {
+          const sprintDur = actions.sprint.getClip().duration;
+          actions.sprint.time = evalClipTime(sprintAnimPhase, sprintDur, SPRINT_ANIM_SCALE, SPRINT_ANIME_FPS);
+          actions.sprint.setEffectiveTimeScale(0);
+          actions.sprint.setEffectiveWeight(sprintWeight * (1 - stopWeight));
+        }
+
+        const jogDur = actions.run.getClip().duration;
+        actions.run.time = evalClipTime(jogAnimPhase, jogDur, 1.15, SPRINT_ANIME_FPS);
+        actions.run.setEffectiveTimeScale(0);
         bot.lockMoves?.forEach((move) => move.action.setEffectiveWeight(0));
         lockSpeed = 0;
         lockMag = 0;
@@ -4332,7 +4658,7 @@ async function start() {
         }
       }
       /* Diagonal backward: turn the hips into the backward run while keeping the chest on the target. */
-      if (lockTarget && Math.abs(lockBackYaw) > 0.02 && bot.bones?.Hips && bot.bones?.Spine2) {
+      if (!state.punching && lockTarget && Math.abs(lockBackYaw) > 0.02 && bot.bones?.Hips && bot.bones?.Spine2) {
         const yawWorld = (bone, radians) => {
           const parent = bone.parent;
           if (!parent) return;
@@ -4347,7 +4673,7 @@ async function start() {
         yawWorld(bot.bones.Spine2, -lockBackYaw);
       }
       /* Standing still, pitch the chest and head up toward the camera. Mixamo's local axes are not the old rig's, so this is a world-axis pitch around his right. */
-      if (state.faceUp > 0.01 && bot.bones.Head && bot.model) {
+      if (!state.punching && state.faceUp > 0.01 && bot.bones.Head && bot.model) {
         bot.model.updateWorldMatrix(true, false);
         const e = bot.model.matrixWorld.elements;
         faceRight.set(e[8], e[9], e[10]).normalize();
@@ -4502,7 +4828,8 @@ async function start() {
 
     /* Camera follows Niko over the island */
 
-    lookTarget.set(THREE.MathUtils.clamp(robot.position.x, -38, 38), robot.position.y, THREE.MathUtils.clamp(robot.position.z, -38, 38));
+    const camLimit = isDevMap ? 85 : 38;
+    lookTarget.set(THREE.MathUtils.clamp(robot.position.x, -camLimit, camLimit), robot.position.y, THREE.MathUtils.clamp(robot.position.z, -camLimit, camLimit));
     if (lockTarget) lookTarget.lerpVectors(lookTarget, targetFocus, 0.5);
     keepInFrame(lookTarget);
     const speed = dt > 0 ? travelled.length() / dt : 0;
@@ -4865,6 +5192,11 @@ async function start() {
 
     revealed = true;
     setLoad(1);
+    if (isDevMap) {
+      endIntro();
+      boot?.remove();
+      return;
+    }
     window.setTimeout(playIntro, Math.max(350, holdUntil - performance.now()));
   }
 
@@ -4877,7 +5209,15 @@ async function start() {
     applyEnv(climateSample);
     sky.dawn = 1;
     robot.visible = true;
-    shrineStar.visible = true;
+    if (isDevMap) {
+      robot.position.copy(landing);
+      robot.position.y = island.groundAt(landing.x, landing.z);
+      camLook.copy(robot.position);
+      lookTarget.copy(robot.position);
+      camera.zoom = 0.95;
+      camera.updateProjectionMatrix();
+    }
+    shrineStar.visible = !isDevMap;
     shrineStar.material.opacity = 0.95;
     island.beamMat.uniforms.strength.value = 0.85;
 
@@ -5156,6 +5496,19 @@ async function start() {
   window.PortfolioWorld = {
     active: true,
     triggerPunch,
+    triggerOnePunch,
+    sprint: (opts) => {
+      if (opts) {
+        if (opts.speed != null) SPRINT_SPEED = opts.speed;
+        if (opts.animSpeed != null) SPRINT_ANIM_SCALE = opts.animSpeed;
+        if (opts.animeFps !== undefined) SPRINT_ANIME_FPS = opts.animeFps;
+      }
+      return { speed: SPRINT_SPEED, animSpeed: SPRINT_ANIM_SCALE, animeFps: SPRINT_ANIME_FPS };
+    },
+    animeFps: (fps) => {
+      if (fps !== undefined) SPRINT_ANIME_FPS = fps;
+      return SPRINT_ANIME_FPS;
+    },
     walkTo: (id) => {
       const obj = byId.get(id);
       finishIntro();
@@ -5249,8 +5602,8 @@ async function start() {
         armSide: nikoSmear.uniforms.uSmearArmSide.value,
       }),
       punchSmoke: () => ({
-        active: nikoPunchSmoke.isActive(),
-        puffCount: nikoPunchSmoke.getPuffCount(),
+        active: false,
+        puffCount: 0,
       }),
       punchHitbox: () => ({
         active: punchHitbox.active,
@@ -5280,6 +5633,8 @@ async function start() {
       sword: (give) => swordPickup.debug(give),
       longsword: (give) => longswordPickup.debug(give),
       boss: (options) => werewolfBoss.debug(options),
+      sprint: (opts) => window.PortfolioWorld.sprint(opts),
+      animeFps: (fps) => window.PortfolioWorld.animeFps(fps),
       /* Live lock-on clip weights, so a direction can be checked without guessing from the pose. */
       lockClips: () => bot.lockMoves?.map((move) => ({ name: move.name, gait: move.gait, weight: +move.action.getEffectiveWeight().toFixed(3) })) ?? [],
       /* Look-down angle in degrees. angle(30) is shallower, angle(60) is steeper. Omit it to read the live angle.

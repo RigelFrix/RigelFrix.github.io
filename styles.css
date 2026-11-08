@@ -3238,3 +3238,66 @@ html.world main > section.is-open::before {
     transition-duration: 0.01ms !important;
   }
 }
+
+
+/* Dev Gym UI Badge & Environment */
+.world-dev-mode .world-sky {
+  background: linear-gradient(180deg, #32323a 0%, #4a4a56 50%, #686876 100%) !important;
+}
+
+.world-dev-mode .world-help {
+  display: none !important;
+}
+
+.dev-gym-badge {
+  position: absolute;
+  top: calc(var(--hud-h, 68px) + 14px);
+  left: 20px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px;
+  background: rgba(18, 20, 28, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  color: #f0f0f5;
+  font-family: 'Rubik', sans-serif;
+  pointer-events: none;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+}
+
+.dev-gym-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dev-tag {
+  background: #0070f3;
+  color: #fff;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.dev-size {
+  font-size: 13px;
+  font-weight: 600;
+  color: #d0d0d8;
+}
+
+.dev-gym-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: #a8a8b4;
+}
+
+.dev-gym-shortcuts b {
+  color: #ffd873;
+}

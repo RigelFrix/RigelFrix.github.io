@@ -21,10 +21,9 @@ export function createWerewolfBoss({
   bakeShadows,
   isIntroLive,
   addShake,
+  smearColor = null,
 }) {
-  const bossAt = landing.clone();
-  bossAt.x -= Math.SQRT1_2 * 3.15;
-  bossAt.z += Math.SQRT1_2 * 2.15;
+  const bossAt = (island.spot && island.spot('cove') ? island.spot('cove') : landing).clone();
   if (!island.nav.walkable(bossAt.x, bossAt.z)) {
     const near = island.nav.nearest(bossAt.x, bossAt.z);
     if (near) bossAt.copy(near);
@@ -66,6 +65,7 @@ export function createWerewolfBoss({
     noiseScale: 34.0,
     noisePower: 2.35,
     stretch: 1.48,
+    sheenColor: smearColor ?? new THREE.Color(0.28, 0.09, 0.02),
   });
 
   const bossNodes = {};
@@ -495,6 +495,8 @@ export function createWerewolfBoss({
         attackHandler.punchTime = options.time;
       }
       if (options.yaw != null) bossState.yaw = options.yaw;
+      if (options.smearColor) armSmear.setSheenColor(options.smearColor);
+      if (options.sheenColor) armSmear.setSheenColor(options.sheenColor);
       if (options.resetPos) {
         bossGroup.position.copy(bossAt);
         bossState.yaw = bossHomeYaw;
@@ -513,6 +515,7 @@ export function createWerewolfBoss({
       lagDistance: armSmear.getLagDistance(),
       at: bossGroup.position.toArray().map((n) => +n.toFixed(2)),
       scale: BOSS_SCALE,
+      smearColor: armSmear.getSheenColor(),
     };
   };
 
@@ -523,5 +526,7 @@ export function createWerewolfBoss({
     debug,
     setTargeted: (v) => { if (bossTargetRing) bossTargetRing.visible = Boolean(v); },
     getFocus: () => focus.set(bossGroup.position.x, bossGroup.position.y + 1.65, bossGroup.position.z),
+    setSmearColor: (c) => armSmear.setSheenColor(c),
+    getSmearColor: () => armSmear.getSheenColor(),
   };
 }
