@@ -45,7 +45,7 @@ if (!fs.existsSync(bindFbxPath)) {
 }
 
 // 1. Load Niko's in-game model
-const nikoBuf = fs.readFileSync("assets/niko/niko-final-clean.glb");
+const nikoBuf = fs.readFileSync("assets/niko/niko.glb");
 const gltfLoader = new GLTFLoader();
 const gltf = await gltfLoader.parseAsync(nikoBuf.buffer.slice(nikoBuf.byteOffset, nikoBuf.byteOffset + nikoBuf.byteLength), "");
 const model = gltf.scene;
@@ -217,6 +217,6 @@ const runExport = {
   bones: boneEntries,
 };
 
-const outPath = "assets/niko/cascadeur-run.json";
+const outPath = "assets/niko/sprint.json";
 fs.writeFileSync(outPath, JSON.stringify(runExport));
 console.log(`Successfully saved ${outPath}: duration=${runExport.duration}s, bones=${runExport.bones.length}, size=${fs.statSync(outPath).size} bytes`);

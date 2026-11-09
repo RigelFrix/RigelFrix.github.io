@@ -19,7 +19,7 @@ const runFbxPath = "assets/niko/in place running.fbx";
 const stopFbxPath = "assets/niko/running+stopping.fbx";
 
 // 1. Load Niko's in-game model
-const nikoBuf = fs.readFileSync("assets/niko/niko-final-clean.glb");
+const nikoBuf = fs.readFileSync("assets/niko/niko.glb");
 const gltfLoader = new GLTFLoader();
 const gltf = await gltfLoader.parseAsync(nikoBuf.buffer.slice(nikoBuf.byteOffset, nikoBuf.byteOffset + nikoBuf.byteLength), "");
 const model = gltf.scene;
@@ -187,6 +187,6 @@ function retargetAndExport(animFbxPath, clipName, outJsonPath, isLoop = false) {
   return result;
 }
 
-retargetAndExport(idleFbxPath, "idle", "assets/niko/cascadeur-idle.json", true);
-retargetAndExport(runFbxPath, "run", "assets/niko/cascadeur-run.json", true);
-retargetAndExport(stopFbxPath, "stop", "assets/niko/cascadeur-stop.json", false);
+retargetAndExport(idleFbxPath, "idle", "assets/niko/idle.json", true);
+retargetAndExport(runFbxPath, "run", "assets/niko/sprint.json", true);
+retargetAndExport(stopFbxPath, "stop", "assets/niko/stop.json", false);

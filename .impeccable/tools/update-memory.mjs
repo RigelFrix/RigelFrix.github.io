@@ -1,14 +1,16 @@
-import fs from "fs";
+import fs from "node:fs";
 
-let s = fs.readFileSync(".cursor/rules/core-memory.mdc", "utf8");
-const target = "Verified with `.impeccable/tools/verify-hitbox.mjs` and `.impeccable/tools/verify-niko-smear.mjs`.";
-const addition = " Linear Wind Core (speed line along punch trajectory) is implemented in `world-wind-core.js`: 3D cross-blade needle spear plus companion cavitation streaks, driven directly by `nikoSmear.getHandMotion()` (throw vector `P_curr - P_lag` and opposite wake vector `P_lag - P_curr`) to guarantee the speed lines trail in the opposite direction from where the hand is thrown and pierce straight forward into the strike target.";
+let content = fs.readFileSync(".cursor/rules/core-memory.mdc", "utf8");
 
-if (s.includes(target)) {
-  s = s.replace(target, target + " " + addition);
-  s = s.replace(/\r?\n/g, "\r\n");
-  fs.writeFileSync(".cursor/rules/core-memory.mdc", s, "utf8");
-  console.log("Updated core-memory.mdc successfully");
+const target = `  - Sprint Stop Braking (\`c:/Users/Rigel/Desktop/Cascadeur/running+stopping.fbx\` -> \`assets/niko/stop.json\`, 65 bones, 0.4833s). Abrupt emergency brake / friction slide (~0.49m displacement over 0.28s) into idle.
+  - Sprint Slowdown Run-Out (\`assets/niko/slowdown.json\`, 65 deform bones, 0.70s / 42 frames @ 60fps). Athletic 2-stride deceleration easing forward momentum (braking stride -> catch step -> bilateral settle, ~1.27m displacement over 0.62s) with zero-pop boundary dot product 0.9999 into idle. Selectable live via \`PortfolioWorld.debug.stopStyle("slowdown" | "abrupt")\` or URL parameter \`?stop=slowdown|abrupt\` (default: \`slowdown\`).`.replace(/\n/g, "\r\n");
+
+const repl = `  - Sprint Stop Braking (\`c:/Users/Rigel/Desktop/Cascadeur/running+stopping.fbx\` -> \`assets/niko/stop.json\`, 65 bones, 0.4833s). Triggers strictly when stopping from sprint mode (\`Shift + WASD\`), skid-decelerating with quadratic momentum over 0.28s, then crossfading seamlessly into idle; immediately interruptible by WASD input. Code cleaned and refactored with unified \`evalClipTime\` helper.`.replace(/\n/g, "\r\n");
+
+if (content.includes(target)) {
+  content = content.replace(target, repl);
+  fs.writeFileSync(".cursor/rules/core-memory.mdc", content, "utf8");
+  console.log("Updated core-memory.mdc");
 } else {
-  console.log("Target not found");
+  console.error("Target not found");
 }

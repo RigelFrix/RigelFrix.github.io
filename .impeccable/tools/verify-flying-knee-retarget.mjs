@@ -4,7 +4,7 @@ import { FBXLoader } from "../fbx/addons/loaders/FBXLoader.js";
 import { GLTFLoader } from "../../vendor/three/addons/loaders/GLTFLoader.js";
 
 globalThis.self = globalThis;
-const nikoBuf = fs.readFileSync("assets/niko/niko-final-clean.glb");
+const nikoBuf = fs.readFileSync("assets/niko/niko.glb");
 const gltfLoader = new GLTFLoader();
 const gltf = await gltfLoader.parseAsync(nikoBuf.buffer.slice(nikoBuf.byteOffset, nikoBuf.byteOffset + nikoBuf.byteLength), "");
 const model = gltf.scene;

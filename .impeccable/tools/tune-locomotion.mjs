@@ -8,7 +8,7 @@ global.window = globalThis;
 global.document = { createElementNS: () => ({ style: {} }), createElement: () => ({ style: {} }) };
 global.HTMLImageElement = function() {};
 
-const nikoBuf = fs.readFileSync("assets/niko/niko-final-clean.glb");
+const nikoBuf = fs.readFileSync("assets/niko/niko.glb");
 const gltfLoader = new GLTFLoader();
 const gltf = await gltfLoader.parseAsync(nikoBuf.buffer.slice(nikoBuf.byteOffset, nikoBuf.byteOffset + nikoBuf.byteLength), "");
 const model = gltf.scene;
@@ -22,7 +22,7 @@ model.traverse((node) => {
   if (node.isBone) bones[node.name] = node;
 });
 
-const runData = JSON.parse(fs.readFileSync("assets/niko/cascadeur-run.json"));
+const runData = JSON.parse(fs.readFileSync("assets/niko/sprint.json"));
 
 const directClip = (entry) => {
   const tracks = [];

@@ -41,6 +41,6 @@ const punchData = {
   bones,
 };
 
-fs.writeFileSync("assets/niko/punch.json", JSON.stringify(punchData));
-console.log(`Saved assets/niko/punch.json: duration=${punchData.duration}s, bones=${bones.length}, size=${fs.statSync("assets/niko/punch.json").size} bytes`);
+fs.writeFileSync("assets/niko/punch-combo.json", JSON.stringify(punchData));
+console.log(`Saved assets/niko/punch-combo.json: duration=${punchData.duration}s, bones=${bones.length}, size=${fs.statSync("assets/niko/punch-combo.json").size} bytes`);
 
