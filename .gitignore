@@ -6,6 +6,11 @@ desktop.ini
 .impeccable/review/
 node_modules/
 
+# Local play-log dumps (PortfolioWorld.log → log-report)
+log-report
+log-report.*
+play-log*.txt
+
 # Vercel link and token; never commit
 .vercel
 .env*

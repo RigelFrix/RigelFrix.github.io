@@ -28,6 +28,7 @@ import { makeRays } from "./world-rays.js";
 import { createWerewolfBoss } from "./world-boss.js";
 import { createSmearHandler } from "./world-smear.js";
 import { buildDevMap } from "./world-dev-map.js";
+import { createPlayLog } from "./world-play-log.js";
 
 const root = document.documentElement;
 const host = document.getElementById("world");
@@ -85,6 +86,22 @@ async function start() {
   let SPRINT_SPEED = 10.5;
   let SPRINT_STOP_THRESHOLD = 5.5;
   let SPRINT_ANIM_SCALE = 0.72;
+  /* 180 turn = stagger off the sprint clip. Needs speedMeter built AND sprint anim dominant. */
+  let TURN180_SPEED_MIN = 7.0;
+  const TURN180 = {
+    reverseDot: -0.25,   // moveDir · input must be below this
+    sprintAnimMin: 0.55, // state.sprint must be high enough that the sprint clip is the visible gait
+    reverseGrace: 0.16,  // keep reverse commit after release so S↑…W still 180s (log mark-1/2)
+    animScale: 1.48,
+    plantUntil: 0.38,    // fraction of turn: brake/plant before launch
+    holdFrac: 0.82,      // hold turn clip weight until this fraction, then fade
+    exitWeight: 0.35,    // residual weight at END so sprint doesn't pop
+    staggerIn: 0.85,     // snap turn weight up so it reads as a hit-stun interrupt
+    yawCurve: [
+      0, 0.036, 0.064, 0.100, 0.146, 0.195, 0.233, 0.257, 0.281, 0.321,
+      0.373, 0.434, 0.503, 0.573, 0.636, 0.705, 0.776, 0.843, 0.907, 0.963, 1.0,
+    ],
+  };
   const fpsParam = devParam.get("animefps") || devParam.get("fps");
   let SPRINT_ANIME_FPS = fpsParam != null ? parseInt(fpsParam, 10) : 0;
   let sprintAnimPhase = 0;
@@ -1893,6 +1910,7 @@ async function start() {
   const landing = island.spot("landing");
   robot.position.copy(landing);
 
+  let devHud = null;
   if (isDevMap) {
     root.classList.add("world-dev-mode");
     const badge = document.createElement("div");
@@ -1901,6 +1919,17 @@ async function start() {
       <div class="dev-gym-header">
         <span class="dev-tag">DEV ARENA</span>
         <span class="dev-size">180m &times; 180m</span>
+      </div>
+      <div class="dev-speed" aria-label="Speed meter">
+        <div class="dev-speed-top">
+          <span class="dev-speed-label">SPEED</span>
+          <span class="dev-speed-read">0.0 / ${SPRINT_SPEED.toFixed(1)} m/s</span>
+        </div>
+        <div class="dev-speed-track">
+          <div class="dev-speed-fill"></div>
+          <div class="dev-speed-mark" title="180 turn threshold"></div>
+        </div>
+        <div class="dev-speed-arm">180 at ${TURN180_SPEED_MIN.toFixed(1)} m/s</div>
       </div>
       <div class="dev-gym-shortcuts">
         <span><b>[WASD]</b> Move (Hold <b>Shift</b> to Sprint)</span>
@@ -1911,6 +1940,13 @@ async function start() {
       </div>
     `;
     host.appendChild(badge);
+    devHud = {
+      fill: badge.querySelector(".dev-speed-fill"),
+      mark: badge.querySelector(".dev-speed-mark"),
+      read: badge.querySelector(".dev-speed-read"),
+      arm: badge.querySelector(".dev-speed-arm"),
+    };
+    devHud.mark.style.left = `${(TURN180_SPEED_MIN / SPRINT_SPEED) * 100}%`;
   }
   robot.rotation.y = Math.PI / 4;
 
@@ -3264,6 +3300,8 @@ async function start() {
     speedMeter: 0,
     bank: 0,
     turnLead: 0,
+    chestTwist: 0,
+    pathOmega: 0,
     moveDir: new THREE.Vector3(0, 0, 1),
     wasSprinting: false,
     stopping: false,
@@ -3280,6 +3318,8 @@ async function start() {
     turn180StartSpeed: 0,
     turn180StartDir: new THREE.Vector3(),
     turn180TargetDir: new THREE.Vector3(),
+    turn180CommitT: 0,
+    turn180CommitDir: new THREE.Vector3(0, 0, 1),
     wasMoving: false,
     punching: false,
     punchType: null,
@@ -3809,9 +3849,216 @@ async function start() {
     d: [1, 0],
     arrowright: [1, 0],
   };
+  /* Newest opposite key wins (A+D / W+S). Summing them to 0 was cancelling input mid-sprint
+     and firing STOP instead of a 180 — see log-report sprint→stop on a+d+shift. */
+  const moveKeyAt = Object.create(null);
+  let moveKeySeq = 0;
+  for (const key of Object.keys(moveKeys)) moveKeyAt[key] = 0;
 
   const overlayOpen = () => Boolean(window.Portfolio?.anyOpen?.());
   const typing = (target) => target instanceof HTMLElement && target.closest("input, textarea, select, [contenteditable]");
+
+  const playLogInput = { x: 0, z: 0 };
+  const playLog = createPlayLog({
+    host,
+    getMeta: () => ({
+      url: location.href,
+      map: isDevMap ? "dev" : "island",
+      view: "world",
+      bundle: document.querySelector('script[src*="world.bundle.js"]')?.getAttribute("src") || "",
+    }),
+    getSnap: () => ({
+      keys: state.keys,
+      speed: state.speedMeter,
+      sprint: state.sprint,
+      yaw: state.yaw,
+      face: robot.rotation.y,
+      moveDir: state.moveDir,
+      input: playLogInput,
+      bank: state.bank,
+      turnLead: state.turnLead,
+      chestTwist: state.chestTwist,
+      pathOmega: state.pathOmega,
+      travelDot: state.moveDir.x * playLogInput.x + state.moveDir.z * playLogInput.z,
+      turning180: state.turning180,
+      stopping: state.stopping,
+      punching: state.punching,
+      lock: Boolean(lockTarget),
+      moving: state.wasMoving,
+      pos: robot.position,
+      turn180Weight: state.turn180Weight,
+      sprintWeight: bot.actions?.sprint?.getEffectiveWeight?.() ?? 0,
+    }),
+  });
+
+  /* ——— 180 turn (sprint stagger) ———
+     Rule: speedMeter past TURN180_SPEED_MIN AND sprint clip dominant (state.sprint),
+     then a reverse stick staggers the run into the 180 turn clip. */
+  const sampleTurnYaw = (norm) => {
+    const curve = TURN180.yawCurve;
+    const last = curve.length - 1;
+    const x = Math.min(last, Math.max(0, norm * last));
+    const i0 = Math.floor(x);
+    const i1 = Math.min(last, i0 + 1);
+    const f = x - i0;
+    return curve[i0] * (1 - f) + curve[i1] * f;
+  };
+
+  const wrapYaw = (yaw) => Math.atan2(Math.sin(yaw), Math.cos(yaw));
+
+  /** Facing used for reverse checks — commitDir covers release→opposite (S↑ then W). */
+  const turn180FacingDir = () =>
+    state.turn180CommitT > 0 ? state.turn180CommitDir : state.moveDir;
+
+  const turn180TravelDot = (dir) => {
+    const face = turn180FacingDir();
+    return face.x * dir.x + face.z * dir.z;
+  };
+
+  /** Sprint gait is visibly on — 180 only staggers from this, not from jog. */
+  const sprintAnimActive = () => state.sprint >= TURN180.sprintAnimMin && state.walk > 0.45;
+
+  const armTurn180Commit = () => {
+    if (state.moveDir.lengthSq() < 0.001) return;
+    state.turn180CommitDir.copy(state.moveDir).normalize();
+    state.turn180CommitT = TURN180.reverseGrace;
+  };
+
+  /** @returns {string|null} reject reason, or null if the turn may start */
+  const turn180BlockedReason = (input) => {
+    if (state.turning180) return "busy";
+    if (state.punching || lockTarget) return "blocked";
+    const commitLive = state.turn180CommitT > 0;
+    /* Stopping/not-moving normally block — except during reverse-commit after a sprint release. */
+    if (state.stopping && !commitLive) return "blocked";
+    if (!state.wasMoving && !commitLive) return "not-moving";
+    if (state.speedMeter < TURN180_SPEED_MIN) return "slow";
+    if (!sprintAnimActive() && !(commitLive && state.sprint >= TURN180.sprintAnimMin * 0.7)) {
+      return "not-sprint-anim";
+    }
+    if (turn180TravelDot(input) >= TURN180.reverseDot) return "not-reverse";
+    return null;
+  };
+
+  const startTurn180 = (input) => {
+    const travelDot = turn180TravelDot(input);
+    const clipDur = bot.actions?.turn180?.getClip()?.duration ?? 0.6667;
+    const face = turn180FacingDir();
+    state.turning180 = true;
+    state.turn180Timer = 0;
+    state.turn180Dur = clipDur / TURN180.animScale;
+    state.turn180StartYaw = robot.rotation.y;
+    state.turn180StartDir.copy(face).normalize();
+    if (state.turn180StartDir.lengthSq() < 0.001) {
+      state.turn180StartDir.set(Math.sin(robot.rotation.y), 0, Math.cos(robot.rotation.y)).normalize();
+    }
+    state.turn180TargetDir.copy(input).normalize();
+    state.turn180StartSpeed = state.speedMeter;
+    state.turn180CommitT = 0;
+    state.pathOmega = 0;
+    /* Abort skid so release→opposite can plant into the 180 instead of STOP. */
+    if (state.stopping) {
+      state.stopping = false;
+      state.stopTimer = 0;
+      state.stopWeight = 0;
+      if (bot.actions?.stop) bot.actions.stop.setEffectiveWeight(0);
+    }
+    /* Stagger interrupt: snap the turn clip on top of the live sprint pose. */
+    state.turn180Weight = Math.max(state.turn180Weight, TURN180.staggerIn);
+
+    const inputYaw = Math.atan2(input.x, input.z);
+    const cross = state.turn180StartDir.x * input.z - state.turn180StartDir.z * input.x;
+    const turnSign = cross < -0.01 ? 1 : -1;
+    let diffYaw = wrapYaw(inputYaw - state.turn180StartYaw);
+    if (Math.abs(diffYaw) > Math.PI - 0.25) diffYaw = turnSign * Math.PI;
+    state.turn180YawDelta = diffYaw;
+
+    if (bot.actions?.turn180) {
+      bot.actions.turn180.reset();
+      bot.actions.turn180.play();
+    }
+    playLog.decision("TURN180_START", {
+      speed: +state.speedMeter.toFixed(2),
+      speedMin: TURN180_SPEED_MIN,
+      sprint: +state.sprint.toFixed(2),
+      sprintAnimMin: TURN180.sprintAnimMin,
+      travelDot: +travelDot.toFixed(2),
+      yaw: +((robot.rotation.y * 180) / Math.PI).toFixed(1),
+      targetYaw: +((inputYaw * 180) / Math.PI).toFixed(1),
+      deltaYaw: +((diffYaw * 180) / Math.PI).toFixed(1),
+      stagger: 1,
+      keys: [...state.keys].sort().join("+") || "-",
+    });
+  };
+
+  /** Advances an active 180. Returns true while still turning. */
+  const stepTurn180 = (dt, isSprint) => {
+    state.path = [];
+    state.pending = null;
+    state.turn180Timer += dt;
+    const turnDur = state.turn180Dur || 0.444;
+    const turnNorm = Math.min(1, state.turn180Timer / turnDur);
+    const yawProgress = sampleTurnYaw(turnNorm);
+
+    robot.rotation.y = wrapYaw(state.turn180StartYaw + state.turn180YawDelta * yawProgress);
+    state.yaw = robot.rotation.y;
+    state.pathOmega = 0;
+
+    if (turnNorm < TURN180.plantUntil) {
+      const u = turnNorm / TURN180.plantUntil;
+      const brake = Math.pow(Math.max(0, 1 - u), 2.8);
+      const skidSpeed = state.turn180StartSpeed * brake;
+      state.speedMeter = THREE.MathUtils.lerp(state.turn180StartSpeed * 0.15, state.turn180StartSpeed, brake);
+      robot.position.addScaledVector(state.turn180StartDir, skidSpeed * dt * 0.22);
+      state.moveDir.copy(state.turn180StartDir);
+    } else {
+      const launchNorm = (turnNorm - TURN180.plantUntil) / (1 - TURN180.plantUntil);
+      const pushAccel = launchNorm * launchNorm;
+      const targetSpeed = isSprint ? SPRINT_SPEED : SPEED;
+      state.speedMeter = THREE.MathUtils.lerp(state.turn180StartSpeed * 0.25, targetSpeed, pushAccel);
+      state.moveDir.copy(state.turn180TargetDir);
+      robot.position.addScaledVector(state.turn180TargetDir, state.speedMeter * dt * 0.90);
+    }
+
+    state.sprint = THREE.MathUtils.clamp((state.speedMeter - SPEED) / Math.max(0.001, SPRINT_SPEED - SPEED), 0, 1);
+    state.sprintMul = Math.max(1, state.speedMeter / SPEED);
+    state.wasSprinting = state.speedMeter >= SPRINT_STOP_THRESHOLD;
+    state.pace = THREE.MathUtils.damp(state.pace, 1, 12, dt);
+
+    if (state.turn180Timer < turnDur) return true;
+
+    state.turning180 = false;
+    state.moveDir.copy(state.turn180TargetDir);
+    state.yaw = wrapYaw(state.turn180StartYaw + state.turn180YawDelta);
+    robot.rotation.y = state.yaw;
+    state.pathOmega = 0;
+    state.turn180Weight = Math.max(state.turn180Weight, TURN180.exitWeight);
+    playLog.decision("TURN180_END", {
+      speed: +state.speedMeter.toFixed(2),
+      yaw: +((state.yaw * 180) / Math.PI).toFixed(1),
+      turnW: +state.turn180Weight.toFixed(2),
+      sprintW: +(bot.actions?.sprint?.getEffectiveWeight?.() ?? 0).toFixed(2),
+    });
+    return false;
+  };
+
+  const logTurn180Reject = (input, reason) => {
+    if (!playLog.enabled) return;
+    const travelDot = turn180TravelDot(input);
+    if (travelDot >= -0.15 || state.speedMeter < TURN180_SPEED_MIN * 0.5) return;
+    const sig = `${reason}|${travelDot.toFixed(1)}|${state.speedMeter.toFixed(0)}`;
+    if (sig === state._turn180RejectSig && clock - (state._turn180RejectAt || 0) < 0.25) return;
+    state._turn180RejectSig = sig;
+    state._turn180RejectAt = clock;
+    playLog.decision("TURN180_REJECT", {
+      reason,
+      travelDot: +travelDot.toFixed(2),
+      speed: +state.speedMeter.toFixed(2),
+      speedMin: TURN180_SPEED_MIN,
+      sprint: +state.sprint.toFixed(2),
+      keys: [...state.keys].sort().join("+") || "-",
+    });
+  };
 
   window.addEventListener("keydown", (event) => {
     if (overlayOpen() || typing(event.target) || event.altKey || event.ctrlKey || event.metaKey) {
@@ -3820,6 +4067,25 @@ async function start() {
 
     const key = event.key.toLowerCase();
     const idle = event.target === document.body || event.target === canvas;
+
+    /* Play-log hotkeys work even during intro. */
+    if (key === "f8") {
+      event.preventDefault();
+      playLog.mark();
+      return;
+    }
+    if (key === "f9") {
+      event.preventDefault();
+      if (!playLog.enabled) playLog.enable("f9");
+      playLog.download("log-report");
+      return;
+    }
+    if (key === "f10") {
+      event.preventDefault();
+      if (!playLog.enabled) playLog.enable("f10");
+      void playLog.copy();
+      return;
+    }
 
     if (introLive) {
       if (key !== "tab" && key !== "shift") {
@@ -3831,19 +4097,25 @@ async function start() {
     if (key === "f") {
       event.preventDefault();
       triggerPunch();
+      playLog.note("punch", { type: "flyingKnee" });
     } else if (key === "g") {
       event.preventDefault();
       triggerOnePunch();
+      playLog.note("punch", { type: "onePunch" });
     } else if (key === "t") {
       event.preventDefault();
       const rect = canvas.getBoundingClientRect();
       const x = cursor.on ? rect.left + cursor.x * rect.width : rect.left + rect.width / 2;
       const y = cursor.on ? rect.top + cursor.y * rect.height : rect.top + rect.height / 2;
       tryLock(x, y);
+      playLog.note("lock", { on: Boolean(lockTarget) });
     } else if (moveKeys[key] && (idle || !key.startsWith("arrow"))) {
       event.preventDefault();
+      if (!state.keys.has(key)) playLog.input(key, true);
       state.keys.add(key);
+      moveKeyAt[key] = ++moveKeySeq;
     } else if (key === "shift" || key === "shiftleft" || key === "shiftright" || event.shiftKey) {
+      if (!state.keys.has("shift")) playLog.input("shift", true);
       state.keys.add("shift");
     } else if (key === "e" || ((key === "enter" || key === " ") && idle)) {
       if (state.near) {
@@ -3854,8 +4126,11 @@ async function start() {
   });
 
   window.addEventListener("keyup", (event) => {
-    state.keys.delete(event.key.toLowerCase());
-    if (event.key === "Shift" || event.key.toLowerCase() === "shift" || !event.shiftKey) {
+    const key = event.key.toLowerCase();
+    if (state.keys.has(key)) playLog.input(key, false);
+    state.keys.delete(key);
+    if (event.key === "Shift" || key === "shift" || !event.shiftKey) {
+      if (state.keys.has("shift")) playLog.input("shift", false);
       state.keys.delete("shift");
       state.keys.delete("shiftleft");
       state.keys.delete("shiftright");
@@ -3933,17 +4208,25 @@ async function start() {
   };
   applyCamAxes();
 
-  const inputVector = () => {
-    let x = 0;
-    let y = 0;
+  const pickAxis = (negKeys, posKeys) => {
+    let negT = -1;
+    let posT = -1;
+    for (const key of negKeys) {
+      if (state.keys.has(key) && moveKeyAt[key] >= negT) negT = moveKeyAt[key];
+    }
+    for (const key of posKeys) {
+      if (state.keys.has(key) && moveKeyAt[key] >= posT) posT = moveKeyAt[key];
+    }
+    if (negT < 0 && posT < 0) return 0;
+    if (negT < 0) return 1;
+    if (posT < 0) return -1;
+    return negT >= posT ? -1 : 1;
+  };
 
-    state.keys.forEach((key) => {
-      const v = moveKeys[key];
-      if (v) {
-        x += v[0];
-        y += v[1];
-      }
-    });
+  const inputVector = () => {
+    /* Last-pressed wins on each axis so A-while-D (or W-while-S) stays a real reverse, not zero. */
+    let x = pickAxis(["a", "arrowleft"], ["d", "arrowright"]);
+    let y = pickAxis(["w", "arrowup"], ["s", "arrowdown"]);
 
     const pad = readPad();
     if (pad) {
@@ -4115,84 +4398,41 @@ async function start() {
     applyCamAxes();
     clock = time;
     const input = (introLive || state.punching) ? still : inputVector();
+    playLogInput.x = input.x;
+    playLogInput.z = input.z;
     const before = robot.position.clone();
     let moving = false;
 
     const isSprint = (state.keys.has("shift") || state.keys.has("shiftleft") || state.keys.has("shiftright")) && input.lengthSq() > 0.0001;
 
-    if (state.turning180) {
-      state.path = [];
-      state.pending = null;
-      state.turn180Timer += dt;
-      const turnDur = state.turn180Dur || 0.444;
-      const turnNorm = Math.min(1.0, state.turn180Timer / turnDur);
-
-      // Evaluate root yaw progression along the authored 21-point skid pivot curve:
-      const TURN_YAW_CURVE = [
-        0, 0.036, 0.064, 0.100, 0.146, 0.195, 0.233, 0.257, 0.281, 0.321,
-        0.373, 0.434, 0.503, 0.573, 0.636, 0.705, 0.776, 0.843, 0.907, 0.963, 1.0
-      ];
-      const sampleIdx = Math.min(20, Math.max(0, turnNorm * 20));
-      const idx0 = Math.floor(sampleIdx);
-      const idx1 = Math.min(20, idx0 + 1);
-      const f = sampleIdx - idx0;
-      const yawProgress = (1 - f) * TURN_YAW_CURVE[idx0] + f * TURN_YAW_CURVE[idx1];
-
-      robot.rotation.y = state.turn180StartYaw + state.turn180YawDelta * yawProgress;
-      state.yaw = robot.rotation.y;
-
-      // Two-phase root motion & momentum (sharp foot plant anchor, zero lateral drift):
-      // Phase 1 (0 to 0.38): plant foot into turf, brake sharply along facing direction (zero sideways drift)
-      // Phase 2 (0.38 to 1.0): explode forward directly in target direction
-      if (turnNorm < 0.38) {
-        const brake = Math.pow(Math.max(0, 1.0 - (turnNorm / 0.38)), 2.8);
-        const skidSpeed = state.turn180StartSpeed * brake;
-        state.speedMeter = THREE.MathUtils.lerp(state.turn180StartSpeed * 0.15, state.turn180StartSpeed, brake);
-        robot.position.addScaledVector(state.turn180StartDir, skidSpeed * dt * 0.22);
-        state.moveDir.copy(state.turn180StartDir);
-      } else {
-        const launchNorm = (turnNorm - 0.38) / 0.62;
-        const pushAccel = launchNorm * launchNorm;
-        const targetSpeed = isSprint ? SPRINT_SPEED : SPEED;
-        const outSpeed = THREE.MathUtils.lerp(state.turn180StartSpeed * 0.25, targetSpeed, pushAccel);
-        state.speedMeter = outSpeed;
-        state.moveDir.copy(state.turn180TargetDir);
-        robot.position.addScaledVector(state.turn180TargetDir, outSpeed * dt * 0.90);
+    /* Try to arm a 180 before movement so the same frame already plants. No cooldown — reverse always staggers when sprint is live. */
+    if (!state.turning180 && input.lengthSq() > 0.0001) {
+      const blocked = turn180BlockedReason(input);
+      if (!blocked) startTurn180(input);
+      else if (blocked === "slow" || blocked === "not-sprint-anim" || blocked === "not-reverse" || blocked === "blocked") {
+        logTurn180Reject(input, blocked);
       }
+    }
 
-      const sprintProgress = THREE.MathUtils.clamp((state.speedMeter - SPEED) / Math.max(0.001, SPRINT_SPEED - SPEED), 0, 1);
-      state.sprint = sprintProgress;
-      state.sprintMul = Math.max(1.0, state.speedMeter / SPEED);
-      state.wasSprinting = state.speedMeter >= SPRINT_STOP_THRESHOLD;
-
+    if (state.turning180) {
+      stepTurn180(dt, isSprint);
       resolveCollisions(robot.position);
       stepTo(before, robot.position);
-      state.pace = THREE.MathUtils.damp(state.pace, 1, 12, dt);
       moving = true;
-
-      if (state.turn180Timer >= turnDur) {
-        state.turning180 = false;
-        state.moveDir.copy(state.turn180TargetDir);
-        state.yaw = Math.atan2(state.moveDir.x, state.moveDir.z);
-        robot.rotation.y = state.yaw;
-      }
+      state.turn180CommitT = 0;
     } else if (input.lengthSq() > 0.0001) {
       state.path = [];
       state.pending = null;
 
-      // Start immediately from base jog speed when initiating movement from idle:
       if (!state.wasMoving && state.speedMeter < SPEED) {
         state.speedMeter = SPEED;
       }
 
       if (isSprint) {
-        // Smoothly accelerate up towards sprint speed (10.5 m/s):
         state.speedMeter = THREE.MathUtils.damp(state.speedMeter, SPRINT_SPEED, 9.0, dt);
       } else if (state.speedMeter > SPEED) {
-        // Shift released while moving: gradually decelerate from sprint down towards jog speed (4.6 m/s):
         state.speedMeter = THREE.MathUtils.damp(state.speedMeter, SPEED, 4.2, dt);
       } else {
-        // Standard jog speed maintenance:
         state.speedMeter = THREE.MathUtils.damp(state.speedMeter, SPEED, 12.0, dt);
       }
 
@@ -4201,71 +4441,39 @@ async function start() {
       state.sprintMul = Math.max(1.0, state.speedMeter / SPEED);
       state.wasSprinting = state.speedMeter >= SPRINT_STOP_THRESHOLD;
 
-      // Check 180° sprint turn trigger: sprinting at high speed and player inputs a reverse direction
-      const reverseDot = (state.wasMoving || state.speedMeter >= 4.5) ? state.moveDir.dot(input) : 1;
-      const canTurn180 = (isSprint || state.speedMeter >= SPRINT_STOP_THRESHOLD)
-        && state.speedMeter >= 4.8
-        && reverseDot < -0.25
-        && !state.turning180
-        && !state.stopping
-        && !state.punching
-        && !lockTarget;
-
-      if (canTurn180) {
-        state.turning180 = true;
-        state.turn180Timer = 0;
-        const turn180ClipDur = bot.actions?.turn180 ? bot.actions.turn180.getClip().duration : 0.6667;
-        state.turn180Dur = turn180ClipDur / 1.48; // Snappy anime tempo (0.45s)
-        state.turn180StartYaw = robot.rotation.y;
-        // Anchor start direction strictly to current facing to eliminate lateral arc drift:
-        state.turn180StartDir.set(Math.sin(robot.rotation.y), 0, Math.cos(robot.rotation.y)).normalize();
-        state.turn180TargetDir.copy(input).normalize();
-        state.turn180StartSpeed = state.speedMeter;
-        // Kill residual arc bank and lead immediately:
-        state.bank = 0;
-        state.turnLead = 0;
-
-        const cross = state.moveDir.x * input.z - state.moveDir.z * input.x;
-        const turnSign = cross < -0.01 ? 1 : -1;
-        const targetYaw = Math.atan2(input.x, input.z);
-        let diffYaw = Math.atan2(Math.sin(targetYaw - state.turn180StartYaw), Math.cos(targetYaw - state.turn180StartYaw));
-        if (Math.abs(diffYaw) > Math.PI - 0.25) {
-          diffYaw = turnSign * Math.PI;
-        }
-        state.turn180YawDelta = diffYaw;
-
-        if (bot.actions?.turn180) {
-          bot.actions.turn180.reset();
-          bot.actions.turn180.play();
-        }
+      /* Curvature-limited steering: jog turns tight; sprint holds a motorcycle turning radius. */
+      const desiredYaw = Math.atan2(input.x, input.z);
+      let travelYaw = Math.atan2(state.moveDir.x, state.moveDir.z);
+      /* Always snap travel on the first moving frame — the old speed<2 gate left moveDir at (0,0,1)
+         after the idle→SPEED boost, which false-triggered 180s against camera-forward W. */
+      if (!state.wasMoving || state.moveDir.lengthSq() < 0.001) {
+        state.moveDir.copy(input);
+        travelYaw = desiredYaw;
+        state.pathOmega = 0;
       } else {
-        // Momentum-preserving velocity steering:
-        // At jog speed (4.6 m/s): tight, responsive steering (rate 18.0)
-        // At full sprint (10.5 m/s): athletic inertia creates a wide, sweeping realistic turning arc (rate 4.8)
-        const steerRate = THREE.MathUtils.lerp(18.0, 4.8, state.sprint);
-        const steerTarget = input.clone();
-
-        if ((!state.wasMoving && state.speedMeter < 2.0) || state.moveDir.lengthSq() < 0.001) {
-          state.moveDir.copy(input);
+        let yawErr = Math.atan2(Math.sin(desiredYaw - travelYaw), Math.cos(desiredYaw - travelYaw));
+        /* Drop camera-follow micro-corrections so holding W alone does not bank forever. */
+        if (Math.abs(yawErr) < 0.07) {
+          travelYaw = desiredYaw;
+          state.moveDir.set(Math.sin(travelYaw), 0, Math.cos(travelYaw));
+          state.pathOmega = 0;
         } else {
-          state.moveDir.x = THREE.MathUtils.damp(state.moveDir.x, steerTarget.x, steerRate, dt);
-          state.moveDir.z = THREE.MathUtils.damp(state.moveDir.z, steerTarget.z, steerRate, dt);
-          const dirLen = Math.hypot(state.moveDir.x, state.moveDir.z);
-          if (dirLen > 0.001) {
-            state.moveDir.x /= dirLen;
-            state.moveDir.z /= dirLen;
-          }
+          const turnRadius = THREE.MathUtils.lerp(0.55, 1.9, state.sprint);
+          const maxOmega = Math.max(2.8, state.speedMeter / Math.max(0.35, turnRadius));
+          const step = THREE.MathUtils.clamp(yawErr, -maxOmega * dt, maxOmega * dt);
+          travelYaw += step;
+          state.moveDir.set(Math.sin(travelYaw), 0, Math.cos(travelYaw));
+          state.pathOmega = dt > 1e-4 ? step / dt : 0;
         }
-
-        robot.position.addScaledVector(state.moveDir, state.speedMeter * dt);
-        resolveCollisions(robot.position);
-        stepTo(before, robot.position);
-        state.yaw = Math.atan2(state.moveDir.x, state.moveDir.z);
-        state.pace = THREE.MathUtils.damp(state.pace, input.length(), 10, dt);
       }
+
+      robot.position.addScaledVector(state.moveDir, state.speedMeter * dt);
+      resolveCollisions(robot.position);
+      stepTo(before, robot.position);
+      state.yaw = travelYaw;
+      state.pace = THREE.MathUtils.damp(state.pace, input.length(), 10, dt);
       moving = true;
 
-      // If player moves while in a stop animation, immediately cancel stopping:
       if (state.stopping) {
         state.stopping = false;
         state.stopTimer = 0;
@@ -4281,6 +4489,7 @@ async function start() {
       state.sprint = sprintProgress;
       state.sprintMul = Math.max(1.0, state.speedMeter / SPEED);
       state.wasSprinting = false;
+      state.pathOmega = 0;
 
       const target = state.path[0];
       const dx = target.x - robot.position.x;
@@ -4312,6 +4521,7 @@ async function start() {
         }
       }
       state.wasSprinting = false;
+      state.pathOmega = 0;
       state.pace = THREE.MathUtils.damp(state.pace, 0, 10, dt);
       if (!state.stopping) {
         state.speedMeter = THREE.MathUtils.damp(state.speedMeter, 0, 14.0, dt);
@@ -4320,7 +4530,41 @@ async function start() {
         state.sprintMul = 1.0;
       }
     }
+
+    /* Refresh reverse-commit while sprint-ready; decay after release so S↑…W still reads as a 180. */
+    if (moving && !state.turning180 && state.speedMeter >= TURN180_SPEED_MIN && sprintAnimActive()) {
+      armTurn180Commit();
+    } else if (!state.turning180 && state.turn180CommitT > 0) {
+      state.turn180CommitT = Math.max(0, state.turn180CommitT - dt);
+    }
+
     state.wasMoving = moving;
+    playLog.frame(dt);
+
+    if (devHud) {
+      const maxSpeed = Math.max(0.001, SPRINT_SPEED);
+      const pct = THREE.MathUtils.clamp(state.speedMeter / maxSpeed, 0, 1) * 100;
+      const speedReady = state.speedMeter >= TURN180_SPEED_MIN;
+      const animReady = sprintAnimActive();
+      const ready = speedReady && animReady;
+      devHud.fill.style.width = `${pct.toFixed(1)}%`;
+      devHud.fill.classList.toggle("is-ready", ready);
+      devHud.mark.style.left = `${((TURN180_SPEED_MIN / maxSpeed) * 100).toFixed(1)}%`;
+      devHud.read.textContent = `${state.speedMeter.toFixed(1)} / ${SPRINT_SPEED.toFixed(1)} m/s`;
+      if (state.turning180) {
+        devHud.arm.textContent = "180 STAGGER";
+        devHud.arm.className = "dev-speed-arm is-turning";
+      } else if (ready) {
+        devHud.arm.textContent = `180 READY (sprint anim)`;
+        devHud.arm.className = "dev-speed-arm is-ready";
+      } else if (speedReady && !animReady) {
+        devHud.arm.textContent = `build sprint anim (${state.sprint.toFixed(2)}/${TURN180.sprintAnimMin})`;
+        devHud.arm.className = "dev-speed-arm";
+      } else {
+        devHud.arm.textContent = `180 at ${TURN180_SPEED_MIN.toFixed(1)} m/s + sprint`;
+        devHud.arm.className = "dev-speed-arm";
+      }
+    }
 
     if (state.stopping) {
       state.stopTimer += dt;
@@ -4413,27 +4657,50 @@ async function start() {
       state.yaw = camYaw + THREE.MathUtils.clamp(rel, -0.4, 0.4);
     }
     state.faceUp = THREE.MathUtils.damp(state.faceUp, faceCam ? 1 : 0, 3, dt);
-    let currentTurnRate = 0;
-    let turnDelta = 0;
+
+    /* Stick-intent chest twist: near-instant torso aim. Root keeps a mild plant lag (not a skate). */
+    {
+      let twistGoal = 0;
+      if (moving && !lockTarget && !state.turning180 && !state.punching && input.lengthSq() > 0.0001) {
+        const intentYaw = Math.atan2(input.x, input.z);
+        const plantYaw = robot.rotation.y;
+        const err = Math.atan2(Math.sin(intentYaw - plantYaw), Math.cos(intentYaw - plantYaw));
+        const sprintAmt = THREE.MathUtils.clamp(state.sprint, 0, 1);
+        twistGoal = THREE.MathUtils.clamp(err * THREE.MathUtils.lerp(0.4, 0.85, sprintAmt), -0.7, 0.7);
+      }
+      state.chestTwist = THREE.MathUtils.damp(state.chestTwist || 0, twistGoal, moving ? 26.0 : 18.0, dt);
+    }
+
     if (!(lockTarget && !introLive)) {
       if (!state.turning180) {
         let turn = state.yaw - robot.rotation.y;
         turn = Math.atan2(Math.sin(turn), Math.cos(turn));
-        turnDelta = turn;
-        // When sprinting fast, rotation smoothly tracks the arc without jerky snapping:
-        const turnStep = turn * Math.min(1, dt * (faceCam ? 4 : (moving ? (12.0 - state.sprint * 4.0) : 8)));
-        robot.rotation.y += turnStep;
-        currentTurnRate = dt > 0.0001 ? turnStep / dt : 0;
+        /* Mild plant lag on curvature only — earlier hard lag made travel skate out from under the body. */
+        let faceRate = faceCam ? 4 : (moving ? (16.5 - state.sprint * 3.5) : 8);
+        if (moving && !faceCam && state.sprint > 0.2) {
+          const hard = THREE.MathUtils.clamp(Math.abs(state.pathOmega || 0) / 5.0, 0, 1);
+          const straight = THREE.MathUtils.lerp(15.0, 12.0, state.sprint);
+          const plant = THREE.MathUtils.lerp(11.0, 7.5, state.sprint);
+          faceRate = THREE.MathUtils.lerp(straight, plant, hard);
+        }
+        robot.rotation.y += turn * Math.min(1, dt * faceRate);
       }
+      /* Keep face in [-π, π] — unwrapped yaw was the pretzel bug; wrap stays. */
+      robot.rotation.y = wrapYaw(robot.rotation.y);
+      if (state.turning180) state.yaw = robot.rotation.y;
     }
 
-    // Centrifugal motorcycle banking: deep athletic lean into turns:
+    /* Bank / lead from path curvature (moveDir omega), not facing-error rate. */
     const speedRatio = THREE.MathUtils.clamp((state.speedMeter - SPEED * 0.5) / Math.max(0.1, SPRINT_SPEED - SPEED * 0.5), 0, 1);
+    const omega = state.pathOmega || 0;
     const targetBank = (moving && !lockTarget && !state.turning180)
-      ? THREE.MathUtils.clamp(-currentTurnRate * 0.065 * (0.35 + 0.65 * speedRatio), -0.45, 0.45)
+      ? THREE.MathUtils.clamp(-omega * (0.085 + 0.11 * speedRatio), -0.36, 0.36)
       : 0;
-    state.bank = THREE.MathUtils.damp(state.bank, targetBank, 10.0, dt);
-    state.turnLead = THREE.MathUtils.damp(state.turnLead || 0, (moving && !state.turning180) ? turnDelta * (0.4 + 0.6 * state.sprint) : 0, 8.0, dt);
+    const targetLead = (moving && !lockTarget && !state.turning180)
+      ? THREE.MathUtils.clamp(omega * (0.10 + 0.08 * state.sprint), -0.32, 0.32)
+      : 0;
+    state.bank = THREE.MathUtils.damp(state.bank, targetBank, moving ? 12.0 : 16.0, dt);
+    state.turnLead = THREE.MathUtils.damp(state.turnLead || 0, targetLead, moving ? 12.0 : 16.0, dt);
 
     if (bot.mixer) {
       /* Free roam is idle against run. Lock-on plays the run directions in Niko's facing frame. */
@@ -4773,11 +5040,10 @@ async function start() {
         state.stopWeight = THREE.MathUtils.damp(state.stopWeight, targetStopWeight, state.stopping ? 32 : 24, dt);
         if (!state.stopping && state.stopWeight < 0.005) state.stopWeight = 0;
 
-        const TURN180_SCALE = 1.48; // Snappy anime tempo (0.45s)
         const turn180ClipDur = actions.turn180 ? actions.turn180.getClip().duration : 0.6667;
-        const turn180Dur = turn180ClipDur / TURN180_SCALE;
-        const TURN180_IN = 0.04; // 40ms fast ease-in (snappy reaction)
-        const TURN180_HOLD = turn180Dur * 0.68; // Hold full weight until push-off (~0.30s)
+        const turn180Dur = turn180ClipDur / TURN180.animScale;
+        const TURN180_IN = 0.04;
+        const TURN180_HOLD = turn180Dur * TURN180.holdFrac;
         let targetTurn180Weight = 0;
 
         if (state.turning180) {
@@ -4788,20 +5054,21 @@ async function start() {
             targetTurn180Weight = 1.0;
           } else {
             const tOut = Math.min(1.0, (state.turn180Timer - TURN180_HOLD) / Math.max(0.01, turn180Dur - TURN180_HOLD));
-            targetTurn180Weight = 1.0 - tOut * tOut * (3 - 2 * tOut);
+            targetTurn180Weight = Math.max(TURN180.exitWeight, 1.0 - tOut * tOut * (3 - 2 * tOut));
           }
+        } else if (state.turn180Weight > 0.001) {
+          targetTurn180Weight = 0;
         }
-        state.turn180Weight = THREE.MathUtils.damp(state.turn180Weight, targetTurn180Weight, state.turning180 ? 48 : 28, dt);
-        if (!state.turning180 && state.turn180Weight < 0.005) state.turn180Weight = 0;
+        state.turn180Weight = THREE.MathUtils.damp(state.turn180Weight, targetTurn180Weight, state.turning180 ? 40 : 7, dt);
+        if (!state.turning180 && state.turn180Weight < 0.008) state.turn180Weight = 0;
 
-        // While moving, stop animation weight is strictly zero:
         const effectiveStopWeight = moving ? 0 : state.stopWeight * (1 - punchWeight);
         const effectiveTurn180Weight = state.turn180Weight * (1 - punchWeight);
-
         const motionSuppress = Math.max(effectiveStopWeight, effectiveTurn180Weight);
+        const sprintArrive = THREE.MathUtils.smoothstep(1 - effectiveTurn180Weight, 0.2, 0.92);
         const effectiveSprintWeight = (state.stopping && state.stopTimer < STOP_IN)
           ? Math.max(0, 1.0 - effectiveStopWeight) * (1 - punchWeight)
-          : (!state.stopping ? baseSprintWeight * (1 - motionSuppress) : 0);
+          : (!state.stopping ? baseSprintWeight * (1 - motionSuppress) * sprintArrive : 0);
 
         const idleWeight = Math.max(0, (1 - Math.max(state.walk, motionSuppress)) * (1 - punchWeight));
         const effectiveJogWeight = jogWeight * (1 - motionSuppress);
@@ -4825,12 +5092,9 @@ async function start() {
           }
         }
 
-        // Align sprint stride phase with the push-off frame at the end of 180 turn
-        if (state.turning180 && state.turn180Timer >= TURN180_HOLD) {
-          if (actions.sprint) {
-            const progress = (state.turn180Timer - TURN180_HOLD) / Math.max(0.01, turn180Dur - TURN180_HOLD);
-            sprintAnimPhase = (0.50 + progress * 0.15) % 1.0;
-          }
+        /* Seed sprint stride once as the 180 starts fading out — continuous scrubbing snapped the handoff. */
+        if (state.turning180 && state.turn180Timer >= TURN180_HOLD && state.turn180Timer - dt < TURN180_HOLD) {
+          sprintAnimPhase = 0.52;
         }
 
         // Evaluate clip playback times (stepped anime frame rate or continuous)
@@ -4853,7 +5117,7 @@ async function start() {
         if (actions.turn180) {
           actions.turn180.setEffectiveWeight(effectiveTurn180Weight);
           // Play smoothly and continuously at 1.48x speed for crisp, snappy motion without lag:
-          const turn180Time = Math.min(turn180ClipDur, state.turn180Timer * TURN180_SCALE);
+          const turn180Time = Math.min(turn180ClipDur, state.turn180Timer * TURN180.animScale);
           actions.turn180.time = turn180Time;
           actions.turn180.setEffectiveTimeScale(0);
         }
@@ -4967,14 +5231,17 @@ async function start() {
                 pitchWorld(bot.bones.Head, lift * 0.34);
       }
 
-      /* Procedural Sprinting & Turning Rig Kinematics: Motorcycle Banking & Foot Direction IK */
-      if (!state.punching && !lockTarget && !state.turning180 && (Math.abs(state.bank) > 0.002 || state.sprint > 0.05)) {
+      /* Procedural sprint arc IK: stick-intent chest twist + pathOmega bank.
+         Upper body leads hard; hips/legs keep a light counter so the sprint clip stays organic. */
+      const twist = state.chestTwist || 0;
+      if (!state.punching && !lockTarget && !state.turning180
+        && (Math.abs(state.bank) > 0.002 || Math.abs(twist) > 0.01 || state.sprint > 0.05)) {
         faceForward.set(Math.sin(robot.rotation.y), 0, Math.cos(robot.rotation.y));
         faceRight.set(Math.cos(robot.rotation.y), 0, -Math.sin(robot.rotation.y));
 
         const rollBone = (bone, radians) => {
           const parent = bone?.parent;
-          if (!parent) return;
+          if (!parent || !(Math.abs(radians) > 1e-5)) return;
           bone.updateWorldMatrix(true, false);
           const world = bone.getWorldQuaternion(posedQ);
           keyA.setFromAxisAngle(faceForward, radians);
@@ -4984,7 +5251,7 @@ async function start() {
         };
         const pitchBone = (bone, radians) => {
           const parent = bone?.parent;
-          if (!parent) return;
+          if (!parent || !(Math.abs(radians) > 1e-5)) return;
           bone.updateWorldMatrix(true, false);
           const world = bone.getWorldQuaternion(posedQ);
           keyA.setFromAxisAngle(faceRight, radians);
@@ -4994,7 +5261,7 @@ async function start() {
         };
         const yawBone = (bone, radians) => {
           const parent = bone?.parent;
-          if (!parent) return;
+          if (!parent || !(Math.abs(radians) > 1e-5)) return;
           bone.updateWorldMatrix(true, false);
           const world = bone.getWorldQuaternion(posedQ);
           keyA.setFromAxisAngle(worldUp, radians);
@@ -5005,38 +5272,58 @@ async function start() {
 
         const bank = state.bank;
         const turnLead = state.turnLead || 0;
+        const sprintAmt = THREE.MathUtils.clamp(state.sprint, 0, 1);
+        const twistAmt = twist * (0.7 + 0.3 * sprintAmt);
+        const inside = bank >= 0 ? 1 : -1;
+        const shoulderSide = Math.sign(bank || twist) || 1;
 
-        // 1. Procedural Motorcycle Torso Lean (Hips, Spine, Spine1, Spine2):
-        if (bot.bones?.Hips) rollBone(bot.bones.Hips, bank * 0.45);
-        if (bot.bones?.Spine) rollBone(bot.bones.Spine, bank * 0.35);
-        if (bot.bones?.Spine2) rollBone(bot.bones.Spine2, bank * 0.25);
+        /* Lower body — light bank + small counter so feet don't skate with the chest. */
+        if (bot.bones?.Hips) {
+          rollBone(bot.bones.Hips, bank * 0.16);
+          yawBone(bot.bones.Hips, -twistAmt * 0.18);
+        }
+        if (bot.bones?.LeftUpLeg) rollBone(bot.bones.LeftUpLeg, bank * 0.08);
+        if (bot.bones?.RightUpLeg) rollBone(bot.bones.RightUpLeg, bank * 0.08);
 
-        // 2. Motorcycle Upper Body Twist (Chest & Shoulders lead into the corner):
-        if (bot.bones?.Spine) yawBone(bot.bones.Spine, turnLead * 0.20);
-        if (bot.bones?.Spine2) yawBone(bot.bones.Spine2, turnLead * 0.35);
-        if (bot.bones?.Head) yawBone(bot.bones.Head, turnLead * 0.45);
-
-        // 3. Athletic Forward Sprint Tuck:
-        const forwardPitch = state.sprint * 0.14; // ~8° forward torso lean at sprint
-        if (bot.bones?.Spine) pitchBone(bot.bones.Spine, forwardPitch * 0.5);
-        if (bot.bones?.Spine2) pitchBone(bot.bones.Spine2, forwardPitch * 0.5);
-
-        // 4. Head Horizon Compensation (keeps eyes level with horizon while leaning):
+        /* Upper body — lead toward stick intent + motorcycle lean. */
+        if (bot.bones?.Spine) {
+          yawBone(bot.bones.Spine, twistAmt * 0.28 + turnLead * 0.10);
+          rollBone(bot.bones.Spine, bank * 0.28);
+        }
+        if (bot.bones?.Spine2) {
+          yawBone(bot.bones.Spine2, twistAmt * 0.42 + turnLead * 0.16);
+          rollBone(bot.bones.Spine2, bank * 0.20);
+        }
+        if (bot.bones?.Neck) yawBone(bot.bones.Neck, twistAmt * 0.18);
         if (bot.bones?.Head) {
-          rollBone(bot.bones.Head, -bank * 0.35);
+          yawBone(bot.bones.Head, twistAmt * 0.30 + turnLead * 0.18);
+          rollBone(bot.bones.Head, -bank * 0.38);
         }
 
-        // 5. Foot & Knee Direction IK (Feet turn into the direction of the turn arc!):
-        // Both feet turn to follow the tangent of the arc, with the inside foot leading:
-        const footYaw = turnLead * 0.45;
-        if (bot.bones?.LeftFoot) yawBone(bot.bones.LeftFoot, footYaw);
-        if (bot.bones?.RightFoot) yawBone(bot.bones.RightFoot, footYaw);
-        if (bot.bones?.LeftLeg) yawBone(bot.bones.LeftLeg, footYaw * 0.25);
-        if (bot.bones?.RightLeg) yawBone(bot.bones.RightLeg, footYaw * 0.25);
+        const forwardPitch = sprintAmt * 0.12 + Math.abs(twistAmt) * 0.04;
+        if (bot.bones?.Spine) pitchBone(bot.bones.Spine, forwardPitch * 0.55);
+        if (bot.bones?.Spine2) pitchBone(bot.bones.Spine2, forwardPitch * 0.45);
 
-        // 6. Grounding IK / Foot Leveling (Ankles adjust so soles remain flush on terrain):
-        if (bot.bones?.LeftFoot) rollBone(bot.bones.LeftFoot, -bank * 0.45);
-        if (bot.bones?.RightFoot) rollBone(bot.bones.RightFoot, -bank * 0.45);
+        const shoulderRoll = (Math.abs(bank) * 0.32 + Math.abs(twistAmt) * 0.22) * shoulderSide;
+        if (bot.bones?.LeftShoulder) rollBone(bot.bones.LeftShoulder, -shoulderRoll * 0.85);
+        if (bot.bones?.RightShoulder) rollBone(bot.bones.RightShoulder, shoulderRoll * 0.85);
+        if (bot.bones?.LeftArm) yawBone(bot.bones.LeftArm, twistAmt * 0.18);
+        if (bot.bones?.RightArm) yawBone(bot.bones.RightArm, twistAmt * 0.18);
+
+        /* Soft foot steer — light plant counter, not the heavy double that pretzeled with unwrapped yaw. */
+        const footAmt = THREE.MathUtils.clamp(sprintAmt * 1.1, 0, 1);
+        const plantFoot = THREE.MathUtils.clamp(-twistAmt * 0.22 * footAmt, -0.18, 0.18);
+        const bankFoot = inside * Math.abs(bank) * 0.05 * footAmt;
+        if (bot.bones?.LeftFoot) {
+          yawBone(bot.bones.LeftFoot, plantFoot + bankFoot);
+          rollBone(bot.bones.LeftFoot, -bank * 0.22);
+        }
+        if (bot.bones?.RightFoot) {
+          yawBone(bot.bones.RightFoot, plantFoot - bankFoot);
+          rollBone(bot.bones.RightFoot, -bank * 0.22);
+        }
+        if (bot.bones?.LeftLeg) yawBone(bot.bones.LeftLeg, plantFoot * 0.25);
+        if (bot.bones?.RightLeg) yawBone(bot.bones.RightLeg, plantFoot * 0.25);
       }
     } else {
       bot.head.rotation.x = state.faceUp * 0.2;
@@ -5849,14 +6136,22 @@ async function start() {
     active: true,
     triggerPunch,
     triggerOnePunch,
+    log: playLog,
     sprint: (opts) => {
       if (opts) {
         if (opts.speed != null) SPRINT_SPEED = opts.speed;
         if (opts.animSpeed != null) SPRINT_ANIM_SCALE = opts.animSpeed;
         if (opts.animeFps !== undefined) SPRINT_ANIME_FPS = opts.animeFps;
         if (opts.stopThreshold != null) SPRINT_STOP_THRESHOLD = opts.stopThreshold;
+        if (opts.turn180Speed != null) TURN180_SPEED_MIN = opts.turn180Speed;
       }
-      return { speed: SPRINT_SPEED, animSpeed: SPRINT_ANIM_SCALE, animeFps: SPRINT_ANIME_FPS, stopThreshold: SPRINT_STOP_THRESHOLD };
+      return {
+        speed: SPRINT_SPEED,
+        animSpeed: SPRINT_ANIM_SCALE,
+        animeFps: SPRINT_ANIME_FPS,
+        stopThreshold: SPRINT_STOP_THRESHOLD,
+        turn180Speed: TURN180_SPEED_MIN,
+      };
     },
     animeFps: (fps) => {
       if (fps !== undefined) SPRINT_ANIME_FPS = fps;
@@ -6002,6 +6297,27 @@ async function start() {
       },
       route: () => state.path.map((p) => p.toArray().map((n) => +n.toFixed(2))),
       bakeShadows: () => bakeShadows(),
+      log: playLog,
+      /* Test helper: hold a move key with last-pressed ordering (needed for A+D overlap 180 checks). */
+      pressMove: (key) => {
+        const k = String(key || "").toLowerCase();
+        if (!moveKeys[k]) return false;
+        state.keys.add(k);
+        moveKeyAt[k] = ++moveKeySeq;
+        return true;
+      },
+      releaseMove: (key) => {
+        const k = String(key || "").toLowerCase();
+        state.keys.delete(k);
+        return true;
+      },
     },
   };
+
+  {
+    const params = new URLSearchParams(location.search);
+    const logParam = params.get("log");
+    const wantLog = (logParam != null && logParam !== "0") || localStorage.getItem("fy-play-log") === "1";
+    if (wantLog) playLog.enable(logParam != null ? "url" : "localStorage");
+  }
 }

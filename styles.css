@@ -3268,6 +3268,47 @@ html.world main > section.is-open::before {
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
 }
 
+.play-log-badge {
+  position: absolute;
+  top: calc(var(--hud-h, 68px) + 14px);
+  right: 20px;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 4px 10px;
+  align-items: baseline;
+  padding: 10px 14px;
+  background: rgba(16, 43, 68, 0.88);
+  border: 1px solid rgba(47, 134, 214, 0.45);
+  border-radius: 8px;
+  color: #fff6e0;
+  font-family: "Rubik", sans-serif;
+  font-size: 12px;
+  pointer-events: none;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+.play-log-badge span {
+  font-family: "Big Shoulders Display", sans-serif;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  color: #ffc93c;
+}
+.play-log-badge b {
+  font-variant-numeric: tabular-nums;
+  color: #fff6e0;
+}
+.play-log-badge em {
+  grid-column: 1 / -1;
+  font-style: normal;
+  color: #9ec9ef;
+  font-size: 11px;
+}
+.play-log-badge small {
+  grid-column: 1 / -1;
+  color: rgba(255, 246, 224, 0.55);
+  font-size: 10px;
+}
+
 .dev-gym-header {
   display: flex;
   align-items: center;
@@ -3288,6 +3329,80 @@ html.world main > section.is-open::before {
   font-size: 13px;
   font-weight: 600;
   color: #d0d0d8;
+}
+
+.dev-speed {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 220px;
+}
+
+.dev-speed-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.dev-speed-label {
+  font-family: "Big Shoulders Display", sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: #ffc93c;
+}
+
+.dev-speed-read {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: #f0f0f5;
+}
+
+.dev-speed-track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.dev-speed-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2f86d6, #5eb0ff);
+  transition: width 40ms linear;
+}
+
+.dev-speed-fill.is-ready {
+  background: linear-gradient(90deg, #2f86d6, #ffc93c);
+}
+
+.dev-speed-mark {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: #ffc93c;
+  box-shadow: 0 0 6px rgba(255, 201, 60, 0.7);
+  pointer-events: none;
+}
+
+.dev-speed-arm {
+  font-size: 11px;
+  color: #a8a8b4;
+  font-variant-numeric: tabular-nums;
+}
+
+.dev-speed-arm.is-ready {
+  color: #ffc93c;
+  font-weight: 600;
+}
+
+.dev-speed-arm.is-turning {
+  color: #f23a2e;
+  font-weight: 700;
 }
 
 .dev-gym-shortcuts {
