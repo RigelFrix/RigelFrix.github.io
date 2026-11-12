@@ -27,6 +27,8 @@ import { makeRain } from "./world-rain.js";
 import { makeRays } from "./world-rays.js";
 import { createWerewolfBoss } from "./world-boss.js";
 import { createSmearHandler } from "./world-smear.js";
+import { createFootDust } from "./world-foot-dust.js";
+import { createWindTear } from "./world-wind-tear.js";
 import { buildDevMap } from "./world-dev-map.js";
 import { createPlayLog } from "./world-play-log.js";
 
@@ -3348,6 +3350,48 @@ async function start() {
     sheenColor: "#ffe17d",
   });
 
+  /* Sprint foot-leave dust (eroded smoke puffs). */
+  const footDust = createFootDust({ scene, camera });
+  /* Sprint wind tears — thin speed streaks around Niko's body. */
+  const windTear = createWindTear({ scene, camera });
+  const footLeave = {
+    L: { prevY: 0, prevNear: false, cool: 0, primed: false },
+    R: { prevY: 0, prevNear: false, cool: 0, primed: false },
+  };
+  const footTmp = new THREE.Vector3();
+  const footSpawn = new THREE.Vector3();
+  const footDir = new THREE.Vector3();
+  /* Foot bone sits ~ankle (~0.19–0.28 above soles when planted), not sole contact. */
+  const LIFT_VEL = 0.85;
+  const FOOT_NEAR = 0.30;
+  const FOOT_HOLD = 0.42;
+  const FOOT_COOL = 0.08;
+  const sampleFootLeave = (side, bone, groundY, sprinting, dt) => {
+    const track = footLeave[side];
+    track.cool = Math.max(0, track.cool - dt);
+    if (!bone || !(dt > 1e-5)) return;
+    bone.updateWorldMatrix(true, false);
+    bone.getWorldPosition(footTmp);
+    const y = footTmp.y;
+    const dy = (y - track.prevY) / dt;
+    const nearGround = y <= groundY + FOOT_NEAR;
+    const leaving = track.prevNear && dy > LIFT_VEL;
+    if (sprinting && leaving && track.cool <= 0 && track.primed) {
+      footSpawn.set(footTmp.x, groundY + 0.05, footTmp.z);
+      footDir.set(state.moveDir.x, 0, state.moveDir.z);
+      if (footDir.lengthSq() < 1e-6) {
+        footDir.set(-Math.sin(robot.rotation.y), 0, -Math.cos(robot.rotation.y));
+      } else {
+        footDir.normalize();
+      }
+      footDust.spawn(footSpawn, footDir, side);
+      track.cool = FOOT_COOL;
+    }
+    track.prevY = y;
+    track.prevNear = nearGround || (dy <= 0 && y <= groundY + FOOT_HOLD);
+    if (!track.primed) track.primed = true;
+  };
+
 
   const triggerPunch = () => {
     if (!bot.actions?.punch) return;
@@ -5325,6 +5369,15 @@ async function start() {
         if (bot.bones?.LeftLeg) yawBone(bot.bones.LeftLeg, plantFoot * 0.25);
         if (bot.bones?.RightLeg) yawBone(bot.bones.RightLeg, plantFoot * 0.25);
       }
+
+      /* Sprint foot-leave dust: edge when a planted foot starts rising. */
+      if (!calm && bot.bones) {
+        const groundY = island.groundAt(robot.position.x, robot.position.z);
+        const sprintW = bot.actions?.sprint?.getEffectiveWeight?.() ?? state.sprint;
+        const sprinting = sprintW > 0.55 && state.speedMeter >= TURN180_SPEED_MIN && !state.turning180 && !state.punching;
+        sampleFootLeave("L", bot.bones.LeftFoot, groundY, sprinting, dt);
+        sampleFootLeave("R", bot.bones.RightFoot, groundY, sprinting, dt);
+      }
     } else {
       bot.head.rotation.x = state.faceUp * 0.2;
     }
@@ -5543,6 +5596,22 @@ async function start() {
     /* Niko's ink hull only reads once it is close to a pixel wide; thinner, it breaks into stray dark pixels wherever
        his parts overlap, so it only shows when zoomed in */
     if (bot.ink) bot.ink.visible = bot.inkWidth / ((camera.top - camera.bottom) / camera.zoom / Math.max(1, renderer.domElement.height)) > 0.8;
+    footDust.update(dt, camera, {
+      light: climateSample.day * (1 - climateSample.storm * 0.35),
+      night: climateSample.night,
+    });
+    windTear.update(dt, {
+      root: bot.body || robot,
+      bones: bot.bones,
+      position: robot.position,
+      moveDir: state.moveDir,
+      facing: robot.rotation.y,
+      sprint: state.sprint,
+      speed: state.speedMeter,
+      camera,
+      light: climateSample.day * (1 - climateSample.storm * 0.35),
+      night: climateSample.night,
+    });
     if (rain) {
       rain.update(dt, {
         center: camLook,
@@ -6255,6 +6324,25 @@ async function start() {
         active: false,
         puffCount: 0,
       }),
+      footDust: (force) => {
+        if (force === "reset") {
+          footDust.resetStats();
+          return footDust.stats();
+        }
+        if (force === "L" || force === "R") {
+          const groundY = island.groundAt(robot.position.x, robot.position.z);
+          footSpawn.set(robot.position.x + (force === "L" ? -0.15 : 0.15), groundY + 0.05, robot.position.z);
+          footDir.set(state.moveDir.x, 0, state.moveDir.z);
+          if (footDir.lengthSq() < 1e-6) {
+            footDir.set(-Math.sin(robot.rotation.y), 0, -Math.cos(robot.rotation.y));
+          } else {
+            footDir.normalize();
+          }
+          footDust.spawn(footSpawn, footDir, force);
+        }
+        return footDust.stats();
+      },
+      windTear: () => windTear.stats(),
       punchHitbox: () => ({
         active: punchHitbox.active,
         frame: punchHitbox.frame,
