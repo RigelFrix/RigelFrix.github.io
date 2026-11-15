@@ -7,7 +7,9 @@ description: Exports a Cascadeur or Mixamo FBX animation onto Niko and integrate
 
 How to take an animation the user authored (Cascadeur FBX, sometimes Mixamo) and make the game play it the way it was authored. Written after the sprint 180° turn, which went through many failed rounds of tuning by feel before this method fixed it in one. The worked example with every number is in [turn-180-case.md](turn-180-case.md).
 
-Project rules still apply (`.cursor/rules/core-memory.mdc`): after editing `world.js` always run `node .impeccable/tools/build-world.mjs`; the shell is PowerShell (`;`, not `&&`); update the core memory when the task is done.
+Project rules still apply (`.cursor/rules/core-memory.mdc`): after editing always run `node .impeccable/tools/build-world.mjs`; the shell is PowerShell (`;`, not `&&`); update the core memory when the task is done.
+
+**Locomotion ownership:** stop / 180 / gait / `poseInertia` / `STOP`+`TURN180` live only in `world-loco.js` (`createLoco`). Wire new root-motion or sprint blends there and run the matching `verify-*.mjs`. Do **not** paste new loco into `world.js`. Clip load/retarget stays in `world-niko.js`. See core-memory “Where to edit”.
 
 ## The principle
 
@@ -46,12 +48,13 @@ Do not tune by feel. If something looks wrong, measure it first; the number tell
 | Source animations | `assets/niko/*.fbx`. New exports usually arrive in `c:/Users/Rigel/Downloads/`; copy them into `assets/niko/` and keep older takes |
 | Bind pose of the Cascadeur rig | `assets/niko/niko-cascadeur-clean.fbx` if present, else `c:/Users/Rigel/Desktop/Cascadeur/niko-cascadeur-clean.fbx` (the exporters try both) |
 | Target body | `assets/niko/niko.glb`, 65 Mixamo bones, `mixamorig` prefix stripped at load |
-| Exported clips | `assets/niko/<name>.json`, imported at the top of `world.js` (esbuild embeds them) |
+| Exported clips | `assets/niko/<name>.json`, imported in `world-niko.js` and `world-loco.js` (esbuild embeds them) |
 | Probe | `.impeccable/tools/anim-probe.mjs` |
 | Exporters | `export-cascadeur-animations.mjs` (idle, sprint: in place), `export-stop.mjs` (sprint stop + world-space `stop-mirror.json` from `sprinting-stop-v3-3.fbx`), `export-one-punch.mjs`, `export-flying-knee.mjs`, `export-turn-180.mjs` (root motion; copy this one for a new root-motion clip) |
 | Runner | `node .impeccable/tools/run-tool.mjs <script.mjs> [args]` from the repo root |
-| Game code | `world.js`: `useNikoModel` (`directClip`, `actions.*`, `matchHemisphere`), the mixer block in the frame loop, `poseInertia`, `TurnLoco` |
+| Game code | Clips/load/cloak/secondary: `world-niko.js` (`directClip`, `actions.*`, `matchHemisphere`). Loco/mixer weights/IK: `world-loco.js` (`poseInertia`, `StopLoco`, `TurnLoco`). `world.js` is thin orchestration only. |
 | Checks | `.impeccable/tools/verify-*.mjs` (Puppeteer + Edge; each starts its own server) |
+| Loco changes | Edit `world-loco.js` only; never re-open a dump into `world.js` |
 
 Exporters and the probe must go through `run-tool.mjs`: `FBXLoader` imports the bare specifier `three`, which plain node cannot resolve, so the runner bundles the script with the vendored three first. It leaves `.temp-tool.mjs` in the repo root; delete it when done. Node also needs DOM stubs whose `onload` fires, or `GLTFLoader.parseAsync` never resolves; copy the stub block from `anim-probe.mjs`.
 

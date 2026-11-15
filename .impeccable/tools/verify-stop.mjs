@@ -83,18 +83,21 @@ async function main() {
       down("shift");
       const tick = () => {
         const now = performance.now();
-        const stopW = bot.actions.stop.getEffectiveWeight();
+        const stopW = Math.max(
+          bot.actions.stop?.getEffectiveWeight?.() ?? 0,
+          bot.actions.stopMirror?.getEffectiveWeight?.() ?? 0,
+        );
         const sprintW = bot.actions.sprint.getEffectiveWeight();
         const idleW = bot.actions.idle.getEffectiveWeight();
         if (phase === "sprint" && now - t0 > 1000 && state.speedMeter >= 9) {
           phase = "stop";
           startPos = bot.robot.position.clone();
-          startScale = state.stopScale || 1;
           up("s");
           up("shift");
           t0 = now;
         }
         if (phase === "stop") {
+          if (startScale === 1 && state.stopScale > 1) startScale = state.stopScale;
           rec.push({
             now,
             timer: state.stopTimer,
@@ -104,6 +107,7 @@ async function main() {
             idleW,
             speed: state.speedMeter,
             scale: state.stopScale,
+            mirror: state.stopMirror ? 1 : 0,
             carry: state.stopCarry,
             x: bot.robot.position.x,
             z: bot.robot.position.z,
