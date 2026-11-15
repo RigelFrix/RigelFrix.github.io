@@ -110,6 +110,7 @@ export function createPlayLog({ getMeta, getSnap, host } = {}) {
     if (Math.abs(a.omega - b.omega) > 0.35) return true;
     if (a.turning180 !== b.turning180) return true;
     if (a.stopping !== b.stopping) return true;
+    if (a.stopMirror !== b.stopMirror) return true;
     return false;
   };
 
@@ -131,6 +132,7 @@ export function createPlayLog({ getMeta, getSnap, host } = {}) {
       travelDot: s.travelDot == null ? undefined : n(s.travelDot, 2),
       turning180: Boolean(s.turning180),
       stopping: Boolean(s.stopping),
+      stopMirror: Boolean(s.stopMirror),
       punch: Boolean(s.punching),
       lock: Boolean(s.lock),
       pos: s.pos ? [n(s.pos.x, 2), n(s.pos.z, 2)] : undefined,

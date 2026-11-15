@@ -2424,7 +2424,7 @@ export function buildIsland({ scene, withRim, coarse = false, clear = [], kit = 
       const mesh = new THREE.InstancedMesh(geometry, material, group.length);
       const box = new THREE.Box3();
       group.forEach((c, k) => {
-        const s = (c.kind ? 0.58 : 0.5) * (0.88 + rand(c.x * 9.7, c.z * 0.3) * 0.24);
+      const s = (c.kind ? 0.58 : 0.5) * (0.88 + rand(c.x * 9.7, c.z * 0.3) * 0.24);
         mesh.setMatrixAt(k, at(c.x, c.y - 0.03, c.z, { s }));
         mesh.setColorAt(k, c.colour);
         box.expandByPoint(new THREE.Vector3(c.x, c.y, c.z));

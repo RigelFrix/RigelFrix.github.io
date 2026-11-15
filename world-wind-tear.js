@@ -1,6 +1,7 @@
 /* Sprint wind tears — stylized anime speed lines around Niko.
-   Thin hard-edged streaks (not smoke blobs). Randomly spawn on mesh AABB /
-   Mixamo bones; may trail behind or lead ahead of the run. */
+   Thin hard-edged streaks (not smoke blobs). Prefer body-segment boxes
+   (head/torso/arms/feet); fall back to Mixamo bones / mesh AABB.
+   May trail behind or lead ahead of the run. */
 
 import * as THREE from "three";
 
@@ -182,7 +183,11 @@ export function createWindTear({ scene, camera = null } = {}) {
     if (sx * sx + sy * sy > 1e-6) L.mesh.rotateZ(Math.atan2(sy, sx));
   };
 
-  const sampleBody = (root, bones) => {
+  const sampleBody = (root, bones, regions) => {
+    if (regions?.sample && Math.random() < 0.85) {
+      const at = regions.sample(null, bonePos);
+      if (at) return at;
+    }
     if (bones && Math.random() < 0.75) {
       const name = BONE_NAMES[(Math.random() * BONE_NAMES.length) | 0];
       const bone = bones[name];
@@ -263,6 +268,7 @@ export function createWindTear({ scene, camera = null } = {}) {
    * @param {{
    *   root?: THREE.Object3D,
    *   bones?: Record<string, THREE.Object3D>,
+   *   regions?: { sample: (name?: string|null, out?: THREE.Vector3) => THREE.Vector3|null },
    *   position?: THREE.Vector3,
    *   moveDir?: { x: number, z: number },
    *   facing?: number,
@@ -277,6 +283,7 @@ export function createWindTear({ scene, camera = null } = {}) {
     const {
       root = null,
       bones = null,
+      regions = null,
       position = null,
       moveDir,
       facing = 0,
@@ -305,7 +312,7 @@ export function createWindTear({ scene, camera = null } = {}) {
       spawnAcc += dt * (6 + strength * 18);
       while (spawnAcc >= 1) {
         spawnAcc -= 1;
-        const at = sampleBody(root, bones);
+        const at = sampleBody(root, bones, regions);
         /* ~40% lead ahead of the run, ~60% trail behind. */
         const lead = Math.random() < 0.4;
         const leadSign = lead ? 1 : -1;
